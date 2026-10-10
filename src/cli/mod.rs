@@ -5,7 +5,7 @@ pub mod run;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use serde_json::{Value, json};
 
 use crate::claude::Claude;
@@ -63,6 +63,81 @@ pub enum Command {
     },
     /// Delete a snapshot and all its versions
     Delete { name: String },
+    /// Edit a workspace in a saved snapshot
+    Ws(WsArgs),
+    /// Edit a tab in a saved snapshot
+    Tab(TabArgs),
+    /// Apply a JSON array of edit operations as one version ('-' reads stdin)
+    Edit {
+        name: String,
+        #[arg(long)]
+        batch: String,
+        #[arg(long, short = 'm')]
+        message: Option<String>,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct WsArgs {
+    /// Snapshot to edit
+    pub name: String,
+    /// Workspace in the snapshot (name or a unique part of it)
+    pub ws: Option<String>,
+    #[arg(long)]
+    pub rename: Option<String>,
+    #[arg(long)]
+    pub color: Option<String>,
+    /// New position, 1-based
+    #[arg(long)]
+    pub index: Option<usize>,
+    #[arg(long)]
+    pub remove: bool,
+    /// Add a workspace from what is open in cmux now
+    #[arg(long)]
+    pub add_live: Option<String>,
+    /// Copy a workspace from another snapshot: <name>[@v]:<workspace>
+    #[arg(long)]
+    pub from: Option<String>,
+    #[arg(long, short = 'm')]
+    pub message: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct TabArgs {
+    /// Snapshot to edit
+    pub name: String,
+    /// A tab (<ws>#<n> or <ws>:"title"); a workspace with --add-session / --add-terminal
+    pub target: String,
+    #[arg(long)]
+    pub remove: bool,
+    #[arg(long)]
+    pub rename: Option<String>,
+    /// New position within the workspace, 1-based
+    #[arg(long)]
+    pub index: Option<usize>,
+    /// Move to another workspace
+    #[arg(long = "move")]
+    pub move_to: Option<String>,
+    /// Change the folder (or the folder of a new terminal tab)
+    #[arg(long)]
+    pub cwd: Option<String>,
+    /// Change the Claude session
+    #[arg(long)]
+    pub session: Option<String>,
+    /// Add a Claude tab for this session ID
+    #[arg(long)]
+    pub add_session: Option<String>,
+    /// Add a terminal tab (needs --cwd)
+    #[arg(long)]
+    pub add_terminal: bool,
+    /// Command for a new terminal tab
+    #[arg(long)]
+    pub command: Option<String>,
+    /// Title for a new tab
+    #[arg(long)]
+    pub title: Option<String>,
+    #[arg(long, short = 'm')]
+    pub message: Option<String>,
 }
 
 /// Everything a command needs; tests build it with fakes.

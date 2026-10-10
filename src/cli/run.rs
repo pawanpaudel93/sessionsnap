@@ -1,7 +1,8 @@
 use anyhow::Result;
 use serde_json::json;
 
-use super::{Command, Ctx, Outcome, human, pick};
+use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
+use crate::edit::{EditCtx, Op};
 use crate::capture::{capture, merge};
 use crate::diff;
 use crate::edit;
@@ -18,6 +19,19 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Diff { a, b } => diff_cmd(ctx, &a, &b),
         Command::Prune { name, keep } => prune(ctx, &name, keep),
         Command::Delete { name } => delete(ctx, &name),
+        Command::Ws(args) => {
+            let ops = ws_ops(&args)?;
+            edit_snapshot(ctx, &args.name, ops, args.message)
+        }
+        Command::Tab(args) => {
+            let ops = tab_ops(&args)?;
+            edit_snapshot(ctx, &args.name, ops, args.message)
+        }
+        Command::Edit { name, batch, message } => {
+            let text = if batch == "-" { std::io::read_to_string(std::io::stdin())? } else { std::fs::read_to_string(&batch)? };
+            let ops: Vec<Op> = serde_json::from_str(&text).map_err(|e| failure(Exit::Error, format!("invalid batch: {e}")))?;
+            edit_snapshot(ctx, &name, ops, message)
+        }
     }
 }
 
@@ -148,4 +162,85 @@ pub(crate) fn confirm(ctx: &Ctx, question: &str) -> Result<()> {
     } else {
         Err(failure(Exit::Refused, format!("{question} Not confirmed (pass --yes)")))
     }
+}
+
+fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>) -> Result<Outcome> {
+    let previous = ctx.store.load(name, None)?;
+    let mut workspaces = previous.workspaces.clone();
+    let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
+    edit::apply_ops(&mut workspaces, &ops, &EditCtx { claude: &ctx.claude, store: &ctx.store, open: open.as_ref() })?;
+    let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
+    commit(ctx, name, Some(&previous), workspaces, source, message)
+}
+
+fn ws_ops(a: &WsArgs) -> Result<Vec<Op>> {
+    let mut ops = vec![];
+    if let Some(live) = &a.add_live {
+        ops.push(Op::WsAddLive { ws: live.clone() });
+    }
+    if let Some(from) = &a.from {
+        let (src, ws) = from
+            .split_once(':')
+            .ok_or_else(|| failure(Exit::Error, "--from needs <name>[@v]:<workspace>"))?;
+        ops.push(Op::WsFrom { from: src.to_string(), ws: ws.to_string() });
+    }
+    if let Some(ws) = &a.ws {
+        if let Some(color) = &a.color {
+            ops.push(Op::WsColor { ws: ws.clone(), color: Some(color.clone()) });
+        }
+        if let Some(index) = a.index {
+            ops.push(Op::WsIndex { ws: ws.clone(), index });
+        }
+        if a.remove {
+            ops.push(Op::WsRemove { ws: ws.clone() });
+        }
+        // Rename last so the ops above still find the workspace by its old name.
+        if let Some(to) = &a.rename {
+            ops.push(Op::WsRename { ws: ws.clone(), to: to.clone() });
+        }
+    }
+    if ops.is_empty() {
+        return Err(failure(Exit::Error, "nothing to change: give a workspace with --rename/--color/--index/--remove, or --add-live/--from"));
+    }
+    Ok(ops)
+}
+
+fn tab_ops(a: &TabArgs) -> Result<Vec<Op>> {
+    if let Some(id) = &a.add_session {
+        return Ok(vec![Op::TabAddSession { ws: a.target.clone(), session_id: id.clone(), title: a.title.clone() }]);
+    }
+    if a.add_terminal {
+        let cwd = a.cwd.clone().ok_or_else(|| failure(Exit::Error, "--add-terminal needs --cwd"))?;
+        return Ok(vec![Op::TabAddTerminal { ws: a.target.clone(), cwd, command: a.command.clone(), title: a.title.clone() }]);
+    }
+    let positional = [a.index.is_some(), a.move_to.is_some(), a.remove].iter().filter(|b| **b).count();
+    let others = [a.cwd.is_some(), a.session.is_some(), a.rename.is_some()].iter().filter(|b| **b).count();
+    if positional > 1 || (positional == 1 && others > 0) {
+        return Err(failure(Exit::Error, "--index, --move and --remove can't be combined with other changes; run them separately"));
+    }
+    let t = a.target.clone();
+    let mut ops = vec![];
+    if let Some(index) = a.index {
+        ops.push(Op::TabIndex { tab: t.clone(), index });
+    }
+    if let Some(to) = &a.move_to {
+        ops.push(Op::TabMove { tab: t.clone(), to: to.clone() });
+    }
+    if a.remove {
+        ops.push(Op::TabRemove { tab: t.clone() });
+    }
+    if let Some(cwd) = &a.cwd {
+        ops.push(Op::TabSetCwd { tab: t.clone(), cwd: cwd.clone() });
+    }
+    if let Some(session) = &a.session {
+        ops.push(Op::TabSetSession { tab: t.clone(), session_id: session.clone() });
+    }
+    // Rename last: a title-based ref would not match after renaming.
+    if let Some(to) = &a.rename {
+        ops.push(Op::TabRename { tab: t.clone(), to: to.clone() });
+    }
+    if ops.is_empty() {
+        return Err(failure(Exit::Error, "nothing to change: give --rename/--index/--move/--remove/--cwd/--session, or --add-session/--add-terminal"));
+    }
+    Ok(ops)
 }
