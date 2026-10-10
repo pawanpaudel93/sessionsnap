@@ -14,6 +14,11 @@ named snapshots with versions, and reopens only what is missing.
 - Restoring is two steps. Run `ccsnap restore <name> --plan --json`, show the user what the plan
   creates or adds, what it skips, and its warnings. Run `ccsnap apply <planId> --json` only after
   the user agrees, unless they already told you to restore without asking.
+- If `restore … --plan` (or `recent --plan`) exits 2 because cmux is not running, run
+  `ccsnap restore <name> --json` (or `ccsnap recent --restore --json`) without `--yes`: it starts cmux,
+  saves the plan and does not apply it; show that plan, then `apply`.
+- When some steps fail, `apply`/`restore` exit 1 with the normal result JSON (`failed: n`,
+  `steps[].error`), not the `{"error": …}` shape. Argument (usage) errors print plain text and exit 1.
 - Never pass `--yes` to `delete`, `prune` or `install-cmux` unless the user asked for that exact action.
 - Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
 - `save` only reads cmux. If nothing changed it writes nothing and exits 3.
@@ -46,5 +51,6 @@ Edit ops: `ws-rename {ws,to}`, `ws-color {ws,color}`, `ws-index {ws,index}`, `ws
 ## Exit codes
 
 `0` ok · `1` error · `2` cmux not running/reachable · `3` nothing to do · `4` refused (needs
-confirmation, or the change would break resuming) · `5` unknown cmux state format · `6` plan
+confirmation with `--yes`, workspace name already exists, session has no recorded folder, or
+cmux.json is not plain JSON) · `5` unknown cmux state format · `6` plan
 stale (make a new one) · `7` not found. With `--json`, errors print `{"error": {code, exit, message}}`.
