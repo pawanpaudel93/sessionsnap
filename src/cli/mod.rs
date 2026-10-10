@@ -119,6 +119,14 @@ pub enum Command {
         #[arg(long)]
         pick: bool,
     },
+    /// Add ccsnap commands to the cmux command palette (~/.config/cmux/cmux.json)
+    InstallCmux {
+        /// Print the commands instead of installing them
+        #[arg(long)]
+        print: bool,
+    },
+    /// Install the ccsnap skill for Claude Code (~/.claude/skills/ccsnap)
+    InstallSkill,
 }
 
 #[derive(Args, Debug)]

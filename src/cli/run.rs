@@ -41,7 +41,29 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Apply { plan_id } => apply(ctx, &plan_id),
         Command::Sessions { search, cwd, days } => sessions(ctx, search.as_deref(), cwd.as_deref(), days),
         Command::Recent { hours, restore, plan, pick } => recent(ctx, hours, restore, plan, pick),
+        Command::InstallCmux { print } => install_cmux(ctx, print),
+        Command::InstallSkill => {
+            let path = crate::install::install_skill(&crate::install::skills_dir()?)?;
+            Ok(Outcome::ok(json!({"installed": path}), format!("Installed the ccsnap skill at {}", path.display())))
+        }
     }
+}
+
+fn install_cmux(ctx: &Ctx, print: bool) -> Result<Outcome> {
+    let exe = std::env::current_exe()?.to_string_lossy().into_owned();
+    if print {
+        let commands = crate::install::palette_commands(&exe);
+        let text = serde_json::to_string_pretty(&commands)?;
+        return Ok(Outcome::ok(json!({"commands": commands}), text));
+    }
+    let config = crate::install::cmux_config_path()?;
+    confirm(ctx, &format!("Add ccsnap commands to {}?", config.display()))?;
+    let backup = crate::install::install_cmux(&config, &exe)?;
+    let note = backup.as_ref().map(|b| format!(" (backup: {})", b.display())).unwrap_or_default();
+    Ok(Outcome::ok(
+        json!({"config": config, "backup": backup}),
+        format!("Added ccsnap commands to {}{note}. Run `cmux reload-config` to load them.", config.display()),
+    ))
 }
 
 fn save(ctx: &Ctx, name: Option<String>, only: &[String], from: Option<String>, message: Option<String>, pick_flag: bool) -> Result<Outcome> {
