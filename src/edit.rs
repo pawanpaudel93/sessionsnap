@@ -102,7 +102,14 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
     match op {
         Op::WsRename { ws: w, to } => {
             let i = find_ws(ws, w)?;
-            ws[i].name = to.clone();
+            let to = to.trim();
+            if to.is_empty() {
+                return Err(failure(Exit::Refused, "a workspace name cannot be empty"));
+            }
+            if ws.iter().enumerate().any(|(j, o)| j != i && o.name.eq_ignore_ascii_case(to)) {
+                return Err(failure(Exit::Refused, format!("the snapshot already has a workspace named '{to}'")));
+            }
+            ws[i].name = to.to_string();
         }
         Op::WsColor { ws: w, color } => {
             let i = find_ws(ws, w)?;
@@ -304,6 +311,18 @@ mod tests {
         assert_eq!(titles(&ws[1]), ["shell"]);
         apply_ops(&mut ws, &[Op::TabRemove { tab: "Main#1".into() }, Op::WsRemove { ws: "Main".into() }], &ctx).unwrap();
         assert_eq!(ws.len(), 1);
+    }
+
+    #[test]
+    fn rename_refuses_duplicates_and_empty() {
+        let (_d, store, claude, mut ws) = setup();
+        let ctx = EditCtx { claude: &claude, store: &store, open: None };
+        let err = apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "beta".into() }], &ctx).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::Refused);
+        let err = apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "  ".into() }], &ctx).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::Refused);
+        apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "ALPHA".into() }], &ctx).unwrap();
+        assert_eq!(ws[0].name, "ALPHA");
     }
 
     #[test]

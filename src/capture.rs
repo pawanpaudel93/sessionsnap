@@ -15,10 +15,11 @@ pub fn capture(open: &OpenState, claude: &Claude, only: &[String]) -> Result<Vec
             .map(|q| find_by_name(&names, q, "open workspace").map(|i| &open.workspaces[i]))
             .collect::<Result<_>>()?
     };
+    let mut used: Vec<String> = vec![];
     Ok(chosen
         .into_iter()
         .map(|w| Workspace {
-            name: w.name.clone(),
+            name: unique_name(&w.name, &mut used),
             color: None,
             cwd: w.cwd.clone(),
             git_branch: w.git_branch.clone(),
@@ -26,6 +27,19 @@ pub fn capture(open: &OpenState, claude: &Claude, only: &[String]) -> Result<Vec
             tabs: w.tabs.iter().map(|t| to_tab(t, claude)).collect(),
         })
         .collect())
+}
+
+/// Non-empty and unique (case-insensitive) within one capture: "workspace", "Alpha", "Alpha (2)", …
+fn unique_name(name: &str, used: &mut Vec<String>) -> String {
+    let base = if name.trim().is_empty() { "workspace" } else { name };
+    let mut candidate = base.to_string();
+    let mut n = 2;
+    while used.iter().any(|u| u.eq_ignore_ascii_case(&candidate)) {
+        candidate = format!("{base} ({n})");
+        n += 1;
+    }
+    used.push(candidate.clone());
+    candidate
 }
 
 fn to_tab(t: &OpenTab, claude: &Claude) -> Tab {
@@ -80,6 +94,24 @@ mod tests {
         assert_eq!(ws[0].cmux_workspace_id.as_deref(), Some("WA"));
         assert_eq!(ws[0].tabs[0], Tab::Claude { title: "login fix".into(), cwd: "/w/a".into(), session_id: A.into() });
         assert_eq!(ws[0].tabs[1], Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: None });
+    }
+
+    #[test]
+    fn captured_names_are_unique() {
+        let d = tempfile::tempdir().unwrap();
+        let claude = Claude::new(d.path());
+        let open = OpenState {
+            live: true,
+            state_version: Some(1),
+            workspaces: vec![
+                open_ws("W1", "Alpha", "/w/a", &[]),
+                open_ws("W2", "Alpha", "/w/b", &[]),
+                open_ws("W3", "", "/w/c", &[]),
+            ],
+        };
+        let ws = capture(&open, &claude, &[]).unwrap();
+        let names: Vec<&str> = ws.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["Alpha", "Alpha (2)", "workspace"]);
     }
 
     #[test]
