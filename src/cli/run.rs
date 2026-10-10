@@ -332,6 +332,16 @@ fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Re
 }
 
 fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
+    let wants_plan = restore || plan_only || (pick_flag && ctx.interactive);
+    if wants_plan {
+        if plan_only {
+            if !ctx.backend.is_running() {
+                return Err(failure(Exit::CmuxUnreachable, "cmux is not running; start it first (restore without --plan starts it)"));
+            }
+        } else {
+            ctx.backend.ensure_running()?;
+        }
+    }
     let open = ctx.backend.read_open_state()?.open_sessions();
     let home = home_dir()?.to_string_lossy().into_owned();
     let list: Vec<SessionInfo> = ctx
@@ -344,7 +354,7 @@ fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool
         return Ok(Outcome::ok(json!({"sessions": []}), format!("No Claude sessions from the last {hours}h are missing from cmux."))
             .with_exit(Exit::NothingToDo));
     }
-    if !(restore || plan_only || (pick_flag && ctx.interactive)) {
+    if !wants_plan {
         return Ok(Outcome::ok(json!({"sessions": list}), human::sessions(&list, &open)));
     }
     let source = PlanSource::Sessions { session_ids: list.iter().map(|s| s.session_id.clone()).collect() };

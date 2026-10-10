@@ -63,3 +63,12 @@ fn sessions_search_marks_open_ones() {
     assert_eq!(o.json["sessions"].as_array().unwrap().len(), 1);
     assert_eq!(o.json["sessions"][0]["open"], true);
 }
+
+#[test]
+fn recent_plan_needs_running_cmux() {
+    let env = setup();
+    write_transcript(&env.claude_root(), "/w/c", C, "cargo disk");
+    env.fake.running.set(false);
+    assert_eq!(exit_of(&env.run(&["recent", "--plan"]).unwrap_err()), Exit::CmuxUnreachable);
+    assert!(!env.fake.running.get());
+}
