@@ -1,14 +1,19 @@
+use std::collections::HashSet;
+use std::time::Duration;
+
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
 use crate::edit::{EditCtx, Op};
 use crate::capture::{capture, merge};
+use crate::claude::SessionInfo;
 use crate::diff;
 use crate::edit;
 use crate::error::{Exit, failure};
 use crate::model::{Source, Version, Workspace, tab_count};
-use crate::store::{parse_ref, validate_name};
+use crate::plan::{self, Plan, PlanSource, Selection};
+use crate::store::{home_dir, parse_ref, validate_name};
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
@@ -32,6 +37,10 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             let ops: Vec<Op> = serde_json::from_str(&text).map_err(|e| failure(Exit::Error, format!("invalid batch: {e}")))?;
             edit_snapshot(ctx, &name, ops, message)
         }
+        Command::Restore { snapshot, workspaces, tabs, plan, pick } => restore(ctx, snapshot, workspaces, tabs, plan, pick),
+        Command::Apply { plan_id } => apply(ctx, &plan_id),
+        Command::Sessions { search, cwd, days } => sessions(ctx, search.as_deref(), cwd.as_deref(), days),
+        Command::Recent { hours, restore, plan, pick } => recent(ctx, hours, restore, plan, pick),
     }
 }
 
@@ -243,4 +252,108 @@ fn tab_ops(a: &TabArgs) -> Result<Vec<Op>> {
         return Err(failure(Exit::Error, "nothing to change: give --rename/--index/--move/--remove/--cwd/--session, or --add-session/--add-terminal"));
     }
     Ok(ops)
+}
+
+fn restore(ctx: &Ctx, snapshot: Option<String>, workspaces: Vec<String>, tabs: Vec<String>, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
+    let snapshot = match snapshot {
+        Some(s) => s,
+        None if pick_flag && ctx.interactive => pick::choose_snapshot(&ctx.store)?,
+        None => return Err(failure(Exit::Error, "give a snapshot (or --pick in a terminal)")),
+    };
+    let (name, version) = parse_ref(&snapshot)?;
+    let v = ctx.store.load(&name, version)?;
+    let source = PlanSource::Snapshot { snapshot: name, version: v.version, selection: Selection { workspaces, tabs } };
+    plan_then_apply(ctx, source, plan_only)
+}
+
+/// Makes and saves a plan; applies it with --yes or an interactive yes, else prints how to apply.
+fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Outcome> {
+    if plan_only {
+        if !ctx.backend.is_running() {
+            return Err(failure(Exit::CmuxUnreachable, "cmux is not running; start it first (restore without --plan starts it)"));
+        }
+    } else {
+        ctx.backend.ensure_running()?;
+    }
+    let open = ctx.backend.read_open_state()?;
+    let plan = plan::make_plan(source, &ctx.store, &ctx.claude, &open)?;
+    if plan.is_empty() {
+        return Ok(Outcome::ok(
+            json!({"plan": plan, "applied": false}),
+            format!("{}\nNothing to restore: everything is already open.", human::plan(&plan)),
+        )
+        .with_exit(Exit::NothingToDo));
+    }
+    plan::save_plan(&ctx.store, &plan)?;
+    let go = !plan_only
+        && (ctx.yes || (ctx.interactive && pick::confirm(&format!("{}\nRestore {} tab(s)?", human::plan(&plan), plan.tab_count()))?));
+    if !go {
+        let apply = format!("ccsnap apply {}", plan.plan_id);
+        return Ok(Outcome::ok(
+            json!({"plan": plan, "applied": false, "apply": apply}),
+            format!("{}\nTo apply: {apply}", human::plan(&plan)),
+        ));
+    }
+    applied(ctx, &plan)
+}
+
+fn applied(ctx: &Ctx, plan: &Plan) -> Result<Outcome> {
+    let steps = plan::apply_plan(plan, &ctx.store, &ctx.claude, ctx.backend.as_ref())?;
+    let failed = steps.iter().filter(|s| !s.ok).count();
+    let out = Outcome::ok(json!({"planId": plan.plan_id, "applied": true, "steps": steps, "failed": failed}), human::steps(&steps));
+    Ok(if failed > 0 { out.with_exit(Exit::Error) } else { out })
+}
+
+fn apply(ctx: &Ctx, plan_id: &str) -> Result<Outcome> {
+    let plan = plan::load_plan(&ctx.store, plan_id)?;
+    ctx.backend.ensure_running()?;
+    applied(ctx, &plan)
+}
+
+fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Result<Outcome> {
+    let open = ctx.backend.read_open_state().map(|s| s.open_sessions()).unwrap_or_default();
+    let needle = search.map(str::to_lowercase);
+    let list: Vec<SessionInfo> = ctx
+        .claude
+        .scan(Some(Duration::from_secs(days * 86_400)))?
+        .into_iter()
+        .filter(|s| cwd.is_none_or(|c| s.cwd.as_deref().is_some_and(|sc| sc.starts_with(c))))
+        .filter(|s| {
+            needle.as_ref().is_none_or(|n| {
+                [s.title.as_deref(), s.first_prompt.as_deref(), s.cwd.as_deref(), Some(s.session_id.as_str())]
+                    .iter()
+                    .flatten()
+                    .any(|field| field.to_lowercase().contains(n.as_str()))
+            })
+        })
+        .collect();
+    let rows: Vec<Value> = list.iter().map(|s| json!({"session": s, "open": open.contains(&s.session_id)})).collect();
+    Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)))
+}
+
+fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
+    let open = ctx.backend.read_open_state()?.open_sessions();
+    let home = home_dir()?.to_string_lossy().into_owned();
+    let list: Vec<SessionInfo> = ctx
+        .claude
+        .scan(Some(Duration::from_secs(hours * 3600)))?
+        .into_iter()
+        .filter(|s| is_recoverable(s, &open, &home))
+        .collect();
+    if list.is_empty() {
+        return Ok(Outcome::ok(json!({"sessions": []}), format!("No Claude sessions from the last {hours}h are missing from cmux."))
+            .with_exit(Exit::NothingToDo));
+    }
+    if !(restore || plan_only || (pick_flag && ctx.interactive)) {
+        return Ok(Outcome::ok(json!({"sessions": list}), human::sessions(&list, &open)));
+    }
+    let source = PlanSource::Sessions { session_ids: list.iter().map(|s| s.session_id.clone()).collect() };
+    plan_then_apply(ctx, source, plan_only)
+}
+
+/// Interactive sessions (not `claude -p`/SDK), outside ~/.claude*, not open in cmux.
+fn is_recoverable(s: &SessionInfo, open: &HashSet<String>, home: &str) -> bool {
+    let interactive = s.entrypoint.as_deref().is_none_or(|e| e == "cli");
+    let internal = s.cwd.as_deref().is_some_and(|c| c.starts_with(&format!("{home}/.claude")));
+    interactive && !internal && s.cwd.is_some() && !open.contains(&s.session_id)
 }

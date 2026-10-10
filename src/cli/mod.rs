@@ -75,6 +75,50 @@ pub enum Command {
         #[arg(long, short = 'm')]
         message: Option<String>,
     },
+    /// Reopen what a snapshot has that is not open now (plan, then apply)
+    Restore {
+        /// <name>[@v]
+        snapshot: Option<String>,
+        /// Only these workspaces
+        #[arg(long = "workspace", short = 'w')]
+        workspaces: Vec<String>,
+        /// Only these tabs (<ws>#<n> or <ws>:"title")
+        #[arg(long = "tab")]
+        tabs: Vec<String>,
+        /// Only make and print the plan
+        #[arg(long, visible_alias = "dry-run")]
+        plan: bool,
+        /// Choose the snapshot interactively
+        #[arg(long)]
+        pick: bool,
+    },
+    /// Apply a plan made by restore or recent
+    Apply { plan_id: String },
+    /// List Claude sessions on disk
+    Sessions {
+        /// Text to find in titles, prompts, folders or IDs
+        #[arg(long)]
+        search: Option<String>,
+        /// Only sessions started in this folder (or below)
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        days: u64,
+    },
+    /// Interactive Claude sessions active recently that are not open in cmux
+    Recent {
+        #[arg(long, default_value_t = 24)]
+        hours: u64,
+        /// Plan reopening them (applies with --yes or after confirmation)
+        #[arg(long)]
+        restore: bool,
+        /// Only make and print the plan
+        #[arg(long, visible_alias = "dry-run")]
+        plan: bool,
+        /// Show them and ask whether to reopen
+        #[arg(long)]
+        pick: bool,
+    },
 }
 
 #[derive(Args, Debug)]
