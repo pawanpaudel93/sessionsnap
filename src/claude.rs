@@ -68,11 +68,6 @@ impl Claude {
         self.projects().join(Self::project_dir_name(cwd)).join(format!("{session_id}.jsonl"))
     }
 
-    /// True when `claude --resume <id>` run in `cwd` can find the session.
-    pub fn transcript_exists(&self, cwd: &str, session_id: &str) -> bool {
-        self.transcript_path(cwd, session_id).is_file()
-    }
-
     /// Finds a session's transcript in any project.
     pub fn find_transcript(&self, session_id: &str) -> Option<PathBuf> {
         let name = format!("{session_id}.jsonl");
@@ -84,7 +79,9 @@ impl Claude {
     }
 
     pub fn title_for(&self, cwd: &str, session_id: &str) -> Option<String> {
-        self.info(&self.transcript_path(cwd, session_id))
+        let direct = self.transcript_path(cwd, session_id);
+        let path = if direct.is_file() { direct } else { self.find_transcript(session_id)? };
+        self.info(&path)
             .ok()
             .and_then(|i| i.title.or(i.first_prompt))
     }
@@ -226,10 +223,11 @@ mod tests {
         assert_eq!(i.title.as_deref(), Some("login fix"));
         assert_eq!(i.first_prompt.as_deref(), Some("fix the login bug please"));
         assert_eq!(i.entrypoint.as_deref(), Some("cli"));
-        assert!(c.transcript_exists("/w/a", A));
-        assert!(!c.transcript_exists("/w/b", A));
         assert_eq!(c.find_transcript(A), Some(p));
+        assert_eq!(c.find_transcript(B), None);
         assert_eq!(c.title_for("/w/a", A).as_deref(), Some("login fix"));
+        // The session is found even when the tab's folder is not the transcript's project.
+        assert_eq!(c.title_for("/elsewhere", A).as_deref(), Some("login fix"));
     }
 
     #[test]
