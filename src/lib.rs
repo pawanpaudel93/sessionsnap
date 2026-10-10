@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod claude;
+pub mod cli;
 pub mod cmux;
 pub mod diff;
 pub mod edit;

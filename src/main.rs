@@ -1,3 +1,3 @@
-fn main() {
-    println!("ccsnap {}", env!("CARGO_PKG_VERSION"));
+fn main() -> std::process::ExitCode {
+    ccsnap::cli::main_entry()
 }
