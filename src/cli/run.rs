@@ -333,12 +333,16 @@ fn apply(ctx: &Ctx, plan_id: &str) -> Result<Outcome> {
     applied(ctx, &plan)
 }
 
+fn window(n: u64, unit: u64, flag: &str) -> Result<Duration> {
+    n.checked_mul(unit).map(Duration::from_secs).ok_or_else(|| failure(Exit::Error, format!("{flag} is too large")))
+}
+
 fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Result<Outcome> {
     let open = ctx.backend.read_open_state().map(|s| s.open_sessions()).unwrap_or_default();
     let needle = search.map(str::to_lowercase);
     let list: Vec<SessionInfo> = ctx
         .claude
-        .scan(Some(Duration::from_secs(days * 86_400)))?
+        .scan(Some(window(days, 86_400, "--days")?))?
         .into_iter()
         .filter(|s| cwd.is_none_or(|c| s.cwd.as_deref().is_some_and(|sc| sc.starts_with(c))))
         .filter(|s| {
@@ -369,7 +373,7 @@ fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool
     let home = home_dir()?.to_string_lossy().into_owned();
     let list: Vec<SessionInfo> = ctx
         .claude
-        .scan(Some(Duration::from_secs(hours * 3600)))?
+        .scan(Some(window(hours, 3600, "--hours")?))?
         .into_iter()
         .filter(|s| is_recoverable(s, &open, &home))
         .collect();

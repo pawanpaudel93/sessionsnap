@@ -72,3 +72,12 @@ fn recent_plan_needs_running_cmux() {
     assert_eq!(exit_of(&env.run(&["recent", "--plan"]).unwrap_err()), Exit::CmuxUnreachable);
     assert!(!env.fake.running.get());
 }
+
+#[test]
+fn huge_time_windows_are_an_error_not_a_panic() {
+    let env = setup();
+    let err = env.run(&["sessions", "--days", "18446744073709551615"]).unwrap_err();
+    assert_eq!(exit_of(&err), Exit::Error);
+    let err = env.run(&["recent", "--hours", "18446744073709551615"]).unwrap_err();
+    assert_eq!(exit_of(&err), Exit::Error);
+}

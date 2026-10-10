@@ -141,7 +141,7 @@ impl Claude {
 
     /// Sessions whose transcript changed within `within` (all when None), newest first.
     pub fn scan(&self, within: Option<Duration>) -> Result<Vec<SessionInfo>> {
-        let cutoff = within.map(|d| SystemTime::now() - d);
+        let cutoff = within.and_then(|d| SystemTime::now().checked_sub(d));
         let mut out = vec![];
         let Ok(projects) = fs::read_dir(self.projects()) else { return Ok(out) };
         for project in projects.flatten() {

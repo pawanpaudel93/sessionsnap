@@ -51,7 +51,10 @@ impl Store {
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
             if entry.file_type()?.is_dir() {
-                names.push(entry.file_name().to_string_lossy().into_owned());
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if validate_name(&name).is_ok() && self.versions(&name).is_ok_and(|v| !v.is_empty()) {
+                    names.push(name);
+                }
             }
         }
         names.sort();
@@ -235,6 +238,16 @@ mod tests {
         assert_eq!(s.load("work", Some(1)).unwrap().message, "first");
         assert_eq!(s.list().unwrap(), vec!["work".to_string()]);
         assert!(s.exists("work"));
+    }
+
+    #[test]
+    fn list_ignores_empty_and_invalid_directories() {
+        let (_d, s) = store();
+        s.save_new("work", "m", Source::default(), vec![ws("A")]).unwrap();
+        fs::create_dir_all(s.snapshots_dir().join("empty")).unwrap();
+        fs::create_dir_all(s.snapshots_dir().join("bad name")).unwrap();
+        fs::write(s.snapshots_dir().join("bad name").join("v1.json"), "{}").unwrap();
+        assert_eq!(s.list().unwrap(), vec!["work".to_string()]);
     }
 
     #[test]
