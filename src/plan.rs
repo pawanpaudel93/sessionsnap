@@ -113,6 +113,9 @@ pub fn source_workspaces(source: &PlanSource, store: &Store, claude: &Claude) ->
         PlanSource::Sessions { session_ids } => {
             let mut tabs = vec![];
             for id in session_ids {
+                if !is_session_id(id) {
+                    return Err(failure(Exit::Error, format!("'{id}' is not a Claude session ID")));
+                }
                 let path = claude
                     .find_transcript(id)
                     .ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))?;
@@ -142,12 +145,16 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> 
     let mut planned: HashSet<String> = HashSet::new();
     let mut b = Built::default();
     for ws in saved {
+        let live = match_workspace(ws, open);
         let mut pending = vec![];
         for tab in &ws.tabs {
             let label = format!("{} › {}", ws.name, tab.title());
             match tab.session_id() {
                 Some(id) if open_sessions.contains(id) => b.skipped.push(format!("{label}: already open")),
                 Some(id) if planned.contains(id) => b.skipped.push(format!("{label}: same session listed earlier")),
+                Some(id) if (!is_session_id(id) || claude.find_transcript(id).is_none()) && live.is_some() => {
+                    b.skipped.push(format!("{label}: transcript not found; not added to an open workspace"));
+                }
                 Some(id) if !is_session_id(id) || claude.find_transcript(id).is_none() => {
                     b.warnings.push(format!("{label}: transcript not found, opening a plain shell"));
                     pending.push(Tab::Terminal { title: tab.title().to_string(), cwd: tab.cwd().to_string(), command: None });
@@ -162,7 +169,7 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> 
         if pending.is_empty() {
             continue;
         }
-        match match_workspace(ws, open) {
+        match live {
             Some(live) => {
                 let (claude_tabs, shells): (Vec<Tab>, Vec<Tab>) = pending.into_iter().partition(|t| t.session_id().is_some());
                 for s in shells {
@@ -336,6 +343,25 @@ mod tests {
         ]);
         assert_eq!(b.skipped.len(), 2, "{:?}", b.skipped);
         assert_eq!(b.warnings.len(), 1, "{:?}", b.warnings);
+    }
+
+    #[test]
+    fn missing_transcript_in_matched_workspace_is_skipped_without_warning() {
+        let (_d, _s, claude) = setup();
+        let ws = workspace("Alpha", "/w/a", Some("WA"), vec![claude_tab("one", "/w/a", A), claude_tab("lost", "/w/a", D)]);
+        let b = build_actions(&[ws], &alpha_with_one_open(), &claude);
+        assert!(b.actions.is_empty(), "{:?}", b.actions);
+        assert!(b.warnings.is_empty(), "{:?}", b.warnings);
+        let want = "Alpha › lost: transcript not found; not added to an open workspace";
+        assert_eq!(b.skipped.iter().filter(|s| s.as_str() == want).count(), 1, "{:?}", b.skipped);
+    }
+
+    #[test]
+    fn sessions_source_rejects_non_uuid_ids() {
+        let (_d, store, claude) = setup();
+        let source = PlanSource::Sessions { session_ids: vec!["../x".into()] };
+        let err = source_workspaces(&source, &store, &claude).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::Error);
     }
 
     #[test]

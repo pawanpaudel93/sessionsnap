@@ -7,6 +7,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::model::is_session_id;
 use crate::store::home_dir;
 
 /// Claude Code's data directory (`~/.claude`); transcripts are `projects/<project>/<id>.jsonl`.
@@ -150,6 +151,9 @@ impl Claude {
                 if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                     continue;
                 }
+                if !path.file_stem().and_then(|s| s.to_str()).is_some_and(is_session_id) {
+                    continue;
+                }
                 let Ok(meta) = file.metadata() else { continue };
                 if !meta.is_file() {
                     continue;
@@ -228,6 +232,16 @@ mod tests {
         assert_eq!(c.title_for("/w/a", A).as_deref(), Some("login fix"));
         // The session is found even when the tab's folder is not the transcript's project.
         assert_eq!(c.title_for("/elsewhere", A).as_deref(), Some("login fix"));
+    }
+
+    #[test]
+    fn scan_ignores_files_that_are_not_session_ids() {
+        let d = tempfile::tempdir().unwrap();
+        let c = Claude::new(d.path());
+        write_transcript(d.path(), "/w/a", A, "real");
+        write_transcript(d.path(), "/w/a", "agent-x", "sub");
+        let found = c.scan(None).unwrap();
+        assert_eq!(found.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(), vec![A]);
     }
 
     #[test]
