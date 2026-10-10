@@ -57,3 +57,14 @@ fn copy_from_another_snapshot() {
     let o = env.run(&["save", "backup", "--from", "work@1"]).unwrap();
     assert_eq!(o.json["tabs"], 3);
 }
+
+#[test]
+fn full_save_keeps_colors_and_terminal_commands() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    env.run(&["ws", "work", "Alpha", "--color", "blue"]).unwrap();
+    let o = env.run(&["save", "work"]).unwrap();
+    assert_eq!(o.exit, Exit::NothingToDo);
+    let shown = env.run(&["show", "work", "--json"]).unwrap();
+    assert_eq!(shown.json["version"]["workspaces"][0]["color"], "blue");
+}

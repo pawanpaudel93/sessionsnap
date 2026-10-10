@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
 use crate::edit::{EditCtx, Op};
-use crate::capture::{capture, merge};
+use crate::capture::{capture, carry_over, merge};
 use crate::claude::SessionInfo;
 use crate::diff;
 use crate::edit;
@@ -86,7 +86,8 @@ fn save(ctx: &Ctx, name: Option<String>, only: &[String], from: Option<String>, 
             let captured = capture(&open, &ctx.claude, only)?;
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
-                _ => captured,
+                Some(p) => carry_over(&p.workspaces, captured),
+                None => captured,
             };
             (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None })
         }

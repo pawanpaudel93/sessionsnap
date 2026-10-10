@@ -68,6 +68,31 @@ pub fn merge(base: &[Workspace], captured: Vec<Workspace>) -> Vec<Workspace> {
     out
 }
 
+/// For a full save: keeps what cmux cannot tell us from the previous version's same-named workspace
+/// (its color, and the command of a terminal tab with the same folder and title).
+pub fn carry_over(previous: &[Workspace], captured: Vec<Workspace>) -> Vec<Workspace> {
+    captured
+        .into_iter()
+        .map(|mut ws| {
+            let Some(prev) = previous.iter().find(|p| p.name.eq_ignore_ascii_case(&ws.name)) else {
+                return ws;
+            };
+            if ws.color.is_none() {
+                ws.color = prev.color.clone();
+            }
+            for tab in &mut ws.tabs {
+                if let Tab::Terminal { title, cwd, command: command @ None } = tab {
+                    *command = prev.tabs.iter().find_map(|p| match p {
+                        Tab::Terminal { title: pt, cwd: pc, command } if pt == title && pc == cwd => command.clone(),
+                        _ => None,
+                    });
+                }
+            }
+            ws
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +137,20 @@ mod tests {
         let ws = capture(&open, &claude, &[]).unwrap();
         let names: Vec<&str> = ws.iter().map(|w| w.name.as_str()).collect();
         assert_eq!(names, ["Alpha", "Alpha (2)", "workspace"]);
+    }
+
+    #[test]
+    fn carry_over_keeps_color_and_terminal_commands() {
+        let d = tempfile::tempdir().unwrap();
+        let claude = Claude::new(d.path());
+        let mut prev = capture(&open_state(), &claude, &[]).unwrap();
+        prev[0].color = Some("blue".into());
+        prev[0].tabs[1] = Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) };
+        let fresh = capture(&open_state(), &claude, &[]).unwrap();
+        let out = carry_over(&prev, fresh);
+        assert_eq!(out[0].color.as_deref(), Some("blue"));
+        assert_eq!(out[0].tabs[1], Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) });
+        assert_eq!(out[1].color, None);
     }
 
     #[test]
