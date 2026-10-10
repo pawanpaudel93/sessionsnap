@@ -21,3 +21,24 @@ pub fn write_transcript(claude_root: &Path, cwd: &str, id: &str, title: &str) ->
     std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
     path
 }
+
+/// An open workspace with ref "workspace:<id>"; tabs are (title, cwd, session).
+pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str>)]) -> crate::cmux::OpenWorkspace {
+    crate::cmux::OpenWorkspace {
+        id: id.to_string(),
+        reference: Some(format!("workspace:{id}")),
+        name: name.to_string(),
+        cwd: cwd.to_string(),
+        git_branch: None,
+        tabs: tabs
+            .iter()
+            .enumerate()
+            .map(|(i, (title, cwd, session))| crate::cmux::OpenTab {
+                reference: Some(format!("surface:{id}-{i}")),
+                title: title.to_string(),
+                cwd: cwd.to_string(),
+                session_id: session.map(str::to_string),
+            })
+            .collect(),
+    }
+}

@@ -1,5 +1,7 @@
+pub mod capture;
 pub mod claude;
 pub mod cmux;
+pub mod diff;
 pub mod error;
 pub mod model;
 pub mod store;
