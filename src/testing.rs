@@ -42,3 +42,67 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
             .collect(),
     }
 }
+
+/// In-memory cmux for tests. Clones share state, so a test can inspect it after handing one over.
+#[derive(Clone)]
+pub struct FakeBackend {
+    pub state: std::rc::Rc<std::cell::RefCell<crate::cmux::OpenState>>,
+    pub log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub running: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl Default for FakeBackend {
+    fn default() -> Self {
+        FakeBackend {
+            state: std::rc::Rc::new(std::cell::RefCell::new(crate::cmux::OpenState { live: true, ..Default::default() })),
+            log: Default::default(),
+            running: std::rc::Rc::new(std::cell::Cell::new(true)),
+        }
+    }
+}
+
+fn open_tab(t: &crate::model::Tab) -> crate::cmux::OpenTab {
+    crate::cmux::OpenTab {
+        reference: None,
+        title: t.title().to_string(),
+        cwd: t.cwd().to_string(),
+        session_id: t.session_id().map(str::to_string),
+    }
+}
+
+impl crate::cmux::Backend for FakeBackend {
+    fn is_running(&self) -> bool {
+        self.running.get()
+    }
+
+    fn ensure_running(&self) -> anyhow::Result<()> {
+        self.running.set(true);
+        Ok(())
+    }
+
+    fn read_open_state(&self) -> anyhow::Result<crate::cmux::OpenState> {
+        Ok(self.state.borrow().clone())
+    }
+
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::model::Tab]) -> anyhow::Result<String> {
+        self.log.borrow_mut().push(format!("create {name} {}", tabs.len()));
+        let mut state = self.state.borrow_mut();
+        let id = format!("NEW{}", state.workspaces.len());
+        let mut ws = open_ws(&id, name, cwd, &[]);
+        ws.tabs = tabs.iter().map(open_tab).collect();
+        state.workspaces.push(ws);
+        Ok(format!("workspace:{id}"))
+    }
+
+    fn add_tab(&self, workspace_ref: &str, tab: &crate::model::Tab) -> anyhow::Result<()> {
+        self.log.borrow_mut().push(format!("add {workspace_ref} {}", tab.title()));
+        let mut state = self.state.borrow_mut();
+        let ws = state
+            .workspaces
+            .iter_mut()
+            .find(|w| w.reference.as_deref() == Some(workspace_ref))
+            .ok_or_else(|| anyhow::anyhow!("no workspace {workspace_ref}"))?;
+        ws.tabs.push(open_tab(tab));
+        Ok(())
+    }
+}
