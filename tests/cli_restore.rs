@@ -50,7 +50,8 @@ fn recent_lists_and_plans_sessions_not_open() {
     let env = setup();
     write_transcript(&env.claude_root(), "/w/c", C, "cargo disk");
     let o = env.run(&["recent"]).unwrap();
-    let ids: Vec<&str> = o.json["sessions"].as_array().unwrap().iter().map(|s| s["sessionId"].as_str().unwrap()).collect();
+    let ids: Vec<&str> =
+        o.json["sessions"].as_array().unwrap().iter().map(|s| s["sessionId"].as_str().unwrap()).collect();
     assert_eq!(ids, vec![C]);
     let p = env.run(&["recent", "--plan"]).unwrap();
     assert_eq!(p.json["plan"]["actions"][0]["name"], "Recovered sessions");

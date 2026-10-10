@@ -131,12 +131,9 @@ fn parse_panel(p: &Value) -> Option<FilePanel> {
         return None;
     }
     let term = p.get("terminal");
-    let agent = term
-        .and_then(|t| t.get("agent"))
-        .filter(|a| a.get("kind").and_then(Value::as_str) == Some("claude"));
-    let binding = term
-        .and_then(|t| t.get("resumeBinding"))
-        .filter(|b| b.get("kind").and_then(Value::as_str) == Some("claude"));
+    let agent = term.and_then(|t| t.get("agent")).filter(|a| a.get("kind").and_then(Value::as_str) == Some("claude"));
+    let binding =
+        term.and_then(|t| t.get("resumeBinding")).filter(|b| b.get("kind").and_then(Value::as_str) == Some("claude"));
     let session_id = agent
         .and_then(|a| s(a, "sessionId"))
         .or_else(|| binding.and_then(|b| s(b, "checkpointId")))

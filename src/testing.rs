@@ -54,7 +54,10 @@ pub struct FakeBackend {
 impl Default for FakeBackend {
     fn default() -> Self {
         FakeBackend {
-            state: std::rc::Rc::new(std::cell::RefCell::new(crate::cmux::OpenState { live: true, ..Default::default() })),
+            state: std::rc::Rc::new(std::cell::RefCell::new(crate::cmux::OpenState {
+                live: true,
+                ..Default::default()
+            })),
             log: Default::default(),
             running: std::rc::Rc::new(std::cell::Cell::new(true)),
         }

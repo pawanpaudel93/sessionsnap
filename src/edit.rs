@@ -14,20 +14,66 @@ use crate::store::{Store, parse_ref};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum Op {
-    WsRename { ws: String, to: String },
-    WsColor { ws: String, #[serde(default)] color: Option<String> },
-    WsIndex { ws: String, index: usize },
-    WsRemove { ws: String },
-    WsAddLive { ws: String },
-    WsFrom { from: String, ws: String },
-    TabRemove { tab: String },
-    TabRename { tab: String, to: String },
-    TabIndex { tab: String, index: usize },
-    TabMove { tab: String, to: String },
-    TabAddSession { ws: String, session_id: String, #[serde(default)] title: Option<String> },
-    TabAddTerminal { ws: String, cwd: String, #[serde(default)] command: Option<String>, #[serde(default)] title: Option<String> },
-    TabSetCwd { tab: String, cwd: String },
-    TabSetSession { tab: String, session_id: String },
+    WsRename {
+        ws: String,
+        to: String,
+    },
+    WsColor {
+        ws: String,
+        #[serde(default)]
+        color: Option<String>,
+    },
+    WsIndex {
+        ws: String,
+        index: usize,
+    },
+    WsRemove {
+        ws: String,
+    },
+    WsAddLive {
+        ws: String,
+    },
+    WsFrom {
+        from: String,
+        ws: String,
+    },
+    TabRemove {
+        tab: String,
+    },
+    TabRename {
+        tab: String,
+        to: String,
+    },
+    TabIndex {
+        tab: String,
+        index: usize,
+    },
+    TabMove {
+        tab: String,
+        to: String,
+    },
+    TabAddSession {
+        ws: String,
+        session_id: String,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    TabAddTerminal {
+        ws: String,
+        cwd: String,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    TabSetCwd {
+        tab: String,
+        cwd: String,
+    },
+    TabSetSession {
+        tab: String,
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,18 +263,11 @@ fn check_session_id(id: &str) -> Result<()> {
 
 /// The session's transcript, from any project; `claude --resume <id>` finds it from any folder.
 fn ensure_known(claude: &Claude, id: &str) -> Result<std::path::PathBuf> {
-    claude
-        .find_transcript(id)
-        .ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))
+    claude.find_transcript(id).ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))
 }
 
 fn folder_name(cwd: &str) -> String {
-    cwd.trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("terminal")
-        .to_string()
+    cwd.trim_end_matches('/').rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or("terminal").to_string()
 }
 
 /// Problems worth showing with a snapshot: missing transcripts and duplicated sessions.
@@ -240,7 +279,12 @@ pub fn warnings(workspaces: &[Workspace], claude: &Claude) -> Vec<String> {
             if let Some(id) = t.session_id() {
                 *seen.entry(id).or_default() += 1;
                 if claude.find_transcript(id).is_none() {
-                    out.push(format!("{}#{} '{}': transcript not found, restores as a plain shell", w.name, i + 1, t.title()));
+                    out.push(format!(
+                        "{}#{} '{}': transcript not found, restores as a plain shell",
+                        w.name,
+                        i + 1,
+                        t.title()
+                    ));
                 }
             }
         }
@@ -269,14 +313,22 @@ mod tests {
         let claude = Claude::new(croot);
         let ws = vec![
             Workspace {
-                name: "Alpha".into(), color: None, cwd: "/w/a".into(), git_branch: None, cmux_workspace_id: None,
+                name: "Alpha".into(),
+                color: None,
+                cwd: "/w/a".into(),
+                git_branch: None,
+                cmux_workspace_id: None,
                 tabs: vec![
                     Tab::Claude { title: "one".into(), cwd: "/w/a".into(), session_id: A.into() },
                     Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: None },
                 ],
             },
             Workspace {
-                name: "Beta".into(), color: None, cwd: "/w/b".into(), git_branch: None, cmux_workspace_id: None,
+                name: "Beta".into(),
+                color: None,
+                cwd: "/w/b".into(),
+                git_branch: None,
+                cmux_workspace_id: None,
                 tabs: vec![Tab::Claude { title: "two".into(), cwd: "/w/b".into(), session_id: B.into() }],
             },
         ];
@@ -290,7 +342,10 @@ mod tests {
     #[test]
     fn parses_tab_refs() {
         assert_eq!(parse_tab_ref("Alpha#2").unwrap(), TabRef { ws: "Alpha".into(), sel: TabSel::Position(2) });
-        assert_eq!(parse_tab_ref("Alpha:\"zs\"").unwrap(), TabRef { ws: "Alpha".into(), sel: TabSel::Title("zs".into()) });
+        assert_eq!(
+            parse_tab_ref("Alpha:\"zs\"").unwrap(),
+            TabRef { ws: "Alpha".into(), sel: TabSel::Title("zs".into()) }
+        );
         assert!(parse_tab_ref("Alpha").is_err());
         assert!(parse_tab_ref("Alpha#0").is_err());
     }
@@ -299,17 +354,23 @@ mod tests {
     fn rename_move_reorder_remove() {
         let (_d, store, claude, mut ws) = setup();
         let ctx = EditCtx { claude: &claude, store: &store, open: None };
-        apply_ops(&mut ws, &[
-            Op::TabRename { tab: "Alpha#2".into(), to: "shell".into() },
-            Op::TabIndex { tab: "Alpha:shell".into(), index: 1 },
-            Op::TabMove { tab: "Alpha#2".into(), to: "Beta".into() },
-            Op::WsIndex { ws: "Beta".into(), index: 1 },
-            Op::WsRename { ws: "Alpha".into(), to: "Main".into() },
-        ], &ctx).unwrap();
+        apply_ops(
+            &mut ws,
+            &[
+                Op::TabRename { tab: "Alpha#2".into(), to: "shell".into() },
+                Op::TabIndex { tab: "Alpha:shell".into(), index: 1 },
+                Op::TabMove { tab: "Alpha#2".into(), to: "Beta".into() },
+                Op::WsIndex { ws: "Beta".into(), index: 1 },
+                Op::WsRename { ws: "Alpha".into(), to: "Main".into() },
+            ],
+            &ctx,
+        )
+        .unwrap();
         assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Beta", "Main"]);
         assert_eq!(titles(&ws[0]), ["two", "one"]);
         assert_eq!(titles(&ws[1]), ["shell"]);
-        apply_ops(&mut ws, &[Op::TabRemove { tab: "Main#1".into() }, Op::WsRemove { ws: "Main".into() }], &ctx).unwrap();
+        apply_ops(&mut ws, &[Op::TabRemove { tab: "Main#1".into() }, Op::WsRemove { ws: "Main".into() }], &ctx)
+            .unwrap();
         assert_eq!(ws.len(), 1);
     }
 
@@ -332,12 +393,15 @@ mod tests {
         // Resume by ID works from any folder (Claude Code ≥ 2.1.223), so a new folder is fine.
         apply_ops(&mut ws, &[Op::TabSetCwd { tab: "Alpha#1".into(), cwd: "/w/b".into() }], &ctx).unwrap();
         assert_eq!(ws[0].tabs[0].cwd(), "/w/b");
-        let err = apply_ops(&mut ws, &[Op::TabSetSession { tab: "Alpha#1".into(), session_id: "nope".into() }], &ctx).unwrap_err();
+        let err = apply_ops(&mut ws, &[Op::TabSetSession { tab: "Alpha#1".into(), session_id: "nope".into() }], &ctx)
+            .unwrap_err();
         assert_eq!(exit_of(&err), Exit::Error);
         let unknown = "44444444-4444-4444-8444-444444444444";
-        let err = apply_ops(&mut ws, &[Op::TabSetSession { tab: "Alpha#1".into(), session_id: unknown.into() }], &ctx).unwrap_err();
+        let err = apply_ops(&mut ws, &[Op::TabSetSession { tab: "Alpha#1".into(), session_id: unknown.into() }], &ctx)
+            .unwrap_err();
         assert_eq!(exit_of(&err), Exit::NotFound);
-        apply_ops(&mut ws, &[Op::TabAddSession { ws: "Beta".into(), session_id: C.into(), title: None }], &ctx).unwrap();
+        apply_ops(&mut ws, &[Op::TabAddSession { ws: "Beta".into(), session_id: C.into(), title: None }], &ctx)
+            .unwrap();
         assert_eq!(ws[1].tabs[1], Tab::Claude { title: "three".into(), cwd: "/w/c".into(), session_id: C.into() });
         apply_ops(&mut ws, &[Op::TabSetSession { tab: "Alpha#2".into(), session_id: A.into() }], &ctx).unwrap();
         assert_eq!(ws[0].tabs[1].session_id(), Some(A));
@@ -348,12 +412,33 @@ mod tests {
     #[test]
     fn workspace_copies_and_live_adds() {
         let (_d, store, claude, mut ws) = setup();
-        store.save_new("other", "m", Default::default(), vec![Workspace {
-            name: "Gamma".into(), color: None, cwd: "/w/c".into(), git_branch: None, cmux_workspace_id: None, tabs: vec![],
-        }]).unwrap();
-        let open = OpenState { live: true, state_version: Some(1), workspaces: vec![open_ws("WD", "Delta", "/w/d", &[("zsh", "/w/d", None)])] };
+        store
+            .save_new(
+                "other",
+                "m",
+                Default::default(),
+                vec![Workspace {
+                    name: "Gamma".into(),
+                    color: None,
+                    cwd: "/w/c".into(),
+                    git_branch: None,
+                    cmux_workspace_id: None,
+                    tabs: vec![],
+                }],
+            )
+            .unwrap();
+        let open = OpenState {
+            live: true,
+            state_version: Some(1),
+            workspaces: vec![open_ws("WD", "Delta", "/w/d", &[("zsh", "/w/d", None)])],
+        };
         let ctx = EditCtx { claude: &claude, store: &store, open: Some(&open) };
-        apply_ops(&mut ws, &[Op::WsFrom { from: "other@1".into(), ws: "gamma".into() }, Op::WsAddLive { ws: "Delta".into() }], &ctx).unwrap();
+        apply_ops(
+            &mut ws,
+            &[Op::WsFrom { from: "other@1".into(), ws: "gamma".into() }, Op::WsAddLive { ws: "Delta".into() }],
+            &ctx,
+        )
+        .unwrap();
         assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta", "Gamma", "Delta"]);
         let err = apply_ops(&mut ws, &[Op::WsAddLive { ws: "Delta".into() }], &ctx).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Refused);

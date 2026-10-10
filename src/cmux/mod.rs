@@ -41,11 +41,7 @@ pub struct OpenTab {
 
 impl OpenState {
     pub fn open_sessions(&self) -> HashSet<String> {
-        self.workspaces
-            .iter()
-            .flat_map(|w| &w.tabs)
-            .filter_map(|t| t.session_id.clone())
-            .collect()
+        self.workspaces.iter().flat_map(|w| &w.tabs).filter_map(|t| t.session_id.clone()).collect()
     }
 }
 

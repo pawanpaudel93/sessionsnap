@@ -40,11 +40,9 @@ pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
             }
             match ia.get(&key) {
                 None => out.push(Change::TabAdded { workspace: w.name.clone(), title: t.title().to_string() }),
-                Some((from, _)) if !from.eq_ignore_ascii_case(&w.name) => out.push(Change::TabMoved {
-                    title: t.title().to_string(),
-                    from: from.clone(),
-                    to: w.name.clone(),
-                }),
+                Some((from, _)) if !from.eq_ignore_ascii_case(&w.name) => {
+                    out.push(Change::TabMoved { title: t.title().to_string(), from: from.clone(), to: w.name.clone() })
+                }
                 Some((_, old)) if old != t.title() => out.push(Change::TabRenamed {
                     workspace: w.name.clone(),
                     from: old.clone(),

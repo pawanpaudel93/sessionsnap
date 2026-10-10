@@ -84,9 +84,8 @@ impl<R: Runner> Backend for CmuxCli<R> {
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[Tab]) -> Result<String> {
         let layout = layout_json(tabs);
         let out = self.cmux_ok(&["new-workspace", "--name", name, "--cwd", cwd, "--layout", layout.as_str()])?;
-        find_ref(&out, "workspace").ok_or_else(|| {
-            failure(Exit::Error, format!("cmux new-workspace printed no workspace ref: {}", out.trim()))
-        })
+        find_ref(&out, "workspace")
+            .ok_or_else(|| failure(Exit::Error, format!("cmux new-workspace printed no workspace ref: {}", out.trim())))
     }
 
     fn add_tab(&self, workspace_ref: &str, tab: &Tab) -> Result<()> {
@@ -98,7 +97,15 @@ impl<R: Runner> Backend for CmuxCli<R> {
             let text = format!("{command}\\n");
             self.cmux_ok(&["send", "--workspace", workspace_ref, "--surface", surface.as_str(), "--", text.as_str()])?;
         }
-        self.cmux_ok(&["rename-tab", "--workspace", workspace_ref, "--surface", surface.as_str(), "--title", tab.title()])?;
+        self.cmux_ok(&[
+            "rename-tab",
+            "--workspace",
+            workspace_ref,
+            "--surface",
+            surface.as_str(),
+            "--title",
+            tab.title(),
+        ])?;
         Ok(())
     }
 }
@@ -122,10 +129,7 @@ pub fn layout_json(tabs: &[Tab]) -> String {
 pub fn find_ref(text: &str, kind: &str) -> Option<String> {
     let prefix = format!("{kind}:");
     text.split(|c: char| c.is_whitespace() || ",\"()".contains(c))
-        .find(|tok| {
-            tok.strip_prefix(&prefix)
-                .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
-        })
+        .find(|tok| tok.strip_prefix(&prefix).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())))
         .map(str::to_string)
 }
 
@@ -210,9 +214,18 @@ mod tests {
         b.add_tab("workspace:1", &tab).unwrap();
         let calls = b.runner.calls.borrow();
         let send = format!("claude --resume {A}\\n");
-        assert_eq!(calls[0], ["cmux", "new-surface", "--workspace", "workspace:1", "--working-directory", "/w/alpha/sub"]);
-        assert_eq!(calls[1], ["cmux", "send", "--workspace", "workspace:1", "--surface", "surface:40", "--", send.as_str()]);
-        assert_eq!(calls[2], ["cmux", "rename-tab", "--workspace", "workspace:1", "--surface", "surface:40", "--title", "fix login"]);
+        assert_eq!(
+            calls[0],
+            ["cmux", "new-surface", "--workspace", "workspace:1", "--working-directory", "/w/alpha/sub"]
+        );
+        assert_eq!(
+            calls[1],
+            ["cmux", "send", "--workspace", "workspace:1", "--surface", "surface:40", "--", send.as_str()]
+        );
+        assert_eq!(
+            calls[2],
+            ["cmux", "rename-tab", "--workspace", "workspace:1", "--surface", "surface:40", "--title", "fix login"]
+        );
     }
 
     #[test]

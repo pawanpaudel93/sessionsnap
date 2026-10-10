@@ -259,7 +259,10 @@ pub fn main_entry() -> ExitCode {
         Err(e) => {
             let exit = exit_of(&e);
             if json {
-                println!("{}", json!({"error": {"code": exit.name(), "exit": exit.code(), "message": format!("{e:#}")}}));
+                println!(
+                    "{}",
+                    json!({"error": {"code": exit.name(), "exit": exit.code(), "message": format!("{e:#}")}})
+                );
             } else {
                 eprintln!("ccsnap: {e:#}");
             }

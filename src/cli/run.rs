@@ -5,11 +5,11 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
-use crate::edit::{EditCtx, Op};
 use crate::capture::{capture, carry_over, merge};
 use crate::claude::SessionInfo;
 use crate::diff;
 use crate::edit;
+use crate::edit::{EditCtx, Op};
 use crate::error::{Exit, failure};
 use crate::model::{Source, Version, Workspace, tab_count};
 use crate::plan::{self, Plan, PlanSource, Selection};
@@ -33,11 +33,18 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             edit_snapshot(ctx, &args.name, ops, args.message)
         }
         Command::Edit { name, batch, message } => {
-            let text = if batch == "-" { std::io::read_to_string(std::io::stdin())? } else { std::fs::read_to_string(&batch)? };
-            let ops: Vec<Op> = serde_json::from_str(&text).map_err(|e| failure(Exit::Error, format!("invalid batch: {e}")))?;
+            let text = if batch == "-" {
+                std::io::read_to_string(std::io::stdin())?
+            } else {
+                std::fs::read_to_string(&batch)?
+            };
+            let ops: Vec<Op> =
+                serde_json::from_str(&text).map_err(|e| failure(Exit::Error, format!("invalid batch: {e}")))?;
             edit_snapshot(ctx, &name, ops, message)
         }
-        Command::Restore { snapshot, workspaces, tabs, plan, pick } => restore(ctx, snapshot, workspaces, tabs, plan, pick),
+        Command::Restore { snapshot, workspaces, tabs, plan, pick } => {
+            restore(ctx, snapshot, workspaces, tabs, plan, pick)
+        }
         Command::Apply { plan_id } => apply(ctx, &plan_id),
         Command::Sessions { search, cwd, days } => sessions(ctx, search.as_deref(), cwd.as_deref(), days),
         Command::Recent { hours, restore, plan, pick } => recent(ctx, hours, restore, plan, pick),
@@ -66,7 +73,14 @@ fn install_cmux(ctx: &Ctx, print: bool) -> Result<Outcome> {
     ))
 }
 
-fn save(ctx: &Ctx, name: Option<String>, only: &[String], from: Option<String>, message: Option<String>, pick_flag: bool) -> Result<Outcome> {
+fn save(
+    ctx: &Ctx,
+    name: Option<String>,
+    only: &[String],
+    from: Option<String>,
+    message: Option<String>,
+    pick_flag: bool,
+) -> Result<Outcome> {
     let name = match name {
         Some(n) => n,
         None if pick_flag && ctx.interactive => pick::choose_save_name(&ctx.store)?,
@@ -78,7 +92,11 @@ fn save(ctx: &Ctx, name: Option<String>, only: &[String], from: Option<String>, 
         Some(from) => {
             let (src_name, version) = parse_ref(&from)?;
             let src = ctx.store.load(&src_name, version)?;
-            let source = Source { kind: "copy".into(), cmux_state_version: None, from: Some(format!("{}@{}", src.snapshot, src.version)) };
+            let source = Source {
+                kind: "copy".into(),
+                cmux_state_version: None,
+                from: Some(format!("{}@{}", src.snapshot, src.version)),
+            };
             (src.workspaces, source)
         }
         None => {
@@ -96,7 +114,14 @@ fn save(ctx: &Ctx, name: Option<String>, only: &[String], from: Option<String>, 
 }
 
 /// Writes a new version unless nothing changed (exit 3). Shared by save and edits.
-pub(crate) fn commit(ctx: &Ctx, name: &str, previous: Option<&Version>, workspaces: Vec<Workspace>, source: Source, message: Option<String>) -> Result<Outcome> {
+pub(crate) fn commit(
+    ctx: &Ctx,
+    name: &str,
+    previous: Option<&Version>,
+    workspaces: Vec<Workspace>,
+    source: Source,
+    message: Option<String>,
+) -> Result<Outcome> {
     if let Some(p) = previous
         && p.workspaces == workspaces
     {
@@ -107,7 +132,8 @@ pub(crate) fn commit(ctx: &Ctx, name: &str, previous: Option<&Version>, workspac
         .with_exit(Exit::NothingToDo));
     }
     let changes = diff::diff(previous.map(|p| p.workspaces.as_slice()).unwrap_or(&[]), &workspaces);
-    let message = message.unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
+    let message = message
+        .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
     let v = ctx.store.save_new(name, &message, source, workspaces)?;
     let warnings = edit::warnings(&v.workspaces, &ctx.claude);
     Ok(Outcome::ok(
@@ -172,8 +198,11 @@ fn diff_cmd(ctx: &Ctx, a: &str, b: &str) -> Result<Outcome> {
 fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Outcome> {
     let count = ctx.store.versions(name)?.len();
     if count <= keep {
-        return Ok(Outcome::ok(json!({"snapshot": name, "deleted": []}), format!("{name}: {count} version(s), nothing to prune"))
-            .with_exit(Exit::NothingToDo));
+        return Ok(Outcome::ok(
+            json!({"snapshot": name, "deleted": []}),
+            format!("{name}: {count} version(s), nothing to prune"),
+        )
+        .with_exit(Exit::NothingToDo));
     }
     confirm(ctx, &format!("Delete {} old version(s) of {name}?", count - keep))?;
     let deleted = ctx.store.prune(name, keep)?;
@@ -199,7 +228,8 @@ pub(crate) fn confirm(ctx: &Ctx, question: &str) -> Result<()> {
 fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>) -> Result<Outcome> {
     let previous = ctx.store.load(name, None)?;
     let mut workspaces = previous.workspaces.clone();
-    let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
+    let open =
+        if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
     edit::apply_ops(&mut workspaces, &ops, &EditCtx { claude: &ctx.claude, store: &ctx.store, open: open.as_ref() })?;
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
     commit(ctx, name, Some(&previous), workspaces, source, message)
@@ -211,9 +241,8 @@ fn ws_ops(a: &WsArgs) -> Result<Vec<Op>> {
         ops.push(Op::WsAddLive { ws: live.clone() });
     }
     if let Some(from) = &a.from {
-        let (src, ws) = from
-            .split_once(':')
-            .ok_or_else(|| failure(Exit::Error, "--from needs <name>[@v]:<workspace>"))?;
+        let (src, ws) =
+            from.split_once(':').ok_or_else(|| failure(Exit::Error, "--from needs <name>[@v]:<workspace>"))?;
         ops.push(Op::WsFrom { from: src.to_string(), ws: ws.to_string() });
     }
     if let Some(ws) = &a.ws {
@@ -232,7 +261,10 @@ fn ws_ops(a: &WsArgs) -> Result<Vec<Op>> {
         }
     }
     if ops.is_empty() {
-        return Err(failure(Exit::Error, "nothing to change: give a workspace with --rename/--color/--index/--remove, or --add-live/--from"));
+        return Err(failure(
+            Exit::Error,
+            "nothing to change: give a workspace with --rename/--color/--index/--remove, or --add-live/--from",
+        ));
     }
     Ok(ops)
 }
@@ -243,12 +275,20 @@ fn tab_ops(a: &TabArgs) -> Result<Vec<Op>> {
     }
     if a.add_terminal {
         let cwd = a.cwd.clone().ok_or_else(|| failure(Exit::Error, "--add-terminal needs --cwd"))?;
-        return Ok(vec![Op::TabAddTerminal { ws: a.target.clone(), cwd, command: a.command.clone(), title: a.title.clone() }]);
+        return Ok(vec![Op::TabAddTerminal {
+            ws: a.target.clone(),
+            cwd,
+            command: a.command.clone(),
+            title: a.title.clone(),
+        }]);
     }
     let positional = [a.index.is_some(), a.move_to.is_some(), a.remove].iter().filter(|b| **b).count();
     let others = [a.cwd.is_some(), a.session.is_some(), a.rename.is_some()].iter().filter(|b| **b).count();
     if positional > 1 || (positional == 1 && others > 0) {
-        return Err(failure(Exit::Error, "--index, --move and --remove can't be combined with other changes; run them separately"));
+        return Err(failure(
+            Exit::Error,
+            "--index, --move and --remove can't be combined with other changes; run them separately",
+        ));
     }
     let t = a.target.clone();
     let mut ops = vec![];
@@ -272,12 +312,22 @@ fn tab_ops(a: &TabArgs) -> Result<Vec<Op>> {
         ops.push(Op::TabRename { tab: t.clone(), to: to.clone() });
     }
     if ops.is_empty() {
-        return Err(failure(Exit::Error, "nothing to change: give --rename/--index/--move/--remove/--cwd/--session, or --add-session/--add-terminal"));
+        return Err(failure(
+            Exit::Error,
+            "nothing to change: give --rename/--index/--move/--remove/--cwd/--session, or --add-session/--add-terminal",
+        ));
     }
     Ok(ops)
 }
 
-fn restore(ctx: &Ctx, snapshot: Option<String>, workspaces: Vec<String>, tabs: Vec<String>, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
+fn restore(
+    ctx: &Ctx,
+    snapshot: Option<String>,
+    workspaces: Vec<String>,
+    tabs: Vec<String>,
+    plan_only: bool,
+    pick_flag: bool,
+) -> Result<Outcome> {
     let snapshot = match snapshot {
         Some(s) => s,
         None if pick_flag && ctx.interactive => pick::choose_snapshot(&ctx.store)?,
@@ -293,7 +343,10 @@ fn restore(ctx: &Ctx, snapshot: Option<String>, workspaces: Vec<String>, tabs: V
 fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Outcome> {
     if plan_only {
         if !ctx.backend.is_running() {
-            return Err(failure(Exit::CmuxUnreachable, "cmux is not running; start it first (restore without --plan starts it)"));
+            return Err(failure(
+                Exit::CmuxUnreachable,
+                "cmux is not running; start it first (restore without --plan starts it)",
+            ));
         }
     } else {
         ctx.backend.ensure_running()?;
@@ -309,7 +362,9 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
     }
     plan::save_plan(&ctx.store, &plan)?;
     let go = !plan_only
-        && (ctx.yes || (ctx.interactive && pick::confirm(&format!("{}\nRestore {} tab(s)?", human::plan(&plan), plan.tab_count()))?));
+        && (ctx.yes
+            || (ctx.interactive
+                && pick::confirm(&format!("{}\nRestore {} tab(s)?", human::plan(&plan), plan.tab_count()))?));
     if !go {
         let apply = format!("ccsnap apply {}", plan.plan_id);
         return Ok(Outcome::ok(
@@ -323,7 +378,10 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
 fn applied(ctx: &Ctx, plan: &Plan) -> Result<Outcome> {
     let steps = plan::apply_plan(plan, &ctx.store, &ctx.claude, ctx.backend.as_ref())?;
     let failed = steps.iter().filter(|s| !s.ok).count();
-    let out = Outcome::ok(json!({"planId": plan.plan_id, "applied": true, "steps": steps, "failed": failed}), human::steps(&steps));
+    let out = Outcome::ok(
+        json!({"planId": plan.plan_id, "applied": true, "steps": steps, "failed": failed}),
+        human::steps(&steps),
+    );
     Ok(if failed > 0 { out.with_exit(Exit::Error) } else { out })
 }
 
@@ -363,7 +421,10 @@ fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool
     if wants_plan {
         if plan_only {
             if !ctx.backend.is_running() {
-                return Err(failure(Exit::CmuxUnreachable, "cmux is not running; start it first (restore without --plan starts it)"));
+                return Err(failure(
+                    Exit::CmuxUnreachable,
+                    "cmux is not running; start it first (restore without --plan starts it)",
+                ));
             }
         } else {
             ctx.backend.ensure_running()?;
@@ -378,8 +439,11 @@ fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool
         .filter(|s| is_recoverable(s, &open, &home))
         .collect();
     if list.is_empty() {
-        return Ok(Outcome::ok(json!({"sessions": []}), format!("No Claude sessions from the last {hours}h are missing from cmux."))
-            .with_exit(Exit::NothingToDo));
+        return Ok(Outcome::ok(
+            json!({"sessions": []}),
+            format!("No Claude sessions from the last {hours}h are missing from cmux."),
+        )
+        .with_exit(Exit::NothingToDo));
     }
     if !wants_plan {
         return Ok(Outcome::ok(json!({"sessions": list}), human::sessions(&list, &open)));

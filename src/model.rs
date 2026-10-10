@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{failure, Exit};
+use crate::error::{Exit, failure};
 
 /// Version of ccsnap's own file format.
 pub const FORMAT: u32 = 1;
@@ -103,9 +103,11 @@ impl Tab {
 /// True for Claude Code session IDs (UUIDs), the only values ccsnap passes to `claude --resume`.
 pub fn is_session_id(s: &str) -> bool {
     s.len() == 36
-        && s.chars().enumerate().all(|(i, c)| {
-            if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() }
-        })
+        && s.chars().enumerate().all(
+            |(i, c)| {
+                if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() }
+            },
+        )
 }
 
 pub fn tab_count(workspaces: &[Workspace]) -> usize {
@@ -119,12 +121,8 @@ pub fn find_by_name(names: &[&str], query: &str, noun: &str) -> anyhow::Result<u
     if let Some(i) = names.iter().position(|n| n.to_lowercase() == q) {
         return Ok(i);
     }
-    let hits: Vec<usize> = names
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| n.to_lowercase().contains(&q))
-        .map(|(i, _)| i)
-        .collect();
+    let hits: Vec<usize> =
+        names.iter().enumerate().filter(|(_, n)| n.to_lowercase().contains(&q)).map(|(i, _)| i).collect();
     match hits.as_slice() {
         [i] => Ok(*i),
         [] => Err(failure(Exit::NotFound, format!("no {noun} matches '{query}'"))),
@@ -141,7 +139,7 @@ pub fn find_by_name(names: &[&str], query: &str, noun: &str) -> anyhow::Result<u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::{exit_of, Exit};
+    use crate::error::{Exit, exit_of};
 
     const ID: &str = "97aeb422-20c1-41f7-a9c6-0f7c5a658991";
 
@@ -156,7 +154,10 @@ mod tests {
     #[test]
     fn terminal_tab_omits_missing_command() {
         let t = Tab::Terminal { title: "sh".into(), cwd: "/w".into(), command: None };
-        assert_eq!(serde_json::to_value(&t).unwrap(), serde_json::json!({"type": "terminal", "title": "sh", "cwd": "/w"}));
+        assert_eq!(
+            serde_json::to_value(&t).unwrap(),
+            serde_json::json!({"type": "terminal", "title": "sh", "cwd": "/w"})
+        );
     }
 
     #[test]

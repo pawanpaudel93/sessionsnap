@@ -40,7 +40,12 @@ pub fn parse(text: &str) -> Result<Vec<TreeWorkspace>> {
                     });
                 }
             }
-            out.push(TreeWorkspace { id: str_of(ws, "id"), reference: str_of(ws, "ref"), title: str_of(ws, "title"), surfaces });
+            out.push(TreeWorkspace {
+                id: str_of(ws, "id"),
+                reference: str_of(ws, "ref"),
+                title: str_of(ws, "title"),
+                surfaces,
+            });
         }
     }
     Ok(out)
@@ -65,9 +70,8 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> Vec<OpenWorkspa
                 .into_iter()
                 .map(|s| {
                     let tty = s.tty.as_deref().map(norm_tty);
-                    let panel = fw.and_then(|f| {
-                        f.panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty)
-                    });
+                    let panel = fw
+                        .and_then(|f| f.panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty));
                     OpenTab {
                         reference: Some(s.reference),
                         title: clean_title(&s.title),

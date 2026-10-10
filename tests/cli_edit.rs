@@ -35,7 +35,8 @@ fn add_session_and_batch() {
     env.run(&["save", "work"]).unwrap();
     assert_eq!(env.run(&["tab", "work", "Beta", "--add-session", C]).unwrap().json["tabs"], 4);
     let batch = env.dir.path().join("ops.json");
-    std::fs::write(&batch, r#"[{"op":"ws-rename","ws":"Beta","to":"Review"},{"op":"tab-remove","tab":"Alpha#2"}]"#).unwrap();
+    std::fs::write(&batch, r#"[{"op":"ws-rename","ws":"Beta","to":"Review"},{"op":"tab-remove","tab":"Alpha#2"}]"#)
+        .unwrap();
     let o = env.run(&["edit", "work", "--batch", batch.to_str().unwrap()]).unwrap();
     assert_eq!(o.json["tabs"], 3);
 }

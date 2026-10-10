@@ -8,7 +8,11 @@ use crate::model::{Version, tab_count};
 pub fn saved(v: &Version, warnings: &[String]) -> String {
     let mut s = format!(
         "Saved {} v{}: {} workspaces, {} tabs ({})",
-        v.snapshot, v.version, v.workspaces.len(), tab_count(&v.workspaces), v.message
+        v.snapshot,
+        v.version,
+        v.workspaces.len(),
+        tab_count(&v.workspaces),
+        v.message
     );
     for w in warnings {
         s.push_str(&format!("\n  ! {w}"));

@@ -120,7 +120,11 @@ pub fn source_workspaces(source: &PlanSource, store: &Store, claude: &Claude) ->
                     .find_transcript(id)
                     .ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))?;
                 let info = claude.info(&path)?;
-                tabs.push(Tab::Claude { title: info.label(), cwd: info.cwd.clone().unwrap_or_default(), session_id: id.clone() });
+                tabs.push(Tab::Claude {
+                    title: info.label(),
+                    cwd: info.cwd.clone().unwrap_or_default(),
+                    session_id: id.clone(),
+                });
             }
             let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
             Ok(vec![Workspace {
@@ -157,7 +161,11 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> 
                 }
                 Some(id) if !is_session_id(id) || claude.find_transcript(id).is_none() => {
                     b.warnings.push(format!("{label}: transcript not found, opening a plain shell"));
-                    pending.push(Tab::Terminal { title: tab.title().to_string(), cwd: tab.cwd().to_string(), command: None });
+                    pending.push(Tab::Terminal {
+                        title: tab.title().to_string(),
+                        cwd: tab.cwd().to_string(),
+                        command: None,
+                    });
                 }
                 Some(id) => {
                     planned.insert(id.to_string());
@@ -171,9 +179,14 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> 
         }
         match live {
             Some(live) => {
-                let (claude_tabs, shells): (Vec<Tab>, Vec<Tab>) = pending.into_iter().partition(|t| t.session_id().is_some());
+                let (claude_tabs, shells): (Vec<Tab>, Vec<Tab>) =
+                    pending.into_iter().partition(|t| t.session_id().is_some());
                 for s in shells {
-                    b.skipped.push(format!("{} › {}: shell tabs are not added to an open workspace", ws.name, s.title()));
+                    b.skipped.push(format!(
+                        "{} › {}: shell tabs are not added to an open workspace",
+                        ws.name,
+                        s.title()
+                    ));
                 }
                 if !claude_tabs.is_empty() {
                     b.actions.push(Action::AddTabs {
@@ -183,7 +196,9 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> 
                     });
                 }
             }
-            None => b.actions.push(Action::CreateWorkspace { name: ws.name.clone(), cwd: ws.cwd.clone(), tabs: pending }),
+            None => {
+                b.actions.push(Action::CreateWorkspace { name: ws.name.clone(), cwd: ws.cwd.clone(), tabs: pending })
+            }
         }
     }
     b
@@ -203,7 +218,8 @@ fn match_workspace<'a>(ws: &Workspace, open: &'a OpenState) -> Option<&'a OpenWo
         .iter()
         .copied()
         .map(|w| {
-            let shared = w.tabs.iter().filter(|t| t.session_id.as_deref().is_some_and(|s| sessions.contains(s))).count();
+            let shared =
+                w.tabs.iter().filter(|t| t.session_id.as_deref().is_some_and(|s| sessions.contains(s))).count();
             (w, shared)
         })
         .filter(|(_, n)| *n > 0)
@@ -271,7 +287,10 @@ pub fn apply_plan(plan: &Plan, store: &Store, claude: &Claude, backend: &dyn Bac
             )),
             Action::AddTabs { workspace_ref, workspace_name, tabs } => {
                 for tab in tabs {
-                    steps.push(step(format!("add {} to {workspace_name}", tab.title()), backend.add_tab(workspace_ref, tab)));
+                    steps.push(step(
+                        format!("add {} to {workspace_name}", tab.title()),
+                        backend.add_tab(workspace_ref, tab),
+                    ));
                 }
             }
         }
@@ -310,37 +329,65 @@ mod tests {
     }
 
     fn workspace(name: &str, cwd: &str, id: Option<&str>, tabs: Vec<Tab>) -> Workspace {
-        Workspace { name: name.into(), color: None, cwd: cwd.into(), git_branch: None, cmux_workspace_id: id.map(str::to_string), tabs }
+        Workspace {
+            name: name.into(),
+            color: None,
+            cwd: cwd.into(),
+            git_branch: None,
+            cmux_workspace_id: id.map(str::to_string),
+            tabs,
+        }
     }
 
     fn saved() -> Vec<Workspace> {
         vec![
-            workspace("Alpha", "/w/a", Some("WA"), vec![
-                claude_tab("one", "/w/a", A),
-                claude_tab("two", "/w/a", B),
-                Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: None },
-            ]),
+            workspace(
+                "Alpha",
+                "/w/a",
+                Some("WA"),
+                vec![
+                    claude_tab("one", "/w/a", A),
+                    claude_tab("two", "/w/a", B),
+                    Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: None },
+                ],
+            ),
             workspace("Gamma", "/w/c", None, vec![claude_tab("three", "/w/c", C)]),
             workspace("Delta", "/w/d", None, vec![claude_tab("lost", "/w/d", D)]),
         ]
     }
 
     fn alpha_with_one_open() -> OpenState {
-        OpenState { live: true, state_version: Some(1), workspaces: vec![open_ws("WA", "Alpha", "/w/a", &[("one", "/w/a", Some(A))])] }
+        OpenState {
+            live: true,
+            state_version: Some(1),
+            workspaces: vec![open_ws("WA", "Alpha", "/w/a", &[("one", "/w/a", Some(A))])],
+        }
     }
 
     #[test]
     fn plans_only_missing_tabs() {
         let (_d, _s, claude) = setup();
         let b = build_actions(&saved(), &alpha_with_one_open(), &claude);
-        assert_eq!(b.actions, vec![
-            Action::AddTabs { workspace_ref: "workspace:WA".into(), workspace_name: "Alpha".into(), tabs: vec![claude_tab("two", "/w/a", B)] },
-            Action::CreateWorkspace { name: "Gamma".into(), cwd: "/w/c".into(), tabs: vec![claude_tab("three", "/w/c", C)] },
-            Action::CreateWorkspace {
-                name: "Delta".into(), cwd: "/w/d".into(),
-                tabs: vec![Tab::Terminal { title: "lost".into(), cwd: "/w/d".into(), command: None }],
-            },
-        ]);
+        assert_eq!(
+            b.actions,
+            vec![
+                Action::AddTabs {
+                    workspace_ref: "workspace:WA".into(),
+                    workspace_name: "Alpha".into(),
+                    tabs: vec![claude_tab("two", "/w/a", B)]
+                },
+                Action::CreateWorkspace {
+                    name: "Gamma".into(),
+                    cwd: "/w/c".into(),
+                    tabs: vec![claude_tab("three", "/w/c", C)]
+                },
+                Action::CreateWorkspace {
+                    name: "Delta".into(),
+                    cwd: "/w/d".into(),
+                    tabs: vec![Tab::Terminal { title: "lost".into(), cwd: "/w/d".into(), command: None }],
+                },
+            ]
+        );
         assert_eq!(b.skipped.len(), 2, "{:?}", b.skipped);
         assert_eq!(b.warnings.len(), 1, "{:?}", b.warnings);
     }
@@ -348,7 +395,8 @@ mod tests {
     #[test]
     fn missing_transcript_in_matched_workspace_is_skipped_without_warning() {
         let (_d, _s, claude) = setup();
-        let ws = workspace("Alpha", "/w/a", Some("WA"), vec![claude_tab("one", "/w/a", A), claude_tab("lost", "/w/a", D)]);
+        let ws =
+            workspace("Alpha", "/w/a", Some("WA"), vec![claude_tab("one", "/w/a", A), claude_tab("lost", "/w/a", D)]);
         let b = build_actions(&[ws], &alpha_with_one_open(), &claude);
         assert!(b.actions.is_empty(), "{:?}", b.actions);
         assert!(b.warnings.is_empty(), "{:?}", b.warnings);
@@ -370,11 +418,20 @@ mod tests {
         let mut ws = saved();
         ws[0].cmux_workspace_id = None;
         ws[0].name = "Old name".into();
-        let open = OpenState { live: true, state_version: None, workspaces: vec![open_ws("X9", "New name", "/w/a", &[("one", "/w/a", Some(A))])] };
+        let open = OpenState {
+            live: true,
+            state_version: None,
+            workspaces: vec![open_ws("X9", "New name", "/w/a", &[("one", "/w/a", Some(A))])],
+        };
         let b = build_actions(&ws[..1], &open, &claude);
-        assert_eq!(b.actions, vec![Action::AddTabs {
-            workspace_ref: "workspace:X9".into(), workspace_name: "New name".into(), tabs: vec![claude_tab("two", "/w/a", B)],
-        }]);
+        assert_eq!(
+            b.actions,
+            vec![Action::AddTabs {
+                workspace_ref: "workspace:X9".into(),
+                workspace_name: "New name".into(),
+                tabs: vec![claude_tab("two", "/w/a", B)],
+            }]
+        );
     }
 
     #[test]
@@ -383,14 +440,20 @@ mod tests {
         let mut ws = saved();
         ws[1].tabs.push(claude_tab("three again", "/w/c", C));
         let b = build_actions(&ws[1..2], &OpenState::default(), &claude);
-        assert_eq!(b.actions, vec![Action::CreateWorkspace {
-            name: "Gamma".into(), cwd: "/w/c".into(), tabs: vec![claude_tab("three", "/w/c", C)],
-        }]);
+        assert_eq!(
+            b.actions,
+            vec![Action::CreateWorkspace {
+                name: "Gamma".into(),
+                cwd: "/w/c".into(),
+                tabs: vec![claude_tab("three", "/w/c", C)],
+            }]
+        );
     }
 
     #[test]
     fn selection_limits_workspaces_and_tabs() {
-        let ws = select(saved(), &Selection { workspaces: vec!["gamma".into()], tabs: vec!["Alpha#2".into()] }).unwrap();
+        let ws =
+            select(saved(), &Selection { workspaces: vec!["gamma".into()], tabs: vec!["Alpha#2".into()] }).unwrap();
         assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Gamma"]);
         assert_eq!(ws[0].tabs, vec![claude_tab("two", "/w/a", B)]);
     }

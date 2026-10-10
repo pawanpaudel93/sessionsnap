@@ -36,10 +36,7 @@ pub struct SessionInfo {
 impl SessionInfo {
     /// Best label: title, then first prompt, then the ID.
     pub fn label(&self) -> String {
-        self.title
-            .clone()
-            .or_else(|| self.first_prompt.clone())
-            .unwrap_or_else(|| self.session_id.clone())
+        self.title.clone().or_else(|| self.first_prompt.clone()).unwrap_or_else(|| self.session_id.clone())
     }
 }
 
@@ -72,19 +69,13 @@ impl Claude {
     /// Finds a session's transcript in any project.
     pub fn find_transcript(&self, session_id: &str) -> Option<PathBuf> {
         let name = format!("{session_id}.jsonl");
-        fs::read_dir(self.projects())
-            .ok()?
-            .flatten()
-            .map(|e| e.path().join(&name))
-            .find(|p| p.is_file())
+        fs::read_dir(self.projects()).ok()?.flatten().map(|e| e.path().join(&name)).find(|p| p.is_file())
     }
 
     pub fn title_for(&self, cwd: &str, session_id: &str) -> Option<String> {
         let direct = self.transcript_path(cwd, session_id);
         let path = if direct.is_file() { direct } else { self.find_transcript(session_id)? };
-        self.info(&path)
-            .ok()
-            .and_then(|i| i.title.or(i.first_prompt))
+        self.info(&path).ok().and_then(|i| i.title.or(i.first_prompt))
     }
 
     /// Reads a transcript's folder, name, first real prompt and entrypoint.
@@ -125,8 +116,8 @@ impl Claude {
                 _ => {}
             }
         }
-        let modified = chrono::DateTime::<chrono::Local>::from(modified_at)
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+        let modified =
+            chrono::DateTime::<chrono::Local>::from(modified_at).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
         Ok(SessionInfo {
             session_id,
             cwd,
@@ -180,11 +171,7 @@ fn str_field(v: &Value, key: &str) -> Option<String> {
 /// Collapses whitespace and cuts to `max` characters.
 fn one_line(text: &str, max: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= max {
-        flat
-    } else {
-        flat.chars().take(max).collect::<String>() + "…"
-    }
+    if flat.chars().count() <= max { flat } else { flat.chars().take(max).collect::<String>() + "…" }
 }
 
 #[cfg(test)]
@@ -213,14 +200,19 @@ mod tests {
     fn info_prefers_custom_title_and_skips_meta_prompts() {
         let d = tempfile::tempdir().unwrap();
         let c = Claude::new(d.path());
-        let p = write_raw(d.path(), "/w/a", A, &[
-            json!({"type": "user", "isMeta": true, "cwd": "/w/a", "entrypoint": "cli",
+        let p = write_raw(
+            d.path(),
+            "/w/a",
+            A,
+            &[
+                json!({"type": "user", "isMeta": true, "cwd": "/w/a", "entrypoint": "cli",
                    "message": {"content": "<command-name>/clear</command-name>"}}),
-            json!({"type": "user", "cwd": "/w/a", "entrypoint": "cli",
+                json!({"type": "user", "cwd": "/w/a", "entrypoint": "cli",
                    "message": {"content": "fix the login bug\nplease"}}),
-            json!({"type": "ai-title", "aiTitle": "Fix login bug", "sessionId": A}),
-            json!({"type": "custom-title", "customTitle": "login fix", "sessionId": A}),
-        ]);
+                json!({"type": "ai-title", "aiTitle": "Fix login bug", "sessionId": A}),
+                json!({"type": "custom-title", "customTitle": "login fix", "sessionId": A}),
+            ],
+        );
         let i = c.info(&p).unwrap();
         assert_eq!(i.session_id, A);
         assert_eq!(i.cwd.as_deref(), Some("/w/a"));
@@ -248,10 +240,15 @@ mod tests {
     fn ai_title_is_the_fallback() {
         let d = tempfile::tempdir().unwrap();
         let c = Claude::new(d.path());
-        write_raw(d.path(), "/w/a", A, &[
-            json!({"type": "user", "cwd": "/w/a", "message": {"content": "hello"}}),
-            json!({"type": "ai-title", "aiTitle": "Greeting", "sessionId": A}),
-        ]);
+        write_raw(
+            d.path(),
+            "/w/a",
+            A,
+            &[
+                json!({"type": "user", "cwd": "/w/a", "message": {"content": "hello"}}),
+                json!({"type": "ai-title", "aiTitle": "Greeting", "sessionId": A}),
+            ],
+        );
         assert_eq!(c.title_for("/w/a", A).as_deref(), Some("Greeting"));
     }
 

@@ -98,9 +98,9 @@ impl Store {
         let versions = self.versions(name)?;
         let v = match version {
             Some(v) => v,
-            None => *versions
-                .last()
-                .ok_or_else(|| failure(Exit::NotFound, format!("snapshot '{name}' has no versions")))?,
+            None => {
+                *versions.last().ok_or_else(|| failure(Exit::NotFound, format!("snapshot '{name}' has no versions")))?
+            }
         };
         read_json(&self.version_path(name, v)?)
     }
@@ -167,10 +167,7 @@ pub fn parse_ref(s: &str) -> Result<(String, Option<u32>)> {
     validate_name(name)?;
     let version = match v {
         None | Some("latest") => None,
-        Some(v) => Some(
-            v.parse::<u32>()
-                .map_err(|_| failure(Exit::Error, format!("invalid version '{v}' in '{s}'")))?,
-        ),
+        Some(v) => Some(v.parse::<u32>().map_err(|_| failure(Exit::Error, format!("invalid version '{v}' in '{s}'")))?),
     };
     Ok((name.to_string(), version))
 }
@@ -182,9 +179,7 @@ fn parse_version_file(fname: &str) -> Option<u32> {
 }
 
 pub fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| failure(Exit::Error, "HOME is not set"))
+    std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| failure(Exit::Error, "HOME is not set"))
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {

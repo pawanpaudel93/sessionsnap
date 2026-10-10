@@ -16,10 +16,8 @@ pub struct ProcessRunner;
 
 impl Runner for ProcessRunner {
     fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-        let out = std::process::Command::new(program)
-            .args(args)
-            .output()
-            .with_context(|| format!("running {program}"))?;
+        let out =
+            std::process::Command::new(program).args(args).output().with_context(|| format!("running {program}"))?;
         Ok(Output {
             success: out.status.success(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),

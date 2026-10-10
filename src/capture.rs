@@ -8,10 +8,7 @@ use crate::model::{Tab, Workspace, find_by_name};
 /// take their title from the transcript (session name, else automatic title).
 pub fn capture(open: &OpenState, claude: &Claude, only: &[String]) -> Result<Vec<Workspace>> {
     let chosen: Vec<&OpenWorkspace> = if only.is_empty() {
-        open.workspaces
-            .iter()
-            .filter(|w| !w.name.eq_ignore_ascii_case(crate::install::PALETTE_WORKSPACE))
-            .collect()
+        open.workspaces.iter().filter(|w| !w.name.eq_ignore_ascii_case(crate::install::PALETTE_WORKSPACE)).collect()
     } else {
         let names: Vec<&str> = open.workspaces.iter().map(|w| w.name.as_str()).collect();
         only.iter()
@@ -167,7 +164,10 @@ mod tests {
         let fresh = capture(&open_state(), &claude, &[]).unwrap();
         let out = carry_over(&prev, fresh);
         assert_eq!(out[0].color.as_deref(), Some("blue"));
-        assert_eq!(out[0].tabs[1], Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) });
+        assert_eq!(
+            out[0].tabs[1],
+            Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) }
+        );
         assert_eq!(out[1].color, None);
     }
 

@@ -61,16 +61,21 @@ pub fn install_cmux(config: &Path, exe: &str) -> Result<Option<PathBuf>> {
     let mut root: Value = if config.exists() {
         let text = std::fs::read_to_string(config)?;
         serde_json::from_str(&text).map_err(|e| {
-            failure(Exit::Refused, format!("{} is not plain JSON ({e}); add the commands by hand from `ccsnap install-cmux --print`", config.display()))
+            failure(
+                Exit::Refused,
+                format!(
+                    "{} is not plain JSON ({e}); add the commands by hand from `ccsnap install-cmux --print`",
+                    config.display()
+                ),
+            )
         })?
     } else {
         json!({})
     };
     let obj = root.as_object_mut().ok_or_else(|| failure(Exit::Refused, "cmux.json is not a JSON object"))?;
     let commands = obj.entry("commands").or_insert_with(|| json!([]));
-    let list = commands
-        .as_array_mut()
-        .ok_or_else(|| failure(Exit::Refused, "cmux.json \"commands\" is not an array"))?;
+    let list =
+        commands.as_array_mut().ok_or_else(|| failure(Exit::Refused, "cmux.json \"commands\" is not an array"))?;
     list.retain(|c| !c.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("ccsnap:")));
     list.extend(palette_commands(exe));
     let backup = if config.exists() {
@@ -100,20 +105,30 @@ mod tests {
     fn install_replaces_own_commands_and_backs_up() {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join("cmux.json");
-        std::fs::write(&cfg, r#"{"commands":[{"name":"Mine","command":"ls"},{"name":"ccsnap: Old","command":"x"}],"other":1}"#).unwrap();
+        std::fs::write(
+            &cfg,
+            r#"{"commands":[{"name":"Mine","command":"ls"},{"name":"ccsnap: Old","command":"x"}],"other":1}"#,
+        )
+        .unwrap();
         let backup = install_cmux(&cfg, "/usr/local/bin/ccsnap").unwrap().unwrap();
         assert!(backup.exists());
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
         let names: Vec<&str> = v["commands"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-        assert_eq!(names, [
-            "Mine",
-            "ccsnap: Save / update snapshot",
-            "ccsnap: Restore snapshot",
-            "ccsnap: Recent sessions not open",
-            "ccsnap: List snapshots",
-        ]);
+        assert_eq!(
+            names,
+            [
+                "Mine",
+                "ccsnap: Save / update snapshot",
+                "ccsnap: Restore snapshot",
+                "ccsnap: Recent sessions not open",
+                "ccsnap: List snapshots",
+            ]
+        );
         assert_eq!(v["other"], 1);
-        assert_eq!(v["commands"][1]["workspace"]["layout"]["pane"]["surfaces"][0]["command"], "'/usr/local/bin/ccsnap' save --pick");
+        assert_eq!(
+            v["commands"][1]["workspace"]["layout"]["pane"]["surfaces"][0]["command"],
+            "'/usr/local/bin/ccsnap' save --pick"
+        );
     }
 
     #[test]
