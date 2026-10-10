@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod cmux;
 pub mod error;
 pub mod model;
 pub mod store;

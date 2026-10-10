@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "createdAt": 1790000000.0,
+  "windows": [
+    {
+      "windowId": "W1",
+      "tabManager": {
+        "selectedWorkspaceIndex": 0,
+        "workspaces": [
+          {
+            "workspaceId": "WS-ALPHA",
+            "customTitle": "Alpha",
+            "currentDirectory": "/w/alpha",
+            "gitBranch": { "branch": "main", "isDirty": false },
+            "layout": { "type": "pane", "pane": { "panelIds": ["P2", "P1"], "selectedPanelId": "P1" } },
+            "panels": [
+              {
+                "id": "P1", "type": "terminal", "title": "✳ fix login", "directory": "/w/alpha", "ttyName": "ttys001",
+                "terminal": {
+                  "agent": { "kind": "claude", "sessionId": "11111111-1111-4111-8111-111111111111", "workingDirectory": "/w/alpha/sub" },
+                  "resumeBinding": { "kind": "claude", "checkpointId": "11111111-1111-4111-8111-111111111111",
+                                     "environment": { "SECRET_TOKEN": "do-not-copy" } }
+                }
+              },
+              { "id": "P2", "type": "terminal", "title": "zsh", "directory": "/w/alpha", "ttyName": "ttys002",
+                "terminal": { "workingDirectory": "/w/alpha" } },
+              { "id": "P3", "type": "browser", "title": "docs" }
+            ]
+          },
+          {
+            "workspaceId": "WS-BETA",
+            "customTitle": "",
+            "processTitle": "beta-proc",
+            "currentDirectory": "/w/beta",
+            "layout": { "type": "pane", "pane": { "panelIds": ["P4"] } },
+            "panels": [
+              { "id": "P4", "type": "terminal", "title": "review", "directory": "/w/beta", "ttyName": "ttys003",
+                "terminal": { "resumeBinding": { "kind": "claude", "checkpointId": "22222222-2222-4222-8222-222222222222", "autoResume": false } } }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
