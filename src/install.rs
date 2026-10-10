@@ -28,6 +28,9 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// Name of the workspace the palette commands open; it is never captured into snapshots.
+pub const PALETTE_WORKSPACE: &str = "ccsnap";
+
 /// Palette entries. Each opens its own "ccsnap" workspace: a plain palette command would type
 /// into the focused tab, which is often a running Claude session.
 pub fn palette_commands(exe: &str) -> Vec<Value> {
@@ -36,7 +39,7 @@ pub fn palette_commands(exe: &str) -> Vec<Value> {
             "name": name,
             "keywords": keywords,
             "workspace": {
-                "name": "ccsnap",
+                "name": PALETTE_WORKSPACE,
                 "cwd": "~",
                 "restart": "recreate",
                 "layout": {"pane": {"surfaces": [

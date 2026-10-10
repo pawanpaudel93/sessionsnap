@@ -8,7 +8,10 @@ use crate::model::{Tab, Workspace, find_by_name};
 /// take their title from the transcript (session name, else automatic title).
 pub fn capture(open: &OpenState, claude: &Claude, only: &[String]) -> Result<Vec<Workspace>> {
     let chosen: Vec<&OpenWorkspace> = if only.is_empty() {
-        open.workspaces.iter().collect()
+        open.workspaces
+            .iter()
+            .filter(|w| !w.name.eq_ignore_ascii_case(crate::install::PALETTE_WORKSPACE))
+            .collect()
     } else {
         let names: Vec<&str> = open.workspaces.iter().map(|w| w.name.as_str()).collect();
         only.iter()
@@ -119,6 +122,21 @@ mod tests {
         assert_eq!(ws[0].cmux_workspace_id.as_deref(), Some("WA"));
         assert_eq!(ws[0].tabs[0], Tab::Claude { title: "login fix".into(), cwd: "/w/a".into(), session_id: A.into() });
         assert_eq!(ws[0].tabs[1], Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: None });
+    }
+
+    #[test]
+    fn palette_workspace_is_skipped_unless_asked_for() {
+        let d = tempfile::tempdir().unwrap();
+        let claude = Claude::new(d.path());
+        let open = OpenState {
+            live: true,
+            state_version: Some(1),
+            workspaces: vec![open_ws("W1", "Alpha", "/w/a", &[]), open_ws("W2", "ccsnap", "~", &[])],
+        };
+        let all = capture(&open, &claude, &[]).unwrap();
+        assert_eq!(all.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha"]);
+        let only = capture(&open, &claude, &["ccsnap".to_string()]).unwrap();
+        assert_eq!(only.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["ccsnap"]);
     }
 
     #[test]
