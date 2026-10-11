@@ -85,7 +85,8 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
 }
 
 /// Last key segments that mark a credential.
-const SECRET_ENDINGS: &[&str] = &["token", "secret", "password", "passwd", "credential", "credentials"];
+const SECRET_ENDINGS: &[&str] =
+    &["token", "secret", "password", "passwd", "credential", "credentials", "auth", "authorization", "bearer"];
 
 /// A flag name or config key that names a credential: its last segment (split on `.`, `_`, `-`)
 /// is one of `SECRET_ENDINGS`, or it contains an API key (`api_key`, `apikey`, `api-key`).
@@ -97,6 +98,43 @@ fn looks_secret(name: &str) -> bool {
     }
     let last = name.rsplit(['.', '_', '-']).next().unwrap_or("");
     SECRET_ENDINGS.contains(&last)
+}
+
+/// Prefixes of well-known token formats (OpenAI, Anthropic, GitHub, Slack, GitLab, AWS, Google).
+const SECRET_PREFIXES: &[&str] = &[
+    "sk-",
+    "sk_",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "glpat-",
+    "akia",
+    "aiza",
+];
+
+/// A value that looks like a credential whatever flag it follows: a known token prefix, a JWT,
+/// an `Authorization`/`Bearer` header, or `NAME=value` whose name looks like a credential.
+fn looks_secret_value(v: &str) -> bool {
+    token_like(v)
+        || (!v.starts_with('-')
+            && v.split_once('=').is_some_and(|(name, value)| looks_secret(name) || token_like(value)))
+}
+
+fn token_like(v: &str) -> bool {
+    let lower = v.trim().to_ascii_lowercase();
+    if SECRET_PREFIXES.iter().any(|p| lower.starts_with(p) && lower.len() >= p.len() + 8) {
+        return true;
+    }
+    if lower.starts_with("eyj") && lower.matches('.').count() == 2 {
+        return true;
+    }
+    lower.contains("bearer ") || lower.starts_with("authorization:")
 }
 
 /// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
@@ -132,7 +170,19 @@ fn without_credentials(args: &[String]) -> (Vec<String>, bool) {
         }
         out.push(a.clone());
     }
-    (out, dropped)
+    // A credential-looking value goes, with the bare flag right before it (`--auth sk-…`).
+    let mut kept: Vec<String> = Vec::with_capacity(out.len());
+    for a in out {
+        if looks_secret_value(&a) {
+            dropped = true;
+            if kept.last().is_some_and(|p| p.starts_with('-') && !p.contains('=')) {
+                kept.pop();
+            }
+            continue;
+        }
+        kept.push(a);
+    }
+    (kept, dropped)
 }
 
 /// Replaces same-named workspaces of `base` with `captured` (keeping their color); appends new ones.
@@ -260,6 +310,34 @@ mod tests {
         assert_eq!(ws[1].tabs, [Tab::Terminal { title: "bad".into(), cwd: "/w/b".into(), command: None }]);
         assert_eq!(notes.len(), 1);
         assert!(notes[0].starts_with("Beta › bad: left out its agent session"), "{notes:?}");
+    }
+
+    #[test]
+    fn drops_values_that_look_like_credentials_whatever_the_flag() {
+        let args: Vec<String> = [
+            "--auth",
+            "sk-proj-abc123",
+            "--header",
+            "Authorization: Bearer abc",
+            "--env",
+            "OPENAI_API_KEY=x",
+            "-e",
+            "GH=ghp_0123456789abcdef0123456789abcdef0123",
+            "--bearer",
+            "b",
+            "--authorization",
+            "a",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+            "--model",
+            "o3",
+            "--sort-key",
+            "name",
+        ]
+        .map(String::from)
+        .to_vec();
+        let (kept, dropped) = without_credentials(&args);
+        assert!(dropped);
+        assert_eq!(kept, ["--model", "o3", "--sort-key", "name"].map(String::from).to_vec());
     }
 
     #[test]
