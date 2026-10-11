@@ -143,7 +143,7 @@ pub fn resumed_session(command: &str) -> Option<AgentRef> {
     })
 }
 
-/// Splits a command line made of plain words, single-quoted parts and `\'`.
+/// Splits a command line made of plain words, single- and double-quoted parts and `\'`.
 fn shell_words(command: &str) -> Vec<String> {
     let (mut words, mut word, mut quoted, mut any) = (vec![], String::new(), false, false);
     let mut chars = command.chars();
@@ -151,6 +151,10 @@ fn shell_words(command: &str) -> Vec<String> {
         match c {
             '\'' => {
                 quoted = !quoted;
+                any = true;
+            }
+            '"' if !quoted => {
+                word.extend(chars.by_ref().take_while(|&c| c != '"'));
                 any = true;
             }
             '\\' if !quoted => {

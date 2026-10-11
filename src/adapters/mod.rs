@@ -18,9 +18,10 @@ pub fn home_dir() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| failure(Exit::Error, "HOME is not set"))
 }
 
-/// Quotes `s` for a POSIX shell.
+/// Quotes `s` for a POSIX shell, without any backslash (a command typed by `cmux send` must not
+/// hold one): an apostrophe becomes `'"'"'`.
 pub fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
+    format!("'{}'", s.replace('\'', r#"'"'"'"#))
 }
 
 /// `s` as one shell word: as is when it has only characters that are safe unquoted, else quoted.
@@ -38,7 +39,7 @@ mod tests {
 
     #[test]
     fn quotes_for_the_shell() {
-        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote("it's"), r#"'it'"'"'s'"#);
         assert_eq!(shell_word("--model=o3"), "--model=o3");
         assert_eq!(shell_word("a b"), "'a b'");
         assert_eq!(shell_word(""), "''");
@@ -46,6 +47,16 @@ mod tests {
         assert_eq!(shell_word("=foo"), "'=foo'");
         assert_eq!(shell_word("a=b"), "a=b");
         assert_eq!(shell_word("$(id)"), "'$(id)'");
-        assert_eq!(shell_word("it's"), r"'it'\''s'");
+        assert_eq!(shell_word("it's"), r#"'it'"'"'s'"#);
+    }
+
+    #[test]
+    fn quoted_words_round_trip_through_sh() {
+        for word in ["Don't push", "it's", "a b", "$(id)", "=x", "~/x", "'", "''", "\"q\"", "plain"] {
+            let script = format!("printf %s {}", shell_word(word));
+            let out = std::process::Command::new("sh").arg("-c").arg(&script).output().unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), word, "{script}");
+            assert!(!shell_word(word).contains('\\') || word.contains('\\'), "{word}");
+        }
     }
 }

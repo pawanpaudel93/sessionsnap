@@ -345,6 +345,13 @@ mod tests {
         assert!(err.to_string().contains("backslash"), "{err}");
         // Nothing was sent to cmux.
         assert!(b.runner.calls.borrow().is_empty());
+        // An apostrophe is quoted without a backslash, so such a flag is still typed.
+        let cmd = crate::adapters::agents::registry::find("claude")
+            .unwrap()
+            .resume_command(A, &["--append-system-prompt".into(), "Don't push".into()])
+            .unwrap();
+        assert!(!cmd.contains('\\'), "{cmd}");
+        assert!(b.add_tab("workspace:1", &launch("t", "/w", Some(&cmd))).is_ok());
         // The layout JSON carries the command as a JSON value, not typed by `cmux send`.
         assert!(b.create_workspace("W", "/w", &[launch("t", "/w", Some(r"echo 'a\b'"))]).is_ok());
     }

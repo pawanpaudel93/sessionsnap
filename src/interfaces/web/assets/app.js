@@ -215,7 +215,7 @@ function agentName(kind) { return (agentInfo && agentInfo[kind] && agentInfo[kin
 function agentIcon(kind) { return kind === "claude" || kind === "codex" ? kind : "agent"; }
 // A word as the shell would need it, like the resume command quotes it.
 function shellWord(w) {
-  return /^[A-Za-z0-9_./:@%+,=-]+$/.test(w) && !/^[=~]/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`;
+  return /^[A-Za-z0-9_./:@%+,=-]+$/.test(w) && !/^[=~]/.test(w) ? w : `'${w.replace(/'/g, `'"'"'`)}'`;
 }
 function kindOf(t) {
   if (t.type === "agent") {
