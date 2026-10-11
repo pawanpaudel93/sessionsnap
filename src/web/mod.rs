@@ -27,13 +27,21 @@ pub fn serve(listener: TcpListener, server: &Server<'_>, make_ctx: &MakeCtx<'_>,
                 handle_connection(&stream, server, make_ctx);
                 last = Instant::now();
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e) => {
+                match e.kind() {
+                    io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                    // A client gave up before we accepted it, or a signal arrived: try again.
+                    io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted => {}
+                    // E.g. out of file descriptors: often passes, so keep serving.
+                    _ => {
+                        eprintln!("ccsnap: accept failed: {e}");
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
                 if last.elapsed() >= idle {
                     return Ok(());
                 }
-                std::thread::sleep(Duration::from_millis(50));
             }
-            Err(e) => return Err(e.into()),
         }
     }
 }
