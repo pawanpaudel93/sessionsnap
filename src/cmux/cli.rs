@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 
 use super::runner::{Output, ProcessRunner, Runner};
 use super::{Backend, OpenState, state_file, tab_command, tree};
+use crate::core::model::Tab;
 use crate::error::{Exit, failure};
-use crate::model::Tab;
 
 /// The cmux backend: reads state from the `cmux` CLI and the state file, opens tabs via the CLI.
 pub struct CmuxCli<R: Runner> {

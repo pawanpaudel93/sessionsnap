@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::claude::Claude;
 use crate::cmux::{OpenState, OpenTab, OpenWorkspace};
-use crate::model::{Tab, Workspace, find_by_name};
+use crate::core::model::{Tab, Workspace, find_by_name};
 
 /// Turns open workspaces (all, or those named in `only`) into snapshot workspaces. Claude tabs
 /// take their title from the transcript (session name, else automatic title).

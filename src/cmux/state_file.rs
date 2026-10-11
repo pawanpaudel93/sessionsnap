@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use super::clean_title;
+use crate::core::model::is_session_id;
 use crate::error::{Exit, failure};
-use crate::model::is_session_id;
 use crate::store::home_dir;
 
 /// cmux state-file versions sessionsnap understands.

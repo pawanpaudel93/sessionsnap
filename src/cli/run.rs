@@ -5,14 +5,14 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
-use crate::capture::{capture, carry_over, merge};
 use crate::claude::SessionInfo;
-use crate::diff;
-use crate::edit;
-use crate::edit::{EditCtx, Op};
+use crate::core::capture::{capture, carry_over, merge};
+use crate::core::diff;
+use crate::core::edit;
+use crate::core::edit::{EditCtx, Op};
+use crate::core::model::{Source, Version, Workspace, tab_count};
+use crate::core::plan::{self, Plan, PlanSource, Selection};
 use crate::error::{Exit, failure};
-use crate::model::{Source, Version, Workspace, tab_count};
-use crate::plan::{self, Plan, PlanSource, Selection};
 use crate::store::{home_dir, parse_ref, validate_name};
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 
-use crate::model::{Tab, is_session_id};
+use crate::core::model::{Tab, is_session_id};
 
 /// What is open in cmux.
 #[derive(Debug, Clone, PartialEq, Default)]

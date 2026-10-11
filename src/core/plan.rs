@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::claude::Claude;
 use crate::cmux::{Backend, OpenState, OpenWorkspace};
-use crate::edit::{find_ws, locate, parse_tab_ref};
+use crate::core::edit::{find_ws, locate, parse_tab_ref};
+use crate::core::model::{Tab, Workspace, is_session_id};
 use crate::error::{Exit, failure};
-use crate::model::{Tab, Workspace, is_session_id};
 use crate::store::{Store, read_json, write_json_atomic};
 
 /// Which workspaces (whole) and tabs (`<ws>#<n>` / `<ws>:"title"`) to restore; empty = all.

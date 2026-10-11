@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::model::is_session_id;
+use crate::core::model::is_session_id;
 use crate::store::home_dir;
 
 /// Claude Code's data directory (`~/.claude`); transcripts are `projects/<project>/<id>.jsonl`.

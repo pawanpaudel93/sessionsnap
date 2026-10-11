@@ -64,7 +64,7 @@ impl Default for FakeBackend {
     }
 }
 
-fn open_tab(t: &crate::model::Tab) -> crate::cmux::OpenTab {
+fn open_tab(t: &crate::core::model::Tab) -> crate::cmux::OpenTab {
     crate::cmux::OpenTab {
         reference: None,
         title: t.title().to_string(),
@@ -87,7 +87,7 @@ impl crate::cmux::Backend for FakeBackend {
         Ok(self.state.borrow().clone())
     }
 
-    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::model::Tab]) -> anyhow::Result<String> {
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::core::model::Tab]) -> anyhow::Result<String> {
         self.log.borrow_mut().push(format!("create {name} {}", tabs.len()));
         let mut state = self.state.borrow_mut();
         let id = format!("NEW{}", state.workspaces.len());
@@ -97,7 +97,7 @@ impl crate::cmux::Backend for FakeBackend {
         Ok(format!("workspace:{id}"))
     }
 
-    fn add_tab(&self, workspace_ref: &str, tab: &crate::model::Tab) -> anyhow::Result<()> {
+    fn add_tab(&self, workspace_ref: &str, tab: &crate::core::model::Tab) -> anyhow::Result<()> {
         self.log.borrow_mut().push(format!("add {workspace_ref} {}", tab.title()));
         let mut state = self.state.borrow_mut();
         let ws = state

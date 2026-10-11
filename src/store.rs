@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::core::model::{FORMAT, Source, Version, Workspace};
 use crate::error::{Exit, failure};
-use crate::model::{FORMAT, Source, Version, Workspace};
 
 /// Snapshot versions live in `<root>/snapshots/<name>/<NNNN>-<timestamp>.json`; restore plans in
 /// `<root>/plans/<id>.json`.
@@ -202,8 +202,8 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::model::Tab;
     use crate::error::exit_of;
-    use crate::model::Tab;
 
     fn ws(name: &str) -> Workspace {
         Workspace {
