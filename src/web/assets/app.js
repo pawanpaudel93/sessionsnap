@@ -1,7 +1,26 @@
 "use strict";
 // ccsnap UI. Every action is one ccsnap command sent to POST /api/run; the page only displays.
 
-const TOKEN = document.querySelector('meta[name="ccsnap-token"]').content;
+// The key arrives in the link's fragment (#t=…), which the browser never sends to the server.
+// Keep it for reloads of this tab and take it out of the address bar.
+function takeToken() {
+  const m = location.hash.match(/^#t=([0-9a-f]+)$/);
+  if (m) {
+    try {
+      sessionStorage.setItem("ccsnap-token", m[1]);
+    } catch {
+      // Storage can be unavailable; the key still works until the tab reloads.
+    }
+    history.replaceState(null, "", location.pathname);
+    return m[1];
+  }
+  try {
+    return sessionStorage.getItem("ccsnap-token") || "";
+  } catch {
+    return "";
+  }
+}
+let TOKEN = takeToken();
 const main = document.getElementById("main");
 const state = { view: "list", snapshot: null, tab: "edit", version: null, hours: 24 };
 const pending = new Map(); // snapshot name → unsaved edit ops, as `ccsnap edit --batch` takes them
@@ -27,8 +46,7 @@ async function ccsnap(args, input) {
     throw new CommandError("The ccsnap UI server is not running. Start it with the palette command \"ccsnap: Open UI\" or `ccsnap ui`.", 1);
   }
   if (r.status === 401) {
-    location.reload();
-    throw new CommandError("The ccsnap UI restarted; reloading.", 1);
+    throw new CommandError("The ccsnap UI was restarted. Run the palette command \"ccsnap: Open UI\" to reconnect this page.", 1);
   }
   if (!r.ok) throw new CommandError(await r.text(), 1);
   const body = await r.json();
@@ -487,4 +505,9 @@ async function viewRecent() {
 }
 
 for (const b of document.querySelectorAll("nav button")) b.addEventListener("click", () => go(b.dataset.view));
+// "ccsnap: Open UI" points an open tab at the new key by changing only the fragment.
+window.addEventListener("hashchange", () => {
+  TOKEN = takeToken();
+  render();
+});
 render();

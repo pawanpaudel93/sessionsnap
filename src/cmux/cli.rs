@@ -110,9 +110,11 @@ impl<R: Runner> Backend for CmuxCli<R> {
     }
 
     fn show_url(&self, url: &str) -> Result<&'static str> {
-        if let Some(surface) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, url)? {
-            self.cmux_ok(&["browser", surface.as_str(), "reload"])?;
-            return Ok("reloaded");
+        // Match an open UI tab by its address without the fragment (the key).
+        let base = url.split('#').next().unwrap_or(url);
+        if let Some(surface) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
+            self.cmux_ok(&["browser", surface.as_str(), "goto", url])?;
+            return Ok("reused");
         }
         if self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", url])?.success {
             return Ok("dock");
@@ -192,7 +194,7 @@ mod tests {
         }
     }
 
-    const UI: &str = "http://127.0.0.1:47317/";
+    const UI: &str = "http://127.0.0.1:47317/#t=abc";
 
     #[test]
     fn show_url_adds_a_dock_browser() {
@@ -215,12 +217,12 @@ mod tests {
     }
 
     #[test]
-    fn show_url_reloads_an_open_page() {
+    fn show_url_reuses_an_open_page() {
         let mut b = backend(true);
         b.runner.tree = crate::cmux::tree::TEST_BROWSER_TREE;
-        assert_eq!(b.show_url(UI).unwrap(), "reloaded");
+        assert_eq!(b.show_url(UI).unwrap(), "reused");
         let calls = b.runner.calls.borrow();
-        assert_eq!(&calls.last().unwrap()[1..], ["browser", "surface:71", "reload"]);
+        assert_eq!(&calls.last().unwrap()[1..], ["browser", "surface:71", "goto", UI]);
     }
 
     #[test]

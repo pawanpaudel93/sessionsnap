@@ -40,11 +40,7 @@ impl Server {
             return Response::text(403, "wrong host");
         }
         match (req.method.as_str(), req.path.as_str()) {
-            ("GET", "/") => Response {
-                status: 200,
-                content_type: "text/html; charset=utf-8",
-                body: INDEX_HTML.replace("{{TOKEN}}", &self.token).into_bytes(),
-            },
+            ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.into() },
             ("GET", "/app.js") => {
                 Response { status: 200, content_type: "text/javascript; charset=utf-8", body: APP_JS.into() }
             }
@@ -71,7 +67,10 @@ impl Server {
             return Response::text(403, "wrong origin");
         }
         if !req.header("x-ccsnap-token").is_some_and(|t| same(t, &self.token)) {
-            return Response::json(401, &json!({"error": {"code": "stale-token", "message": "reload the page"}}));
+            return Response::json(
+                401,
+                &json!({"error": {"code": "stale-token", "message": "The ccsnap UI was restarted. Run the palette command \"ccsnap: Open UI\" to reconnect this page."}}),
+            );
         }
         // JSON forces a CORS preflight, which this server never answers, for any other origin.
         if !req.header("content-type").is_some_and(|c| c.starts_with("application/json")) {
@@ -156,14 +155,15 @@ mod tests {
     }
 
     #[test]
-    fn serves_page_with_token_and_assets() {
+    fn serves_page_without_token_and_assets() {
         with_store(|mk| {
             let s = server();
             let r = s.handle(&req("GET", "/", &[], ""), mk);
             assert_eq!(r.status, 200);
             let html = String::from_utf8(r.body).unwrap();
-            assert!(html.contains(r#"<meta name="ccsnap-token" content="t0k">"#));
+            assert!(!html.contains("t0k"));
             assert!(!html.contains("{{TOKEN}}"));
+            assert!(!html.contains(r#"ccsnap-token" content"#));
             assert!(html.contains(r#"src="/app.js""#) && html.contains(r#"href="/app.css""#));
             assert_eq!(s.handle(&req("GET", "/app.js", &[], ""), mk).content_type, "text/javascript; charset=utf-8");
             assert_eq!(s.handle(&req("GET", "/app.css", &[], ""), mk).status, 200);
