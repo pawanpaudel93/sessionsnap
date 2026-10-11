@@ -10,7 +10,7 @@ use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name};
 use crate::domain::plan::Plan;
 use crate::error::{Exit, failure};
 use crate::ports::Snapshots;
-use crate::util::json::{read_json, write_json_atomic};
+use crate::util::json::{make_private_dir, read_json, write_private_json_atomic};
 
 /// Snapshot versions live in `<root>/snapshots/<name>/<NNNN>-<timestamp>.json`; restore plans in
 /// `<root>/plans/<id>.json`.
@@ -41,6 +41,7 @@ impl Store {
 
     /// Keeps a plan for `sessionsnap apply`, deleting plans older than an hour.
     pub fn save_plan(&self, plan: &Plan) -> Result<()> {
+        make_private_dir(&self.root)?;
         let dir = self.plans_dir();
         fs::create_dir_all(&dir)?;
         for entry in fs::read_dir(&dir)?.flatten() {
@@ -53,7 +54,7 @@ impl Store {
                 let _ = fs::remove_file(entry.path());
             }
         }
-        write_json_atomic(&dir.join(format!("{}.json", plan.plan_id)), plan)
+        write_private_json_atomic(&dir.join(format!("{}.json", plan.plan_id)), plan)
     }
 
     pub fn load_plan(&self, id: &str) -> Result<Plan> {
@@ -171,6 +172,7 @@ impl Store {
     /// Writes the next version of `name` and returns it.
     pub fn save_new(&self, name: &str, message: &str, source: Source, workspaces: Vec<Workspace>) -> Result<Version> {
         validate_name(name)?;
+        make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         let next = self.versions(name)?.last().copied().unwrap_or(0) + 1;
@@ -185,7 +187,7 @@ impl Store {
             workspaces,
         };
         let file = dir.join(format!("{next:04}-{}.json", now.format("%Y%m%dT%H%M%S")));
-        write_json_atomic(&file, &version)?;
+        write_private_json_atomic(&file, &version)?;
         Ok(version)
     }
 
@@ -242,6 +244,21 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = Store::new(d.path());
         (d, s)
+    }
+
+    /// Snapshots hold launch flags and session IDs: only the owner may read them.
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_d, s) = store();
+        fs::create_dir_all(s.root()).unwrap();
+        fs::set_permissions(s.root(), fs::Permissions::from_mode(0o755)).unwrap();
+        s.save_new("work", "m", Source::default(), vec![ws("A")]).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(s.root()), 0o700, "an existing store folder is made private");
+        let file = fs::read_dir(s.snapshot_dir("work")).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(mode(&file), 0o600);
     }
 
     #[test]
