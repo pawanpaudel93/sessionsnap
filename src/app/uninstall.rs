@@ -16,22 +16,39 @@ pub struct Paths {
     pub data: PathBuf,
     /// This binary, canonical.
     pub exe: PathBuf,
+    /// This binary as it was run (before resolving symlinks): the PATH line names this folder.
+    pub exe_as_run: PathBuf,
     /// Where `cargo install` puts binaries.
     pub cargo_bin: Option<PathBuf>,
-    pub home: PathBuf,
+    /// Shell startup files the installer may have added a PATH line to.
+    pub rc_files: Vec<PathBuf>,
 }
 
 /// The paths of this install.
 pub fn paths(data: &Path) -> Result<Paths> {
     use anyhow::Context;
+    let exe_as_run = std::env::current_exe()?;
+    let env_dir = |name| std::env::var_os(name).map(PathBuf::from).filter(|p: &PathBuf| p.is_absolute());
     Ok(Paths {
         cmux_config: super::install::cmux_config_path()?,
         skills_dir: crate::adapters::agents::claude::skills_dir()?,
         data: data.to_path_buf(),
-        exe: std::env::current_exe()?.canonicalize().context("find this binary")?,
+        exe: exe_as_run.canonicalize().context("find this binary")?,
+        exe_as_run,
         cargo_bin: super::update::cargo_bin_dir(),
-        home: crate::adapters::home_dir()?,
+        rc_files: rc_files(&crate::adapters::home_dir()?, env_dir("ZDOTDIR"), env_dir("XDG_CONFIG_HOME")),
     })
+}
+
+/// The startup files install.sh may write to: the same ones it picks, plus the defaults.
+pub fn rc_files(home: &Path, zdotdir: Option<PathBuf>, xdg_config: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut files = vec![zdotdir.unwrap_or_else(|| home.to_path_buf()).join(".zshrc"), home.join(".zshrc")];
+    files.extend([".bashrc", ".bash_profile", ".profile"].map(|f| home.join(f)));
+    files.push(xdg_config.unwrap_or_else(|| home.join(".config")).join("fish/config.fish"));
+    files.push(home.join(".config/fish/config.fish"));
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|f| seen.insert(f.clone()));
+    files
 }
 
 /// One step's result, e.g. `{what: "~/.sessionsnap", status: "removed"}`.
@@ -84,11 +101,17 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
     let mut steps = vec![];
 
     let config = p.cmux_config.display().to_string();
-    steps.push(match uninstall_cmux(&p.cmux_config)? {
-        Some(backup) => {
+    steps.push(match uninstall_cmux(&p.cmux_config) {
+        Ok(Some(backup)) => {
             step(format!("palette commands in {config}"), "removed", Some(format!("backup: {}", backup.display())))
         }
-        None => step(format!("palette commands in {config}"), "already gone", None),
+        Ok(None) => step(format!("palette commands in {config}"), "already gone", None),
+        // A file sessionsnap can't edit safely (say, comments inside "commands") must not stop
+        // the rest of the uninstall.
+        Err(e) if crate::error::exit_of(&e) == crate::error::Exit::Refused => {
+            step(format!("palette commands in {config}"), "left", Some(format!("{e:#}")))
+        }
+        Err(e) => return Err(e),
     });
 
     let skill = p.skills_dir.join("sessionsnap").display().to_string();
@@ -121,6 +144,14 @@ const DATA_ENTRIES: &[&str] = &["snapshots", "plans"];
 
 fn remove_data(data: &Path) -> Result<Step> {
     let what = data.display().to_string();
+    match std::fs::symlink_metadata(data) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(step(what, "already gone", None)),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let target = std::fs::read_link(data).map(|t| t.display().to_string()).unwrap_or_default();
+            return Ok(step(what, "left", Some(format!("it is a symlink to {target}; remove that by hand"))));
+        }
+        _ => {}
+    }
     let entries = match std::fs::read_dir(data) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(step(what, "already gone", None)),
@@ -138,26 +169,51 @@ fn remove_data(data: &Path) -> Result<Step> {
             Some(format!("it holds files sessionsnap did not make: {}", foreign.join(", "))),
         ));
     }
+    if !looks_like_ours(data) {
+        return Ok(step(
+            what,
+            "left",
+            Some("its snapshots or plans folder holds files sessionsnap did not make".into()),
+        ));
+    }
     std::fs::remove_dir_all(data).map_err(|e| anyhow::Error::new(e).context(format!("remove {what}")))?;
     Ok(step(what, "removed", None))
+}
+
+/// True when `snapshots/` holds only folders of `.json` versions and `plans/` only `.json` plans,
+/// as the store writes them (and leftovers of interrupted writes).
+fn looks_like_ours(data: &Path) -> bool {
+    let only = |dir: &Path, ok: &dyn Fn(&std::fs::DirEntry) -> bool| match std::fs::read_dir(dir) {
+        Ok(entries) => entries.filter_map(|e| e.ok()).all(|e| e.file_name() == ".DS_Store" || ok(&e)),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    };
+    let json_file = |e: &std::fs::DirEntry| {
+        {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // `.tmp-<pid>`: a write interrupted before its rename.
+            e.file_type().is_ok_and(|t| t.is_file()) && (name.ends_with(".json") || name.contains(".tmp-"))
+        }
+    };
+    only(&data.join("plans"), &json_file)
+        && only(&data.join("snapshots"), &|e| e.file_type().is_ok_and(|t| t.is_dir()) && only(&e.path(), &json_file))
 }
 
 /// Shared things the installer set up that other tools may rely on: the PATH line for the
 /// binary's folder in shell startup files.
 fn leftovers(p: &Paths) -> Vec<String> {
-    let Some(dir) = p.exe.parent().map(|d| d.display().to_string()) else {
-        return vec![];
-    };
-    [".zshrc", ".bashrc", ".bash_profile", ".profile", ".config/fish/config.fish"]
-        .iter()
-        .map(|rc| p.home.join(rc))
-        .filter(|rc| {
-            std::fs::read_to_string(rc).is_ok_and(|t| {
-                t.lines().any(|l| l.contains(&dir) && (l.contains("PATH") || l.contains("fish_add_path")))
-            })
-        })
-        .map(|rc| format!("the PATH line for {dir} in {}", rc.display()))
-        .collect()
+    let mut dirs: Vec<String> =
+        [&p.exe_as_run, &p.exe].iter().filter_map(|e| e.parent()).map(|d| d.display().to_string()).collect();
+    dirs.dedup();
+    let mut left = vec![];
+    for rc in &p.rc_files {
+        let Ok(text) = std::fs::read_to_string(rc) else { continue };
+        let path_line =
+            |dir: &str| text.lines().any(|l| l.contains(dir) && (l.contains("PATH") || l.contains("fish_add_path")));
+        if let Some(dir) = dirs.iter().find(|d| path_line(d)) {
+            left.push(format!("the PATH line for {dir} in {}", rc.display()));
+        }
+    }
+    left
 }
 
 #[cfg(test)]
@@ -172,8 +228,9 @@ mod tests {
             skills_dir: dir.join(".claude/skills"),
             data: dir.join(".sessionsnap"),
             exe: dir.join(".local/bin/sessionsnap"),
+            exe_as_run: dir.join(".local/bin/sessionsnap"),
             cargo_bin: Some(dir.join(".cargo/bin")),
-            home: dir.to_path_buf(),
+            rc_files: rc_files(dir, None, None),
         };
         std::fs::create_dir_all(p.cmux_config.parent().unwrap()).unwrap();
         std::fs::write(&p.cmux_config, r#"{"commands": [{"name": "Mine", "command": "ls"}]}"#).unwrap();
@@ -247,6 +304,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let mut p = installed(d.path());
         p.exe = d.path().join(".cargo/bin/sessionsnap");
+        p.exe_as_run = p.exe.clone();
         std::fs::create_dir_all(p.exe.parent().unwrap()).unwrap();
         std::fs::write(&p.exe, "binary").unwrap();
         let r = run(&p, false).unwrap();
@@ -265,6 +323,66 @@ mod tests {
         let r = run(&p, false).unwrap();
         assert_eq!(r.steps[2].status, "left");
         assert!(d.path().join(".zshrc").exists());
+    }
+
+    #[test]
+    fn a_palette_it_cannot_edit_does_not_stop_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        let text = std::fs::read_to_string(&p.cmux_config).unwrap().replacen('[', "[ // mine\n", 1);
+        std::fs::write(&p.cmux_config, &text).unwrap();
+        let r = run(&p, false).unwrap();
+        assert_eq!(statuses(&r), ["left", "removed", "removed", "removed"]);
+        assert!(r.steps[0].note.as_deref().unwrap().contains("by hand"), "{:?}", r.steps[0]);
+        assert_eq!(std::fs::read_to_string(&p.cmux_config).unwrap(), text);
+    }
+
+    #[test]
+    fn a_symlinked_data_folder_is_left_with_its_target() {
+        let d = tempfile::tempdir().unwrap();
+        let mut p = installed(d.path());
+        let link = d.path().join("data-link");
+        std::os::unix::fs::symlink(&p.data, &link).unwrap();
+        p.data = link.clone();
+        let r = run(&p, false).unwrap();
+        assert_eq!(r.steps[2].status, "left");
+        assert!(r.steps[2].note.as_deref().unwrap().contains("symlink"));
+        assert!(link.exists());
+        assert!(d.path().join(".sessionsnap/snapshots/work/0001.json").exists());
+    }
+
+    #[test]
+    fn a_snapshots_folder_with_other_files_is_left() {
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        std::fs::write(p.data.join("snapshots/work/holiday.jpg"), "mine").unwrap();
+        assert_eq!(run(&p, false).unwrap().steps[2].status, "left");
+        assert!(p.data.join("snapshots/work/holiday.jpg").exists());
+
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        std::fs::write(p.data.join("snapshots/notes.txt"), "mine").unwrap();
+        assert_eq!(run(&p, false).unwrap().steps[2].status, "left");
+    }
+
+    #[test]
+    fn path_lines_in_zdotdir_and_xdg_config_and_via_symlinks_are_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let mut p = installed(d.path());
+        std::fs::remove_file(d.path().join(".zshrc")).unwrap();
+        // The binary was run through a symlinked folder; the installer wrote that folder.
+        let linked = d.path().join("bin-link");
+        std::os::unix::fs::symlink(d.path().join(".local/bin"), &linked).unwrap();
+        p.exe_as_run = linked.join("sessionsnap");
+        let (zdot, xdg) = (d.path().join("zdot"), d.path().join("xdg"));
+        std::fs::create_dir_all(xdg.join("fish")).unwrap();
+        std::fs::create_dir_all(&zdot).unwrap();
+        std::fs::write(zdot.join(".zshrc"), format!("export PATH=\"{}:$PATH\"\n", linked.display())).unwrap();
+        std::fs::write(xdg.join("fish/config.fish"), format!("fish_add_path \"{}\"\n", linked.display())).unwrap();
+        p.rc_files = rc_files(d.path(), Some(zdot.clone()), Some(xdg.clone()));
+        let left = leftovers(&p);
+        assert_eq!(left.len(), 2, "{left:?}");
+        assert!(left[0].contains("zdot/.zshrc") && left[1].contains("xdg/fish/config.fish"), "{left:?}");
     }
 
     #[test]
