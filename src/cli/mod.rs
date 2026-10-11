@@ -49,6 +49,8 @@ pub enum Command {
     },
     /// List snapshots
     List,
+    /// List the workspaces and tabs open in cmux now
+    Open,
     /// Show a snapshot's workspaces and tabs: <name>[@v]
     Show { snapshot: String },
     /// List a snapshot's versions

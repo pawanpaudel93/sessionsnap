@@ -19,6 +19,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
         Command::Save { name, workspaces, from, message, pick } => save(ctx, name, &workspaces, from, message, pick),
         Command::List => list(ctx),
+        Command::Open => open_now(ctx),
         Command::Show { snapshot } => show(ctx, &snapshot),
         Command::History { name } => history(ctx, &name),
         Command::Diff { a, b } => diff_cmd(ctx, &a, &b),
@@ -146,6 +147,21 @@ pub(crate) fn commit(
         }),
         human::saved(&v, &warnings),
     ))
+}
+
+fn open_now(ctx: &Ctx) -> Result<Outcome> {
+    let open = ctx.backend.read_open_state()?;
+    let rows: Vec<Value> = open
+        .workspaces
+        .iter()
+        .map(|w| {
+            let tabs: Vec<Value> =
+                w.tabs.iter().map(|t| json!({"title": t.title, "cwd": t.cwd, "sessionId": t.session_id})).collect();
+            json!({"name": w.name, "cwd": w.cwd, "tabs": tabs})
+        })
+        .collect();
+    let text = open.workspaces.iter().map(|w| format!("{} ({} tabs)", w.name, w.tabs.len())).collect::<Vec<_>>();
+    Ok(Outcome::ok(json!({"live": open.live, "workspaces": rows}), text.join("\n")))
 }
 
 fn list(ctx: &Ctx) -> Result<Outcome> {

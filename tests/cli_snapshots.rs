@@ -68,3 +68,14 @@ fn full_save_keeps_colors_and_terminal_commands() {
     let shown = env.run(&["show", "work", "--json"]).unwrap();
     assert_eq!(shown.json["version"]["workspaces"][0]["color"], "blue");
 }
+
+#[test]
+fn open_lists_live_workspaces() {
+    let env = setup();
+    let o = env.run(&["open"]).unwrap();
+    assert_eq!(o.json["live"], true);
+    assert_eq!(o.json["workspaces"][0]["name"], "Alpha");
+    assert_eq!(o.json["workspaces"][0]["tabs"][0]["sessionId"], ccsnap::testing::A);
+    assert_eq!(o.json["workspaces"][0]["tabs"][1]["sessionId"], serde_json::Value::Null);
+    assert!(o.text.contains("Beta (1 tab"), "{}", o.text);
+}
