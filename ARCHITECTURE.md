@@ -8,13 +8,14 @@ means adding an adapter, not changing the core.
 ```
 interfaces/   cli, web          parse input, print output; call app/
      │
-app/          use cases         save, restore, apply, edit, sessions, recent, agents, install
+app/          use cases         save, restore, apply, edit, sessions, recent, agents, install,
+                                update, uninstall
      │
 domain/       pure logic        model (snapshot format), capture, diff, edit ops, restore plans
      │  depends only on
-ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots
+ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases
      ▲  implemented by
-adapters/     the outside       terminal/cmux, agents/{registry,claude,codex}, store/fs
+adapters/     the outside       terminal/cmux, agents/{registry,claude,codex}, store/fs, releases
 ```
 
 ## Layers and their rules
@@ -43,6 +44,9 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
 - **`AgentCatalog`**: the agent registry seen from the core: canonical kind, display name, session-id
   validation, histories.
 - **`Snapshots`**: loading a snapshot version (used by edit ops that copy from another snapshot).
+- **`Releases`**: what `update` needs: the latest release tag, downloads, a SHA-256, unpacking and
+  asking a binary its version. Implemented by `adapters/releases.rs` with `curl`, `shasum` or
+  `sha256sum`, and `tar`, so the binary needs no HTTP crate; tests use `testing::FakeReleases`.
 
 ## The snapshot format
 
