@@ -243,7 +243,7 @@ pub fn make_plan(source: PlanSource, store: &Store, claude: &Claude, open: &Open
     })
 }
 
-/// Saves a plan for `ccsnap apply`, deleting plans older than an hour.
+/// Saves a plan for `sessionsnap apply`, deleting plans older than an hour.
 pub fn save_plan(store: &Store, plan: &Plan) -> Result<()> {
     let dir = store.plans_dir();
     std::fs::create_dir_all(&dir)?;

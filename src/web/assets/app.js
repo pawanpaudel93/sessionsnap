@@ -1,5 +1,5 @@
 "use strict";
-// ccsnap UI. Every action is one ccsnap command sent to POST /api/run; the page only displays.
+// sessionsnap UI. Every action is one sessionsnap command sent to POST /api/run; the page only displays.
 
 // The key arrives in the link's fragment (#t=…), which the browser never sends to the server.
 // Keep it for reloads of this tab and take it out of the address bar.
@@ -7,7 +7,7 @@ function takeToken() {
   const m = location.hash.match(/^#t=([0-9a-f]+)$/);
   if (m) {
     try {
-      sessionStorage.setItem("ccsnap-token", m[1]);
+      sessionStorage.setItem("sessionsnap-token", m[1]);
     } catch {
       // Storage can be unavailable; the key still works until the tab reloads.
     }
@@ -15,7 +15,7 @@ function takeToken() {
     return m[1];
   }
   try {
-    return sessionStorage.getItem("ccsnap-token") || "";
+    return sessionStorage.getItem("sessionsnap-token") || "";
   } catch {
     return "";
   }
@@ -23,7 +23,7 @@ function takeToken() {
 let TOKEN = takeToken();
 const main = document.getElementById("main");
 const state = { view: "list", snapshot: null, tab: "edit", version: null, hours: 24 };
-const pending = new Map(); // snapshot name → unsaved edit ops, as `ccsnap edit --batch` takes them
+const pending = new Map(); // snapshot name → unsaved edit ops, as `sessionsnap edit --batch` takes them
 const expanded = new Set(); // "snapshot/workspace" keys whose tabs are shown
 let dragged = null; // the tab being dragged: { ws, pos }
 const opLabels = new WeakMap(); // edit op → what it does, in words, for the save bar
@@ -42,7 +42,7 @@ class CommandError extends Error {
   }
 }
 
-const START_HINT = "Start it with the palette command \"ccsnap: Open UI\" or `ccsnap ui`.";
+const START_HINT = "Start it with the palette command \"sessionsnap: Open UI\" or `sessionsnap ui`.";
 
 // While any command runs, a bar slides under the header.
 let running = 0;
@@ -51,8 +51,8 @@ function setBusy(delta) {
   document.body.classList.toggle("busy", running > 0);
 }
 
-// Runs `ccsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
-async function ccsnap(args, input) {
+// Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
+async function sessionsnap(args, input) {
   if (!TOKEN) throw new CommandError("This page has no key yet.", 1, true);
   setBusy(1);
   try {
@@ -60,14 +60,14 @@ async function ccsnap(args, input) {
     try {
       r = await fetch("/api/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Ccsnap-Token": TOKEN },
+        headers: { "Content-Type": "application/json", "X-Sessionsnap-Token": TOKEN },
         body: JSON.stringify(input === undefined ? { args } : { args, input }),
       });
     } catch {
-      throw new CommandError(`The ccsnap UI server is not running. ${START_HINT}`, 1);
+      throw new CommandError(`The sessionsnap UI server is not running. ${START_HINT}`, 1);
     }
     if (r.status === 401) {
-      throw new CommandError("The ccsnap UI was restarted, so this page's key is old.", 1, true);
+      throw new CommandError("The sessionsnap UI was restarted, so this page's key is old.", 1, true);
     }
     if (!r.ok) throw new CommandError(await r.text(), 1);
     const body = await r.json();
@@ -234,17 +234,17 @@ function reconnectView(message) {
   const status = h("p", { class: "muted small" });
   const button = actionButton("Reconnect", async () => {
     status.className = "muted small";
-    status.textContent = "Asking the ccsnap UI to show this page…";
+    status.textContent = "Asking the sessionsnap UI to show this page…";
     try {
       let r;
       try {
         r = await fetch("/api/show", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       } catch {
-        throw new Error("The ccsnap UI server is not running.");
+        throw new Error("The sessionsnap UI server is not running.");
       }
       if (!r.ok) throw new Error(await r.text());
       const { shown } = await r.json();
-      status.textContent = shown === "reused" ? "Reconnecting…" : `Opened the ccsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
+      status.textContent = shown === "reused" ? "Reconnecting…" : `Opened the sessionsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
     } catch (e) {
       status.className = "error small";
       status.textContent = `${e.message} ${START_HINT}`;
@@ -261,7 +261,7 @@ function reconnectView(message) {
 // ---- Snapshots ----
 
 async function viewList() {
-  const { result } = await ccsnap(["list"]);
+  const { result } = await sessionsnap(["list"]);
   const name = h("input", { class: "grow", placeholder: "Name, e.g. main", "aria-label": "Snapshot name" });
   const save = actionButton("Save open tabs", async () => {
     const n = name.value.trim();
@@ -269,7 +269,7 @@ async function viewList() {
       name.focus();
       return toast("Give the snapshot a name.", "error");
     }
-    const r = await ccsnap(["save", n]);
+    const r = await sessionsnap(["save", n]);
     toast(r.exit === 3 ? `${n}: nothing changed since the last version` : `Saved ${n} v${r.result.version}`);
     go("snapshot", { snapshot: n, tab: "edit", version: null });
   }, { class: "primary" });
@@ -304,7 +304,7 @@ async function viewSnapshot() {
   const body = h("div", {});
   const update = actionButton("Update", async () => {
     if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
-    const r = await ccsnap(["save", name]);
+    const r = await sessionsnap(["save", name]);
     toast(r.exit === 3 ? "Nothing changed since the last version." : `Saved v${r.result.version}: ${r.result.message}`);
     render();
   }, { title: "Save what is open in cmux now as a new version" });
@@ -324,7 +324,7 @@ async function viewSnapshot() {
       return;
     }
     clearTimeout(del.timer);
-    await ccsnap(["delete", name, "--yes"]);
+    await sessionsnap(["delete", name, "--yes"]);
     pending.delete(name);
     toast(`Deleted ${name}`);
     go("list");
@@ -358,7 +358,7 @@ async function renderEdit(name) {
   let warnings;
   if (ops.length) {
     try {
-      ({ workspaces, warnings } = (await ccsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
+      ({ workspaces, warnings } = (await sessionsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
     } catch (e) {
       if (e.reconnect) throw e;
       // The snapshot changed outside this page and the queued edits no longer apply.
@@ -367,7 +367,7 @@ async function renderEdit(name) {
         h("button", { onclick: () => { pending.delete(name); render(); } }, "Discard edits"));
     }
   } else {
-    const r = await ccsnap(["show", name]);
+    const r = await sessionsnap(["show", name]);
     workspaces = r.result.version.workspaces;
     warnings = r.result.warnings;
   }
@@ -390,14 +390,14 @@ async function renderEdit(name) {
     saveBar(name));
 }
 
-// Adds ops for the open snapshot; keeps them only if ccsnap accepts them.
+// Adds ops for the open snapshot; keeps them only if sessionsnap accepts them.
 const opGroups = new WeakMap(); // op → the ops added with it, which Undo removes together
 async function pushOp(...ops) {
   const list = opsOf(state.snapshot);
   for (const op of ops) opGroups.set(op, ops);
   list.push(...ops);
   try {
-    await ccsnap(["edit", state.snapshot, "--batch", "-", "--dry-run"], JSON.stringify(list));
+    await sessionsnap(["edit", state.snapshot, "--batch", "-", "--dry-run"], JSON.stringify(list));
   } catch (e) {
     list.splice(list.length - ops.length, ops.length);
     toast(e.message, "error");
@@ -575,7 +575,7 @@ function addTabRow(w) {
     if (slot.firstChild) return slot.replaceChildren();
     const p = picker("Search Claude sessions by title, prompt or folder", async (q) => {
       if (!q) return null;
-      const r = await ccsnap(["sessions", "--search", q, "--days", "365"]);
+      const r = await sessionsnap(["sessions", "--search", q, "--days", "365"]);
       return r.result.sessions.slice(0, 30).map(({ session: s, open }) => ({
         label: s.title || s.firstPrompt || s.sessionId,
         sub: `${tilde(s.cwd)}${open ? " · open in cmux" : ""}`,
@@ -598,7 +598,7 @@ function addWorkspace(name, have) {
     const slot = h("div", {});
     const fromOpen = () => {
       const p = picker("Filter workspaces open in cmux", async (q) => {
-        const r = await ccsnap(["open"]);
+        const r = await sessionsnap(["open"]);
         return r.result.workspaces
           .filter((w) => !have.has(w.name))
           .filter((w) => !q || w.name.toLowerCase().includes(q.toLowerCase()))
@@ -609,10 +609,10 @@ function addWorkspace(name, have) {
     };
     const fromSnapshot = () => {
       const p = picker("Filter workspaces in other snapshots", async (q) => {
-        const r = await ccsnap(["list"]);
+        const r = await sessionsnap(["list"]);
         const items = [];
         for (const s of r.result.snapshots.filter((x) => x.name !== name)) {
-          const v = await ccsnap(["show", s.name]);
+          const v = await sessionsnap(["show", s.name]);
           for (const w of v.result.version.workspaces) {
             if (have.has(w.name)) continue;
             if (q && !`${s.name} ${w.name}`.toLowerCase().includes(q.toLowerCase())) continue;
@@ -648,7 +648,7 @@ function saveBar(name) {
   const save = actionButton("Save version", async () => {
     const args = ["edit", name, "--batch", "-"];
     if (message.value.trim()) args.push("-m", message.value.trim());
-    const r = await ccsnap(args, JSON.stringify(ops));
+    const r = await sessionsnap(args, JSON.stringify(ops));
     pending.delete(name);
     toast(r.exit === 3 ? "No changes to save." : `Saved v${r.result.version}: ${r.result.message}`);
     render();
@@ -693,14 +693,14 @@ function describeChange(c) {
 const SIGNS = { add: "+", del: "−", mod: "~" };
 
 async function renderHistory(name) {
-  const { result } = await ccsnap(["history", name]);
+  const { result } = await sessionsnap(["history", name]);
   const versions = [...result.versions].reverse();
   const picked = []; // up to two version numbers, in the order ticked
   const out = h("div", {});
   const label = h("span", { class: "muted small grow" });
   const compare = actionButton("Compare", async () => {
     const [a, b] = [...picked].sort((x, y) => x - y);
-    const d = await ccsnap(["diff", `${name}@${a}`, `${name}@${b}`]);
+    const d = await sessionsnap(["diff", `${name}@${a}`, `${name}@${b}`]);
     out.replaceChildren(h("div", { class: "diff" },
       h("h2", {}, `v${a} → v${b}`, h("span", { class: "muted small" }, `  ${d.result.summary}`)),
       d.result.changes.length === 0
@@ -758,7 +758,7 @@ async function renderHistory(name) {
 
 async function renderRestore(name) {
   const ref = state.version ? `${name}@${state.version}` : name;
-  const { result } = await ccsnap(["show", ref]);
+  const { result } = await sessionsnap(["show", ref]);
   const boxes = []; // { ws, pos, box }
   const out = h("div", {});
   const count = h("span", { class: "muted small grow" });
@@ -821,7 +821,7 @@ async function renderRestore(name) {
     if (chosen.length < boxes.length) {
       for (const b of chosen) args.push("--tab", `${b.ws}#${b.pos}`);
     }
-    out.replaceChildren(renderPlan(await ccsnap(args)));
+    out.replaceChildren(renderPlan(await sessionsnap(args)));
     out.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, { class: "primary" });
   sync();
@@ -844,7 +844,7 @@ function renderPlan(r) {
   }
   const tabs = plan.actions.reduce((n, a) => n + a.tabs.length, 0);
   const apply = actionButton(`Open ${plural(tabs, "tab")}`, async () => {
-    const a = await ccsnap(["apply", plan.planId]);
+    const a = await sessionsnap(["apply", plan.planId]);
     apply.replaceWith(renderSteps(a.result));
   }, { class: "primary" });
   return h("div", { class: "plan" },
@@ -873,7 +873,7 @@ function renderSteps(result) {
 
 async function viewRecent() {
   const hours = state.hours;
-  const r = await ccsnap(["recent", "--hours", String(hours)]);
+  const r = await sessionsnap(["recent", "--hours", String(hours)]);
   const out = h("div", {});
   const pick = h("select", { "aria-label": "Period", onchange: (e) => go("recent", { hours: Number(e.target.value) }) },
     [24, 72, 168].map((n) => h("option", { value: n, selected: n === hours }, n === 24 ? "Last 24 hours" : `Last ${n / 24} days`)));
@@ -891,7 +891,7 @@ async function viewRecent() {
               h("span", { class: "muted small" }, time(s.modified))),
             h("div", { class: "mono muted ellipsis", title: s.cwd }, tilde(s.cwd)))))),
         h("div", { class: "footer-actions" }, actionButton(`Preview restoring ${plural(sessions.length, "session")}`, async () => {
-          out.replaceChildren(renderPlan(await ccsnap(["recent", "--hours", String(hours), "--plan"])));
+          out.replaceChildren(renderPlan(await sessionsnap(["recent", "--hours", String(hours), "--plan"])));
           out.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }, { class: "primary" })),
         out));
@@ -907,7 +907,7 @@ document.addEventListener("visibilitychange", () => {
   const restoring = state.view === "snapshot" && state.tab === "restore";
   if (document.visibilityState === "visible" && !restoring && !document.activeElement?.matches("input, select")) render();
 });
-// `ccsnap ui` and Reconnect point an open tab at the key by changing only the fragment.
+// `sessionsnap ui` and Reconnect point an open tab at the key by changing only the fragment.
 window.addEventListener("hashchange", () => {
   TOKEN = takeToken();
   render();

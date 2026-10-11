@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-use ccsnap::claude::Claude;
-use ccsnap::cli::{Cli, Ctx, Outcome, run::dispatch};
-use ccsnap::store::Store;
-use ccsnap::testing::{A, B, FakeBackend, open_ws, write_transcript};
 use clap::Parser;
+use sessionsnap::claude::Claude;
+use sessionsnap::cli::{Cli, Ctx, Outcome, run::dispatch};
+use sessionsnap::store::Store;
+use sessionsnap::testing::{A, B, FakeBackend, open_ws, write_transcript};
 
 /// Temporary store + Claude dir + fake cmux; `run` parses args like the real binary.
 pub struct Env {
@@ -44,7 +44,8 @@ impl Env {
     }
 
     fn run_with(&self, args: &[&str], input: Option<String>) -> anyhow::Result<Outcome> {
-        let cli = Cli::try_parse_from(std::iter::once("ccsnap").chain(args.iter().copied())).expect("valid arguments");
+        let cli =
+            Cli::try_parse_from(std::iter::once("sessionsnap").chain(args.iter().copied())).expect("valid arguments");
         dispatch(&self.ctx(cli.json, cli.yes, input), cli.command)
     }
 }

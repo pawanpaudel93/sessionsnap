@@ -1,4 +1,4 @@
-//! Helpers shared by unit and integration tests. Not part of ccsnap's interface.
+//! Helpers shared by unit and integration tests. Not part of sessionsnap's interface.
 
 use std::path::{Path, PathBuf};
 

@@ -56,7 +56,10 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::InstallCmux { print } => install_cmux(ctx, print),
         Command::InstallSkill => {
             let path = crate::install::install_skill(&crate::install::skills_dir()?)?;
-            Ok(Outcome::ok(json!({"installed": path}), format!("Installed the ccsnap skill at {}", path.display())))
+            Ok(Outcome::ok(
+                json!({"installed": path}),
+                format!("Installed the sessionsnap skill at {}", path.display()),
+            ))
         }
     }
 }
@@ -69,12 +72,12 @@ fn install_cmux(ctx: &Ctx, print: bool) -> Result<Outcome> {
         return Ok(Outcome::ok(json!({"commands": commands}), text));
     }
     let config = crate::install::cmux_config_path()?;
-    confirm(ctx, &format!("Add ccsnap commands to {}?", config.display()))?;
+    confirm(ctx, &format!("Add sessionsnap commands to {}?", config.display()))?;
     let backup = crate::install::install_cmux(&config, &exe)?;
     let note = backup.as_ref().map(|b| format!(" (backup: {})", b.display())).unwrap_or_default();
     Ok(Outcome::ok(
         json!({"config": config, "backup": backup}),
-        format!("Added ccsnap commands to {}{note}. Run `cmux reload-config` to load them.", config.display()),
+        format!("Added sessionsnap commands to {}{note}. Run `cmux reload-config` to load them.", config.display()),
     ))
 }
 
@@ -398,7 +401,7 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
             || (ctx.interactive
                 && pick::confirm(&format!("{}\nRestore {} tab(s)?", human::plan(&plan), plan.tab_count()))?));
     if !go {
-        let apply = format!("ccsnap apply {}", plan.plan_id);
+        let apply = format!("sessionsnap apply {}", plan.plan_id);
         return Ok(Outcome::ok(
             json!({"plan": plan, "applied": false, "apply": apply}),
             format!("{}\nTo apply: {apply}", human::plan(&plan)),

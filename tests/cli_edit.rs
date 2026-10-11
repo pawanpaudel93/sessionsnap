@@ -1,8 +1,8 @@
 mod common;
 
-use ccsnap::error::{Exit, exit_of};
-use ccsnap::testing::{C, write_transcript};
 use common::setup;
+use sessionsnap::error::{Exit, exit_of};
+use sessionsnap::testing::{C, write_transcript};
 
 #[test]
 fn tab_and_ws_edits_make_versions() {

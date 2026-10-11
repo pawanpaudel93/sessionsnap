@@ -22,7 +22,7 @@ pub fn saved(v: &Version, warnings: &[String]) -> String {
 
 pub fn list(rows: &[Value]) -> String {
     if rows.is_empty() {
-        return "No snapshots yet. Save one with: ccsnap save <name>".into();
+        return "No snapshots yet. Save one with: sessionsnap save <name>".into();
     }
     rows.iter()
         .map(|r| {

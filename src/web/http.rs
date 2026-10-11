@@ -126,12 +126,12 @@ mod tests {
 
     #[test]
     fn reads_request_line_headers_and_body() {
-        let req = parse("POST /api/run?x=1 HTTP/1.1\r\nHost: 127.0.0.1:47317\r\nContent-Length: 4\r\nX-Ccsnap-Token: abc\r\n\r\n{}{}")
+        let req = parse("POST /api/run?x=1 HTTP/1.1\r\nHost: 127.0.0.1:47317\r\nContent-Length: 4\r\nX-Sessionsnap-Token: abc\r\n\r\n{}{}")
             .unwrap();
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/api/run");
         assert_eq!(req.header("host"), Some("127.0.0.1:47317"));
-        assert_eq!(req.header("x-ccsnap-token"), Some("abc"));
+        assert_eq!(req.header("x-sessionsnap-token"), Some("abc"));
         assert_eq!(req.body, b"{}{}");
     }
 

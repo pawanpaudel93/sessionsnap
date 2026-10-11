@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Exit, failure};
 
-/// Version of ccsnap's own file format.
+/// Version of sessionsnap's own file format.
 pub const FORMAT: u32 = 1;
 
 /// One immutable version of a named snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Version {
-    pub ccsnap: u32,
+    pub sessionsnap: u32,
     pub snapshot: String,
     pub version: u32,
     pub created_at: String,
@@ -100,7 +100,7 @@ impl Tab {
     }
 }
 
-/// True for Claude Code session IDs (UUIDs), the only values ccsnap passes to `claude --resume`.
+/// True for Claude Code session IDs (UUIDs), the only values sessionsnap passes to `claude --resume`.
 pub fn is_session_id(s: &str) -> bool {
     s.len() == 36
         && s.chars().enumerate().all(

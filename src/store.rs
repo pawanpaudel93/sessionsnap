@@ -18,12 +18,12 @@ impl Store {
         Store { root: root.into() }
     }
 
-    /// `$CCSNAP_HOME`, else `~/.ccsnap`.
+    /// `$SESSIONSNAP_HOME`, else `~/.sessionsnap`.
     pub fn open_default() -> Result<Self> {
-        if let Some(p) = std::env::var_os("CCSNAP_HOME") {
+        if let Some(p) = std::env::var_os("SESSIONSNAP_HOME") {
             return Ok(Store::new(p));
         }
-        Ok(Store::new(home_dir()?.join(".ccsnap")))
+        Ok(Store::new(home_dir()?.join(".sessionsnap")))
     }
 
     pub fn root(&self) -> &Path {
@@ -113,7 +113,7 @@ impl Store {
         let next = self.versions(name)?.last().copied().unwrap_or(0) + 1;
         let now = chrono::Local::now();
         let version = Version {
-            ccsnap: FORMAT,
+            sessionsnap: FORMAT,
             snapshot: name.to_string(),
             version: next,
             created_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),

@@ -1,4 +1,4 @@
-//! The UI server's routes. Every API call runs one ccsnap command through `cli::run_json`.
+//! The UI server's routes. Every API call runs one sessionsnap command through `cli::run_json`.
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -25,9 +25,9 @@ pub type ShowFn<'a> = dyn Fn(&str) -> Result<&'static str> + Send + Sync + 'a;
 
 pub struct Server<'a> {
     pub port: u16,
-    /// Random per start; the page gets it from the link fragment `#t=…` and sends it as X-Ccsnap-Token.
+    /// Random per start; the page gets it from the link fragment `#t=…` and sends it as X-Sessionsnap-Token.
     pub token: String,
-    /// Called by `POST /api/show` with the keyed link; `ccsnap ui` passes the cmux backend's.
+    /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes the cmux backend's.
     pub show: Box<ShowFn<'a>>,
 }
 
@@ -53,7 +53,7 @@ impl Server<'_> {
                 Response { status: 200, content_type: "text/css; charset=utf-8", body: APP_CSS.into() }
             }
             ("GET", "/api/hello") => {
-                Response::json(200, &json!({"app": "ccsnap", "version": env!("CARGO_PKG_VERSION")}))
+                Response::json(200, &json!({"app": "sessionsnap", "version": env!("CARGO_PKG_VERSION")}))
             }
             ("POST", "/api/run") => self.run(req, make_ctx),
             ("POST", "/api/show") => self.show(req),
@@ -79,7 +79,7 @@ impl Server<'_> {
     }
 
     /// Shows this server's page, with its key, in cmux. Needs no key: it is how a page without
-    /// one (or a second `ccsnap ui`) gets one, and the key only ever goes to cmux.
+    /// one (or a second `sessionsnap ui`) gets one, and the key only ever goes to cmux.
     fn show(&self, req: &Request) -> Response {
         if self.foreign_origin(req) {
             return Response::text(403, "wrong origin");
@@ -103,10 +103,10 @@ impl Server<'_> {
         if self.foreign_origin(req) {
             return Response::text(403, "wrong origin");
         }
-        if !req.header("x-ccsnap-token").is_some_and(|t| same(t, &self.token)) {
+        if !req.header("x-sessionsnap-token").is_some_and(|t| same(t, &self.token)) {
             return Response::json(
                 401,
-                &json!({"error": {"code": "stale-token", "message": "The ccsnap UI was restarted, so this page's key is old. Click Reconnect, or run `ccsnap ui`."}}),
+                &json!({"error": {"code": "stale-token", "message": "The sessionsnap UI was restarted, so this page's key is old. Click Reconnect, or run `sessionsnap ui`."}}),
             );
         }
         if !Self::is_json(req) {
@@ -164,7 +164,7 @@ mod tests {
         req(
             "POST",
             "/api/run",
-            &[("x-ccsnap-token", "t0k"), ("content-type", "application/json"), ("origin", origin.as_str())],
+            &[("x-sessionsnap-token", "t0k"), ("content-type", "application/json"), ("origin", origin.as_str())],
             body,
         )
     }
@@ -199,13 +199,13 @@ mod tests {
             let html = String::from_utf8(r.body).unwrap();
             assert!(!html.contains("t0k"));
             assert!(!html.contains("{{TOKEN}}"));
-            assert!(!html.contains(r#"ccsnap-token" content"#));
+            assert!(!html.contains(r#"sessionsnap-token" content"#));
             assert!(html.contains(r#"src="/app.js""#) && html.contains(r#"href="/app.css""#));
             assert_eq!(s.handle(&req("GET", "/app.js", &[], ""), mk).content_type, "text/javascript; charset=utf-8");
             assert_eq!(s.handle(&req("GET", "/app.css", &[], ""), mk).status, 200);
             assert_eq!(s.handle(&req("GET", "/nope", &[], ""), mk).status, 404);
             assert_eq!(s.handle(&req("DELETE", "/", &[], ""), mk).status, 405);
-            assert_eq!(body(&s.handle(&req("GET", "/api/hello", &[], ""), mk))["app"], "ccsnap");
+            assert_eq!(body(&s.handle(&req("GET", "/api/hello", &[], ""), mk))["app"], "sessionsnap");
         });
     }
 
@@ -245,20 +245,24 @@ mod tests {
             let r = req(
                 "POST",
                 "/api/run",
-                &[("x-ccsnap-token", "t0k"), ("content-type", "application/json"), ("origin", "http://evil.example")],
+                &[
+                    ("x-sessionsnap-token", "t0k"),
+                    ("content-type", "application/json"),
+                    ("origin", "http://evil.example"),
+                ],
                 r#"{"args":["list"]}"#,
             );
             assert_eq!(s.handle(&r, mk).status, 403, "wrong origin");
             let r = req(
                 "POST",
                 "/api/run",
-                &[("x-ccsnap-token", "old"), ("content-type", "application/json")],
+                &[("x-sessionsnap-token", "old"), ("content-type", "application/json")],
                 r#"{"args":["list"]}"#,
             );
             let out = s.handle(&r, mk);
             assert_eq!(out.status, 401);
             assert_eq!(body(&out)["error"]["code"], "stale-token");
-            let r = req("POST", "/api/run", &[("x-ccsnap-token", "t0k"), ("content-type", "text/plain")], "{}");
+            let r = req("POST", "/api/run", &[("x-sessionsnap-token", "t0k"), ("content-type", "text/plain")], "{}");
             assert_eq!(s.handle(&r, mk).status, 415);
             for bad in [
                 r#"{"args":["ui"]}"#,
@@ -297,7 +301,7 @@ mod tests {
             assert_eq!(body(&r), json!({"shown": "reused"}));
             assert!(!String::from_utf8_lossy(&r.body).contains("t0k"), "never returns the key");
             assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{PORT}/#t=t0k")]);
-            // Without an Origin (a local program such as `ccsnap ui`) it works too.
+            // Without an Origin (a local program such as `sessionsnap ui`) it works too.
             assert_eq!(s.handle(&show_req(&[("content-type", "application/json")]), mk).status, 200);
             assert_eq!(s.handle(&req("GET", "/api/show", &[], ""), mk).status, 405);
         });

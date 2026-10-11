@@ -15,7 +15,11 @@ use crate::error::{Exit, exit_of};
 use crate::store::Store;
 
 #[derive(Parser, Debug)]
-#[command(name = "ccsnap", version, about = "Named, versioned snapshots of cmux workspaces and Claude Code sessions")]
+#[command(
+    name = "sessionsnap",
+    version,
+    about = "Named, versioned snapshots of cmux workspaces and Claude Code sessions"
+)]
 pub struct Cli {
     /// Print machine-readable JSON (never prompts)
     #[arg(long, global = true)]
@@ -135,13 +139,13 @@ pub enum Command {
         #[arg(long)]
         no_open: bool,
     },
-    /// Add ccsnap commands to the cmux command palette (~/.config/cmux/cmux.json)
+    /// Add sessionsnap commands to the cmux command palette (~/.config/cmux/cmux.json)
     InstallCmux {
         /// Print the commands instead of installing them
         #[arg(long)]
         print: bool,
     },
-    /// Install the ccsnap skill for Claude Code (~/.claude/skills/ccsnap)
+    /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
     InstallSkill,
 }
 
@@ -260,10 +264,10 @@ pub fn error_json(e: &anyhow::Error) -> Value {
     json!({"error": {"code": exit.name(), "exit": exit.code(), "message": format!("{e:#}")}})
 }
 
-/// Runs `ccsnap <args> --json` in-process: the exit and the JSON the binary would print.
+/// Runs `sessionsnap <args> --json` in-process: the exit and the JSON the binary would print.
 /// `make_ctx` builds the context from the parsed flags (the web UI passes its own).
 pub fn run_json(args: &[String], make_ctx: impl FnOnce(&Cli) -> anyhow::Result<Ctx>) -> (Exit, Value) {
-    let mut argv = vec!["ccsnap".to_string()];
+    let mut argv = vec!["sessionsnap".to_string()];
     // Before the caller's args, so a `--` among them cannot turn it into a positional.
     if !args.iter().any(|a| a == "--json") {
         argv.push("--json".to_string());
@@ -308,7 +312,7 @@ pub fn main_entry() -> ExitCode {
             if json {
                 println!("{}", error_json(&e));
             } else {
-                eprintln!("ccsnap: {e:#}");
+                eprintln!("sessionsnap: {e:#}");
             }
             ExitCode::from(exit.code())
         }

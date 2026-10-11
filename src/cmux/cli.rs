@@ -21,7 +21,7 @@ impl CmuxCli<ProcessRunner> {
     pub fn open_default() -> Result<Self> {
         Ok(CmuxCli {
             runner: ProcessRunner,
-            program: std::env::var("CCSNAP_CMUX_BIN").unwrap_or_else(|_| "cmux".into()),
+            program: std::env::var("SESSIONSNAP_CMUX_BIN").unwrap_or_else(|_| "cmux".into()),
             state_path: state_file::default_path()?,
             launch_timeout: Duration::from_secs(30),
         })

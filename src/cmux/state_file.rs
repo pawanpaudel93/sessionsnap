@@ -9,7 +9,7 @@ use crate::error::{Exit, failure};
 use crate::model::is_session_id;
 use crate::store::home_dir;
 
-/// cmux state-file versions ccsnap understands.
+/// cmux state-file versions sessionsnap understands.
 pub const KNOWN_VERSIONS: &[u64] = &[1];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,9 +30,9 @@ pub struct FilePanel {
     pub session_id: Option<String>,
 }
 
-/// `$CCSNAP_CMUX_STATE`, else cmux's state file in Application Support.
+/// `$SESSIONSNAP_CMUX_STATE`, else cmux's state file in Application Support.
 pub fn default_path() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("CCSNAP_CMUX_STATE") {
+    if let Some(p) = std::env::var_os("SESSIONSNAP_CMUX_STATE") {
         return Ok(PathBuf::from(p));
     }
     Ok(home_dir()?.join("Library/Application Support/cmux/session-com.cmuxterm.app.json"))
@@ -43,7 +43,7 @@ pub fn read(path: &Path) -> Result<(u64, Vec<FileWorkspace>)> {
     parse(&text)
 }
 
-/// Parses cmux's state file. Only the fields ccsnap needs are read; nothing else is kept.
+/// Parses cmux's state file. Only the fields sessionsnap needs are read; nothing else is kept.
 pub fn parse(text: &str) -> Result<(u64, Vec<FileWorkspace>)> {
     let root: Value = serde_json::from_str(text)
         .map_err(|e| failure(Exit::UnknownFormat, format!("cmux state is not valid JSON: {e}")))?;
@@ -54,7 +54,7 @@ pub fn parse(text: &str) -> Result<(u64, Vec<FileWorkspace>)> {
     if !KNOWN_VERSIONS.contains(&version) {
         return Err(failure(
             Exit::UnknownFormat,
-            format!("cmux state version {version} is not supported (known: {KNOWN_VERSIONS:?}); update ccsnap"),
+            format!("cmux state version {version} is not supported (known: {KNOWN_VERSIONS:?}); update sessionsnap"),
         ));
     }
     let windows = root

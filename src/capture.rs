@@ -122,16 +122,16 @@ mod tests {
     }
 
     #[test]
-    fn workspace_named_ccsnap_is_captured() {
+    fn workspace_named_sessionsnap_is_captured() {
         let d = tempfile::tempdir().unwrap();
         let claude = Claude::new(d.path());
         let open = OpenState {
             live: true,
             state_version: Some(1),
-            workspaces: vec![open_ws("W1", "Alpha", "/w/a", &[]), open_ws("W2", "ccsnap", "~", &[])],
+            workspaces: vec![open_ws("W1", "Alpha", "/w/a", &[]), open_ws("W2", "sessionsnap", "~", &[])],
         };
         let all = capture(&open, &claude, &[]).unwrap();
-        assert_eq!(all.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "ccsnap"]);
+        assert_eq!(all.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "sessionsnap"]);
     }
 
     #[test]

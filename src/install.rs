@@ -8,17 +8,17 @@ use crate::store::{home_dir, write_json_atomic};
 
 pub const SKILL: &str = include_str!("../skill/SKILL.md");
 
-/// `$CCSNAP_CMUX_CONFIG`, else `~/.config/cmux/cmux.json`.
+/// `$SESSIONSNAP_CMUX_CONFIG`, else `~/.config/cmux/cmux.json`.
 pub fn cmux_config_path() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("CCSNAP_CMUX_CONFIG") {
+    if let Some(p) = std::env::var_os("SESSIONSNAP_CMUX_CONFIG") {
         return Ok(p.into());
     }
     Ok(home_dir()?.join(".config/cmux/cmux.json"))
 }
 
-/// `$CCSNAP_SKILLS_DIR`, else `~/.claude/skills`.
+/// `$SESSIONSNAP_SKILLS_DIR`, else `~/.claude/skills`.
 pub fn skills_dir() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("CCSNAP_SKILLS_DIR") {
+    if let Some(p) = std::env::var_os("SESSIONSNAP_SKILLS_DIR") {
         return Ok(p.into());
     }
     Ok(home_dir()?.join(".claude/skills"))
@@ -29,11 +29,11 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// Name of the workspace the palette commands open.
-pub const PALETTE_WORKSPACE: &str = "ccsnap";
-/// The UI server's own workspace, so recreating "ccsnap" for another command leaves it running.
-pub const UI_WORKSPACE: &str = "ccsnap UI";
+pub const PALETTE_WORKSPACE: &str = "sessionsnap";
+/// The UI server's own workspace, so recreating "sessionsnap" for another command leaves it running.
+pub const UI_WORKSPACE: &str = "sessionsnap UI";
 
-/// Palette entries. Each opens a "ccsnap" workspace (the UI "ccsnap UI"): a plain palette command would type
+/// Palette entries. Each opens a "sessionsnap" workspace (the UI "sessionsnap UI"): a plain palette command would type
 /// into the focused tab, which is often a running Claude session.
 pub fn palette_commands(exe: &str) -> Vec<Value> {
     let entry = |name: &str, keywords: &[&str], args: &str| {
@@ -46,21 +46,21 @@ pub fn palette_commands(exe: &str) -> Vec<Value> {
                 "name": workspace,
                 "cwd": "~",
                 "layout": {"pane": {"surfaces": [
-                    {"type": "terminal", "name": "ccsnap", "command": format!("{} {args}", shell_quote(exe))}
+                    {"type": "terminal", "name": "sessionsnap", "command": format!("{} {args}", shell_quote(exe))}
                 ]}}
             }
         })
     };
     vec![
-        entry("ccsnap: Save / update snapshot", &["snapshot", "save", "claude"], "save --pick"),
-        entry("ccsnap: Restore snapshot", &["snapshot", "restore", "claude"], "restore --pick"),
-        entry("ccsnap: Recent sessions not open", &["recent", "recover", "claude"], "recent --pick"),
-        entry("ccsnap: List snapshots", &["snapshot", "list"], "list"),
-        entry("ccsnap: Open UI", &["ui", "web", "dock", "snapshot"], "ui"),
+        entry("sessionsnap: Save / update snapshot", &["snapshot", "save", "claude"], "save --pick"),
+        entry("sessionsnap: Restore snapshot", &["snapshot", "restore", "claude"], "restore --pick"),
+        entry("sessionsnap: Recent sessions not open", &["recent", "recover", "claude"], "recent --pick"),
+        entry("sessionsnap: List snapshots", &["snapshot", "list"], "list"),
+        entry("sessionsnap: Open UI", &["ui", "web", "dock", "snapshot"], "ui"),
     ]
 }
 
-/// Adds (or replaces) the "ccsnap: …" palette commands; returns the backup path if a file existed.
+/// Adds (or replaces) the "sessionsnap: …" palette commands; returns the backup path if a file existed.
 /// cmux.json is JSONC, so the file is edited as text: comments and formatting outside the
 /// `commands` array stay as they are.
 pub fn install_cmux(config: &Path, exe: &str) -> Result<Option<PathBuf>> {
@@ -72,7 +72,7 @@ pub fn install_cmux(config: &Path, exe: &str) -> Result<Option<PathBuf>> {
     let updated = with_palette_commands(&text, exe).map_err(|why| {
         failure(
             Exit::Refused,
-            format!("{}: {why}; add the commands by hand from `ccsnap install-cmux --print`", config.display()),
+            format!("{}: {why}; add the commands by hand from `sessionsnap install-cmux --print`", config.display()),
         )
     })?;
     let backup = config.with_file_name(format!("cmux.json.bak-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
@@ -83,7 +83,7 @@ pub fn install_cmux(config: &Path, exe: &str) -> Result<Option<PathBuf>> {
     Ok(Some(backup))
 }
 
-/// Returns `text` with the ccsnap palette commands in its top-level `commands` array.
+/// Returns `text` with the sessionsnap palette commands in its top-level `commands` array.
 fn with_palette_commands(text: &str, exe: &str) -> std::result::Result<String, String> {
     let plain = strip_jsonc(text);
     let root: Value = serde_json::from_str(&plain).map_err(|e| format!("not valid JSON ({e})"))?;
@@ -93,7 +93,7 @@ fn with_palette_commands(text: &str, exe: &str) -> std::result::Result<String, S
         Some(Value::Array(a)) => a.clone(),
         Some(_) => return Err("\"commands\" is not an array".into()),
     };
-    list.retain(|c| !c.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("ccsnap:")));
+    list.retain(|c| !c.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("sessionsnap:")));
     list.extend(palette_commands(exe));
     let array = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?.replace('\n', "\n  ");
     if let Some((start, end)) = top_level_array(&plain, "commands") {
@@ -228,8 +228,8 @@ fn top_level_array(plain: &str, key: &str) -> Option<(usize, usize)> {
 }
 
 pub fn install_skill(dir: &Path) -> Result<PathBuf> {
-    let path = dir.join("ccsnap").join("SKILL.md");
-    std::fs::create_dir_all(dir.join("ccsnap"))?;
+    let path = dir.join("sessionsnap").join("SKILL.md");
+    std::fs::create_dir_all(dir.join("sessionsnap"))?;
     std::fs::write(&path, SKILL)?;
     Ok(path)
 }
@@ -245,10 +245,10 @@ mod tests {
         let cfg = d.path().join("cmux.json");
         std::fs::write(
             &cfg,
-            r#"{"commands":[{"name":"Mine","command":"ls"},{"name":"ccsnap: Old","command":"x"}],"other":1}"#,
+            r#"{"commands":[{"name":"Mine","command":"ls"},{"name":"sessionsnap: Old","command":"x"}],"other":1}"#,
         )
         .unwrap();
-        let backup = install_cmux(&cfg, "/usr/local/bin/ccsnap").unwrap().unwrap();
+        let backup = install_cmux(&cfg, "/usr/local/bin/sessionsnap").unwrap().unwrap();
         assert!(backup.exists());
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
         let names: Vec<&str> = v["commands"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
@@ -256,11 +256,11 @@ mod tests {
             names,
             [
                 "Mine",
-                "ccsnap: Save / update snapshot",
-                "ccsnap: Restore snapshot",
-                "ccsnap: Recent sessions not open",
-                "ccsnap: List snapshots",
-                "ccsnap: Open UI",
+                "sessionsnap: Save / update snapshot",
+                "sessionsnap: Restore snapshot",
+                "sessionsnap: Recent sessions not open",
+                "sessionsnap: List snapshots",
+                "sessionsnap: Open UI",
             ]
         );
         assert_eq!(v["other"], 1);
@@ -269,15 +269,15 @@ mod tests {
         assert!(v["commands"][1]["workspace"].get("restart").is_none());
         assert_eq!(
             v["commands"][1]["workspace"]["layout"]["pane"]["surfaces"][0]["command"],
-            "'/usr/local/bin/ccsnap' save --pick"
+            "'/usr/local/bin/sessionsnap' save --pick"
         );
     }
 
     #[test]
     fn the_ui_gets_its_own_workspace() {
-        // Recreating the "ccsnap" workspace for another command must not stop the UI server.
-        for c in palette_commands("ccsnap") {
-            let want = if c["name"] == "ccsnap: Open UI" { "ccsnap UI" } else { "ccsnap" };
+        // Recreating the "sessionsnap" workspace for another command must not stop the UI server.
+        for c in palette_commands("sessionsnap") {
+            let want = if c["name"] == "sessionsnap: Open UI" { "sessionsnap UI" } else { "sessionsnap" };
             assert_eq!(c["workspace"]["name"], want, "{}", c["name"]);
             assert_eq!(c["restart"], "recreate");
         }
@@ -287,7 +287,7 @@ mod tests {
     fn creates_config_when_missing() {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join("sub/cmux.json");
-        assert!(install_cmux(&cfg, "ccsnap").unwrap().is_none());
+        assert!(install_cmux(&cfg, "sessionsnap").unwrap().is_none());
         assert!(cfg.exists());
     }
 
@@ -296,7 +296,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join("cmux.json");
         std::fs::write(&cfg, "// comment\n{ nope").unwrap();
-        assert_eq!(exit_of(&install_cmux(&cfg, "ccsnap").unwrap_err()), Exit::Refused);
+        assert_eq!(exit_of(&install_cmux(&cfg, "sessionsnap").unwrap_err()), Exit::Refused);
         assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "// comment\n{ nope");
     }
 
@@ -312,7 +312,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join("cmux.json");
         std::fs::write(&cfg, TEMPLATE).unwrap();
-        assert!(install_cmux(&cfg, "ccsnap").unwrap().is_some());
+        assert!(install_cmux(&cfg, "sessionsnap").unwrap().is_some());
         let text = std::fs::read_to_string(&cfg).unwrap();
         for line in ["  // This file uses JSON with comments (JSONC).", "  /* block */", "  //   \"app\" : {"] {
             assert!(text.contains(line), "lost {line:?} in:\n{text}");
@@ -332,8 +332,8 @@ mod tests {
             TEMPLATE.replacen("{\n", "{\n  \"commands\": [{\"name\": \"Mine\", \"command\": \"ls\"}],\n", 1),
         )
         .unwrap();
-        install_cmux(&cfg, "ccsnap").unwrap();
-        install_cmux(&cfg, "ccsnap").unwrap();
+        install_cmux(&cfg, "sessionsnap").unwrap();
+        install_cmux(&cfg, "sessionsnap").unwrap();
         let text = std::fs::read_to_string(&cfg).unwrap();
         let n = names(&text);
         assert_eq!(n.len(), 6, "{n:?}");
@@ -347,7 +347,7 @@ mod tests {
         let cfg = d.path().join("cmux.json");
         let original = "{\n  \"commands\": [\n    // mine\n    {\"name\": \"Mine\"}\n  ]\n}\n";
         std::fs::write(&cfg, original).unwrap();
-        assert_eq!(exit_of(&install_cmux(&cfg, "ccsnap").unwrap_err()), Exit::Refused);
+        assert_eq!(exit_of(&install_cmux(&cfg, "sessionsnap").unwrap_err()), Exit::Refused);
         assert_eq!(std::fs::read_to_string(&cfg).unwrap(), original);
     }
 
@@ -356,7 +356,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join("cmux.json");
         std::fs::write(&cfg, "{}\n").unwrap();
-        install_cmux(&cfg, "ccsnap").unwrap();
+        install_cmux(&cfg, "sessionsnap").unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
         assert_eq!(v["commands"].as_array().unwrap().len(), 5);
     }
@@ -365,7 +365,7 @@ mod tests {
     fn installs_skill_and_quotes() {
         let d = tempfile::tempdir().unwrap();
         let p = install_skill(d.path()).unwrap();
-        assert!(std::fs::read_to_string(p).unwrap().contains("name: ccsnap"));
+        assert!(std::fs::read_to_string(p).unwrap().contains("name: sessionsnap"));
         assert_eq!(shell_quote("it's"), r"'it'\''s'");
     }
 }

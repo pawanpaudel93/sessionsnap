@@ -1,8 +1,8 @@
 mod common;
 
-use ccsnap::error::{Exit, exit_of};
-use ccsnap::testing::{B, C, open_ws, write_transcript};
 use common::setup;
+use sessionsnap::error::{Exit, exit_of};
+use sessionsnap::testing::{B, C, open_ws, write_transcript};
 
 #[test]
 fn restore_plans_then_applies_only_missing_tabs() {

@@ -1,3 +1,3 @@
 fn main() -> std::process::ExitCode {
-    ccsnap::cli::main_entry()
+    sessionsnap::cli::main_entry()
 }

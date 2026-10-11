@@ -45,7 +45,7 @@ impl OpenState {
     }
 }
 
-/// What ccsnap needs from a terminal. v1 has one implementation, `cli::CmuxCli`.
+/// What sessionsnap needs from a terminal. v1 has one implementation, `cli::CmuxCli`.
 pub trait Backend {
     /// True when cmux answers on its socket.
     fn is_running(&self) -> bool;

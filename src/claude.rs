@@ -45,9 +45,9 @@ impl Claude {
         Claude { root: root.into() }
     }
 
-    /// `$CCSNAP_CLAUDE_DIR`, else `~/.claude`.
+    /// `$SESSIONSNAP_CLAUDE_DIR`, else `~/.claude`.
     pub fn open_default() -> Result<Self> {
-        if let Some(p) = std::env::var_os("CCSNAP_CLAUDE_DIR") {
+        if let Some(p) = std::env::var_os("SESSIONSNAP_CLAUDE_DIR") {
             return Ok(Claude::new(p));
         }
         Ok(Claude::new(home_dir()?.join(".claude")))

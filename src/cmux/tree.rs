@@ -155,9 +155,9 @@ pub const TEST_TREE: &str = r#"{"windows":[{"ref":"window:1","workspaces":[
 #[cfg(test)]
 pub const TEST_BROWSER_TREE: &str = r#"{"windows":[{"ref":"window:1","workspaces":[
  {"id":"WS-ALPHA","ref":"workspace:1","title":"Alpha","panes":[
-   {"ref":"pane:1","surfaces":[{"ref":"surface:3","title":"ccsnap","tty":null,"type":"browser","url":"http://127.0.0.1:47317/"}]},
+   {"ref":"pane:1","surfaces":[{"ref":"surface:3","title":"sessionsnap","tty":null,"type":"browser","url":"http://127.0.0.1:47317/"}]},
    {"ref":"pane:29","dock_scope":"global","surfaces":[
-     {"ref":"surface:71","title":"ccsnap","tty":null,"type":"browser","url":"http://127.0.0.1:47317/#history","dock_scope":"global"},
+     {"ref":"surface:71","title":"sessionsnap","tty":null,"type":"browser","url":"http://127.0.0.1:47317/#history","dock_scope":"global"},
      {"ref":"surface:72","title":"zsh","tty":"ttys010","type":"terminal","dock_scope":"global"}]}]}]}]}"#;
 
 #[cfg(test)]

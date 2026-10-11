@@ -1,7 +1,7 @@
 mod common;
 
-use ccsnap::error::{Exit, exit_of};
 use common::setup;
+use sessionsnap::error::{Exit, exit_of};
 
 #[test]
 fn save_creates_versions_and_skips_unchanged() {
@@ -75,7 +75,7 @@ fn open_lists_live_workspaces() {
     let o = env.run(&["open"]).unwrap();
     assert_eq!(o.json["live"], true);
     assert_eq!(o.json["workspaces"][0]["name"], "Alpha");
-    assert_eq!(o.json["workspaces"][0]["tabs"][0]["sessionId"], ccsnap::testing::A);
+    assert_eq!(o.json["workspaces"][0]["tabs"][0]["sessionId"], sessionsnap::testing::A);
     assert_eq!(o.json["workspaces"][0]["tabs"][1]["sessionId"], serde_json::Value::Null);
     assert!(o.text.contains("Beta (1 tab"), "{}", o.text);
 }

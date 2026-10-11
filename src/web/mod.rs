@@ -1,4 +1,4 @@
-//! The local web UI: a small HTTP server on 127.0.0.1 that runs ccsnap commands for its page.
+//! The local web UI: a small HTTP server on 127.0.0.1 that runs sessionsnap commands for its page.
 
 pub mod api;
 pub mod http;
@@ -48,7 +48,7 @@ pub fn serve(
                         io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted => {}
                         // E.g. out of file descriptors: often passes, so keep serving.
                         _ => {
-                            eprintln!("ccsnap: accept failed: {e}");
+                            eprintln!("sessionsnap: accept failed: {e}");
                             std::thread::sleep(Duration::from_millis(100));
                         }
                     }
@@ -61,14 +61,14 @@ pub fn serve(
     })
 }
 
-/// Prints where `ccsnap ui` showed its page, or why it could not.
+/// Prints where `sessionsnap ui` showed its page, or why it could not.
 fn report_shown(response: &http::Response) {
     let body = String::from_utf8_lossy(&response.body);
     if response.status == 200 {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
         eprintln!("Showed it in cmux ({}).", v["shown"].as_str().unwrap_or("?"));
     } else {
-        eprintln!("ccsnap: {}\nRun `ccsnap ui` again to show it.", body.trim());
+        eprintln!("sessionsnap: {}\nRun `sessionsnap ui` again to show it.", body.trim());
     }
 }
 
@@ -130,10 +130,10 @@ fn request(port: u16, request: &str, wait: Duration) -> io::Result<String> {
     Ok(out)
 }
 
-/// True when a ccsnap UI answers on `port`.
+/// True when a sessionsnap UI answers on `port`.
 pub fn is_running(port: u16) -> bool {
     let req = format!("GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-    request(port, &req, Duration::from_secs(2)).is_ok_and(|out| out.contains(r#""app":"ccsnap""#))
+    request(port, &req, Duration::from_secs(2)).is_ok_and(|out| out.contains(r#""app":"sessionsnap""#))
 }
 
 /// Asks the UI server on `port` to show its page (with its key) in cmux; returns where.
@@ -143,13 +143,14 @@ pub fn ask_to_show(port: u16) -> Result<String> {
          Content-Length: 2\r\nConnection: close\r\n\r\n{{}}"
     );
     // Showing runs cmux, which can take a few seconds.
-    let out = request(port, &req, Duration::from_secs(15)).context("asking the running ccsnap UI to show itself")?;
+    let out =
+        request(port, &req, Duration::from_secs(15)).context("asking the running sessionsnap UI to show itself")?;
     let (head, body) = out.split_once("\r\n\r\n").unwrap_or((out.as_str(), ""));
     if !head.starts_with("HTTP/1.1 200 ") {
-        anyhow::bail!("the running ccsnap UI could not show itself: {}", body.trim());
+        anyhow::bail!("the running sessionsnap UI could not show itself: {}", body.trim());
     }
-    let v: serde_json::Value = serde_json::from_str(body).context("reading the running ccsnap UI's answer")?;
-    v["shown"].as_str().map(str::to_string).context("the running ccsnap UI gave no `shown`")
+    let v: serde_json::Value = serde_json::from_str(body).context("reading the running sessionsnap UI's answer")?;
+    v["shown"].as_str().map(str::to_string).context("the running sessionsnap UI gave no `shown`")
 }
 
 /// 32 hex characters from the system's random source.
@@ -165,25 +166,25 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
     if !open {
         return Ok(Outcome::ok(
             json!({"url": url, "started": false}),
-            format!("The ccsnap UI is already running at {url}."),
+            format!("The sessionsnap UI is already running at {url}."),
         ));
     }
     match ask_to_show(port) {
         Ok(shown) => Ok(Outcome::ok(
             json!({"url": url, "started": false, "shown": shown}),
-            format!("The ccsnap UI is already running at {url}; showed it ({shown})."),
+            format!("The sessionsnap UI is already running at {url}; showed it ({shown})."),
         )),
         Err(e) => Err(failure(
             Exit::Error,
             format!(
-                "The ccsnap UI is already running at {url} but could not be shown: {e:#}. To stop it: Ctrl-C in \
-                 the terminal running `ccsnap ui`, or close the \"ccsnap UI\" workspace."
+                "The sessionsnap UI is already running at {url} but could not be shown: {e:#}. To stop it: Ctrl-C in \
+                 the terminal running `sessionsnap ui`, or close the \"sessionsnap UI\" workspace."
             ),
         )),
     }
 }
 
-/// `ccsnap ui`: serves the page on 127.0.0.1 and shows it in cmux; returns once idle.
+/// `sessionsnap ui`: serves the page on 127.0.0.1 and shows it in cmux; returns once idle.
 pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
     let url = format!("http://127.0.0.1:{port}/");
     let idle = idle_minutes
@@ -200,15 +201,18 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
     // Shows run on their own thread, so each opens its own cmux client. The key travels in the
     // link's fragment, which the browser keeps to itself.
     let server = Server { port, token: new_token()?, show: Box::new(|u| CmuxCli::open_default()?.show_url(u)) };
-    eprintln!("ccsnap UI at {url}. It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
+    eprintln!("sessionsnap UI at {url}. It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
     if !open {
-        eprintln!("Run `ccsnap ui` again to show it.");
+        eprintln!("Run `sessionsnap ui` again to show it.");
     }
     let make_ctx = |cli: &crate::cli::Cli, input: Option<String>| -> Result<Ctx> {
         Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes)? })
     };
     serve(listener, &server, &make_ctx, idle, open)?;
-    Ok(Outcome::ok(json!({"url": url, "started": true, "stopped": "idle"}), "The ccsnap UI stopped after being idle."))
+    Ok(Outcome::ok(
+        json!({"url": url, "started": true, "stopped": "idle"}),
+        "The sessionsnap UI stopped after being idle.",
+    ))
 }
 
 #[cfg(test)]
@@ -247,7 +251,7 @@ mod tests {
         serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
         let out = client.join().unwrap();
         assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
-        assert!(out.contains(r#""app":"ccsnap""#));
+        assert!(out.contains(r#""app":"sessionsnap""#));
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(!is_running(port), "the server stopped");
     }
@@ -264,7 +268,7 @@ mod tests {
     #[test]
     fn ui_flags_parse() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["ccsnap", "ui", "--port", "5000", "--no-open"]).unwrap();
+        let cli = Cli::try_parse_from(["sessionsnap", "ui", "--port", "5000", "--no-open"]).unwrap();
         assert!(matches!(cli.command, crate::cli::Command::Ui { port: 5000, idle_minutes: 30, no_open: true }));
     }
 
