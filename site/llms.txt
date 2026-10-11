@@ -1,0 +1,29 @@
+# sessionsnap
+
+sessionsnap saves named, versioned snapshots of cmux workspaces and the coding-agent sessions in their tabs, and reopens only what is missing, with each agent tab resumed in its own folder with the flags it was started with. It is a single Rust binary for macOS and Linux with a CLI, a web UI in the cmux Dock, cmux palette commands and a Claude Code skill. Nothing runs in the background: every snapshot is one you ask for.
+
+Claude Code and Codex are fully supported and tested (their session histories are read). 15 more agents (Grok, OpenCode, Pi, omp, Campfire, Amp, Cursor Agent, Gemini CLI, Antigravity, Rovo Dev, Hermes Agent, GitHub Copilot CLI, CodeBuddy, Factory Droid, Qoder CLI) are resumed with the command cmux documents for them, and are untested.
+
+## For agents driving sessionsnap
+
+- Always pass `--json` and read the result; never parse the text output.
+- Restoring is two steps: `sessionsnap restore <name> --plan --json`, show the user the plan, then `sessionsnap apply <planId> --json` once they agree.
+- Exit codes: 0 ok, 1 error, 2 cmux unreachable, 3 nothing to do, 4 refused, 5 unknown cmux state or snapshot format, 6 plan stale, 7 not found.
+- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action. Never schedule saves unless asked.
+
+## Commands
+
+`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `update`, `uninstall`. Every command has `--help`.
+
+## Links
+
+- [Website](https://sessionsnap.pawanpaudel.com.np/)
+- [Docs](https://sessionsnap.pawanpaudel.com.np/docs)
+- [Source](https://github.com/pawanpaudel93/sessionsnap)
+- [Releases](https://github.com/pawanpaudel93/sessionsnap/releases)
+
+## Install
+
+```sh
+curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh
+```
