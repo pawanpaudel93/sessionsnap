@@ -5,7 +5,7 @@
 # builds for x86_64 and arm64, each as a tarball with a .sha256), then commits, tags, pushes main
 # and the tag, and creates the GitHub Release with those assets. Uses your existing `gh` login.
 # The Linux builds run in one Docker container of this Mac's own architecture
-# (RELEASE_RUST_IMAGE, default a pinned rust:1-alpine), cross-linking the other with rust-lld.
+# (RELEASE_RUST_IMAGE, default rust:1.99.0-alpine), cross-linking the other with rust-lld.
 #
 #   --dry-run  build dist/ and show what would be published; commit, tag, push nothing
 #   -y         don't ask before publishing
@@ -17,8 +17,10 @@ set -eu
 REPO="pawanpaudel93/sessionsnap"
 MAC_TARGETS="aarch64-apple-darwin x86_64-apple-darwin"
 LINUX_TARGETS="x86_64-unknown-linux-musl aarch64-unknown-linux-musl"
-# Pinned (rust 1.99.0, Alpine) so a release builds the same way every time; bump it on purpose.
-RUST_IMAGE="${RELEASE_RUST_IMAGE:-rust:1-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627}"
+# Pinned to an exact Rust release so builds don't drift; bump it on purpose. (Its index digest
+# was sha256:0cce0a5e0e8b…f1627 on 2026-10-12; a digest reference trips Docker Desktop when the
+# same image is already pulled under another tag, so the version tag is used.)
+RUST_IMAGE="${RELEASE_RUST_IMAGE:-rust:1.99.0-alpine}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() {

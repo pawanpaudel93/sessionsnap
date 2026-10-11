@@ -301,7 +301,7 @@ running, the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets, and 
 refuses a version older than the current one, sets the version in `Cargo.toml`, `Cargo.lock`
 and the site's nav badge and JSON-LD `version` (examples in the text are left alone), runs
 `scripts/check.sh`, builds a universal macOS binary (`lipo`) and static Linux binaries for
-x86_64 and arm64 (musl, in a pinned `rust:1-alpine` Docker image; `RELEASE_RUST_IMAGE` overrides
+x86_64 and arm64 (musl, in the pinned `rust:1.99.0-alpine` Docker image; `RELEASE_RUST_IMAGE` overrides
 it), and writes to `dist/` one
 `sessionsnap-X.Y.Z-<target>.tar.gz` plus `.sha256` per target (`universal-apple-darwin`,
 `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes from the
