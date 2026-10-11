@@ -30,17 +30,20 @@ pub fn shell_quote(s: &str) -> String {
 
 /// Name of the workspace the palette commands open.
 pub const PALETTE_WORKSPACE: &str = "ccsnap";
+/// The UI server's own workspace, so recreating "ccsnap" for another command leaves it running.
+pub const UI_WORKSPACE: &str = "ccsnap UI";
 
-/// Palette entries. Each opens its own "ccsnap" workspace: a plain palette command would type
+/// Palette entries. Each opens a "ccsnap" workspace (the UI "ccsnap UI"): a plain palette command would type
 /// into the focused tab, which is often a running Claude session.
 pub fn palette_commands(exe: &str) -> Vec<Value> {
     let entry = |name: &str, keywords: &[&str], args: &str| {
+        let workspace = if args == "ui" { UI_WORKSPACE } else { PALETTE_WORKSPACE };
         json!({
             "name": name,
             "keywords": keywords,
             "restart": "recreate",
             "workspace": {
-                "name": PALETTE_WORKSPACE,
+                "name": workspace,
                 "cwd": "~",
                 "layout": {"pane": {"surfaces": [
                     {"type": "terminal", "name": "ccsnap", "command": format!("{} {args}", shell_quote(exe))}
@@ -268,6 +271,16 @@ mod tests {
             v["commands"][1]["workspace"]["layout"]["pane"]["surfaces"][0]["command"],
             "'/usr/local/bin/ccsnap' save --pick"
         );
+    }
+
+    #[test]
+    fn the_ui_gets_its_own_workspace() {
+        // Recreating the "ccsnap" workspace for another command must not stop the UI server.
+        for c in palette_commands("ccsnap") {
+            let want = if c["name"] == "ccsnap: Open UI" { "ccsnap UI" } else { "ccsnap" };
+            assert_eq!(c["workspace"]["name"], want, "{}", c["name"]);
+            assert_eq!(c["restart"], "recreate");
+        }
     }
 
     #[test]
