@@ -28,7 +28,7 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Name of the workspace the palette commands open; it is never captured into snapshots.
+/// Name of the workspace the palette commands open.
 pub const PALETTE_WORKSPACE: &str = "ccsnap";
 
 /// Palette entries. Each opens its own "ccsnap" workspace: a plain palette command would type
