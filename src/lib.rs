@@ -11,3 +11,4 @@ pub mod plan;
 pub mod store;
 #[doc(hidden)]
 pub mod testing;
+pub mod web;
