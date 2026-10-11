@@ -4,6 +4,7 @@
 //! Layer rule: ports may use `crate::domain` types and `crate::error`, nothing else in the crate.
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::domain::model::{SessionRef, Version};
@@ -159,4 +160,20 @@ pub trait AgentCatalog {
 pub trait Snapshots {
     /// Loads `version` of `name`, or the latest when `version` is None.
     fn load(&self, name: &str, version: Option<u32>) -> Result<Version>;
+}
+
+/// Where released builds come from, and the few file steps an update needs (download, checksum,
+/// unpack, ask a binary its version). Implemented by `adapters::releases::GitHubReleases`.
+pub trait Releases {
+    /// The latest release's tag (e.g. "v0.2.0"); `Ok(None)` when none is published or it can't be
+    /// seen (a private repo looks the same).
+    fn latest_tag(&self) -> Result<Option<String>>;
+    /// Downloads `url` to `dest`.
+    fn download(&self, url: &str, dest: &Path) -> Result<()>;
+    /// The file's SHA-256, lowercase hex.
+    fn sha256(&self, path: &Path) -> Result<String>;
+    /// Unpacks a .tar.gz into the folder `into`.
+    fn extract(&self, archive: &Path, into: &Path) -> Result<()>;
+    /// What `<binary> --version` prints, trimmed.
+    fn version_of(&self, binary: &Path) -> Result<String>;
 }

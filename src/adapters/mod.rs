@@ -1,5 +1,5 @@
-//! Adapters: the outside world behind the ports — the snapshot store on disk, terminals (cmux)
-//! and coding agents (Claude Code, Codex and the others in the agent registry).
+//! Adapters: the outside world behind the ports — the snapshot store on disk, terminals (cmux),
+//! released builds on GitHub, and coding agents (Claude Code, Codex and the others in the agent registry).
 //!
 //! Layer rule: adapters implement `crate::ports` traits and may use `crate::domain` types; they never
 //! depend on `app` or `interfaces`.
@@ -11,6 +11,7 @@ use anyhow::Result;
 use crate::error::{Exit, failure};
 
 pub mod agents;
+pub mod releases;
 pub mod store;
 pub mod terminal;
 

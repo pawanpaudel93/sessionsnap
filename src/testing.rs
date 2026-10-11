@@ -308,3 +308,65 @@ impl crate::ports::Snapshots for FakeSnapshots {
             .ok_or_else(|| crate::error::failure(crate::error::Exit::NotFound, format!("snapshot '{name}' not found")))
     }
 }
+
+/// Releases for tests: a fixed latest tag, downloads written from memory, and an archive that
+/// unpacks to a `sessionsnap` file holding "new binary".
+pub struct FakeReleases {
+    pub tag: Option<String>,
+    /// The digest the `.sha256` file holds.
+    pub published: String,
+    /// The digest `sha256` computes for the downloaded archive.
+    pub digest: String,
+    /// What the unpacked binary's `--version` prints.
+    pub reports: String,
+    /// Every URL downloaded, in order.
+    pub downloads: RefCell<Vec<String>>,
+    pub extracted: Cell<bool>,
+}
+
+impl FakeReleases {
+    /// A release with tag `tag` (None: none published) whose checksum and version match.
+    pub fn new(tag: Option<&str>) -> Self {
+        let version = tag.map(|t| t.trim_start_matches('v')).unwrap_or_default();
+        FakeReleases {
+            tag: tag.map(str::to_string),
+            published: "ab".repeat(32),
+            digest: "ab".repeat(32),
+            reports: format!("sessionsnap {version}"),
+            downloads: Default::default(),
+            extracted: Cell::new(false),
+        }
+    }
+}
+
+impl crate::ports::Releases for FakeReleases {
+    fn latest_tag(&self) -> anyhow::Result<Option<String>> {
+        Ok(self.tag.clone())
+    }
+
+    fn download(&self, url: &str, dest: &Path) -> anyhow::Result<()> {
+        self.downloads.borrow_mut().push(url.to_string());
+        let name = url.rsplit('/').next().unwrap_or_default();
+        let body = if url.ends_with(".sha256") {
+            format!("{}  {}\n", self.published, name.trim_end_matches(".sha256"))
+        } else {
+            "archive".to_string()
+        };
+        std::fs::write(dest, body)?;
+        Ok(())
+    }
+
+    fn sha256(&self, _path: &Path) -> anyhow::Result<String> {
+        Ok(self.digest.clone())
+    }
+
+    fn extract(&self, _archive: &Path, into: &Path) -> anyhow::Result<()> {
+        self.extracted.set(true);
+        std::fs::write(into.join("sessionsnap"), "new binary")?;
+        Ok(())
+    }
+
+    fn version_of(&self, _binary: &Path) -> anyhow::Result<String> {
+        Ok(self.reports.clone())
+    }
+}

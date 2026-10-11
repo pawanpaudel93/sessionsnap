@@ -153,6 +153,12 @@ pub enum Command {
     },
     /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
     InstallSkill,
+    /// Replace this binary with the latest release from GitHub
+    Update {
+        /// Only say whether a newer release exists
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Args, Debug)]

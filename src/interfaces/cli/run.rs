@@ -8,6 +8,7 @@ use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
 use crate::app;
 use crate::app::edit::Edited;
 use crate::app::snapshots::Commit;
+use crate::app::update::Update;
 use crate::domain::diff;
 use crate::domain::edit::Op;
 use crate::domain::model::SessionRef;
@@ -71,6 +72,27 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
                 format!("Installed the sessionsnap skill at {}", path.display()),
             ))
         }
+        Command::Update { check } => Ok(updated(app::update::run(check)?)),
+    }
+}
+
+fn updated(update: Update) -> Outcome {
+    match update {
+        Update::Latest { current } => Outcome::ok(
+            json!({"current": current, "latest": current, "updateAvailable": false, "updated": false}),
+            format!("sessionsnap {current} is the latest release"),
+        ),
+        Update::Available { current, latest, how } => Outcome::ok(
+            json!({"current": current, "latest": latest, "updateAvailable": true, "updated": false, "run": how}),
+            format!("sessionsnap {latest} is available (you have {current}); run: {how}"),
+        ),
+        Update::Updated { from, to, path } => Outcome::ok(
+            json!({"current": from, "latest": to, "updateAvailable": true, "updated": true, "path": path}),
+            format!(
+                "Updated sessionsnap {from} -> {to} at {}. A running `sessionsnap ui` keeps the old version until restarted.",
+                path.display()
+            ),
+        ),
     }
 }
 
