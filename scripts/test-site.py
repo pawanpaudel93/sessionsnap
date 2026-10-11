@@ -125,7 +125,7 @@ def check():
                 require(schema.get("url") == canonical, f"{name}: schema URL")
                 require(schema.get("codeRepository") == REPO, f"{name}: repository")
                 require(schema.get("license") == "https://opensource.org/license/mit", f"{name}: license")
-                require(schema.get("operatingSystem") == "macOS, Linux", f"{name}: operatingSystem")
+                require(schema.get("operatingSystem") == "macOS", f"{name}: operatingSystem (save and restore are macOS-only)")
                 require(schema.get("version") == version, f"{name}: schema version must be {version}")
             else:
                 require(schema.get("@type") == "BreadcrumbList", f"{name}: breadcrumb schema type")
