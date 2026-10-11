@@ -1,6 +1,8 @@
 # sessionsnap
 
-sessionsnap saves named, versioned snapshots of cmux workspaces and the coding-agent sessions in their tabs, and reopens only what is missing, with each agent tab resumed in its own folder with the flags it was started with. It is a single Rust binary for macOS and Linux with a CLI, a web UI in the cmux Dock, cmux palette commands and a Claude Code skill. Nothing runs in the background: every snapshot is one you ask for.
+sessionsnap saves named, versioned snapshots of cmux workspaces and the coding-agent sessions in their tabs, and reopens only what is missing, with each agent tab resumed in its own folder with the flags it was started with. It is a single Rust binary with a CLI, a web UI in the cmux Dock, cmux palette commands and a Claude Code skill. Nothing runs in the background: every snapshot is one you ask for.
+
+It needs macOS with cmux 0.64 or newer. On Linux, sessionsnap installs, updates and uninstalls, but saving and restoring don't work yet: cmux on Linux is a different app with a different command line.
 
 Claude Code and Codex are fully supported and tested (their session histories are read). 15 more agents (Grok, OpenCode, Pi, omp, Campfire, Amp, Cursor Agent, Gemini CLI, Antigravity, Rovo Dev, Hermes Agent, GitHub Copilot CLI, CodeBuddy, Factory Droid, Qoder CLI) are resumed with the command cmux documents for them, and are untested.
 

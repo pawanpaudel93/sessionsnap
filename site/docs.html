@@ -104,21 +104,29 @@
           <section class="doc-section" id="install">
             <h2>Install</h2>
             <p>
-              You need macOS or Linux, <a href="https://cmux.com">cmux</a> 0.64 or newer, and the agents
-              you want to restore on your <code translate="no">PATH</code>. One command installs the
-              latest release:
+              You need macOS with <a href="https://cmux.com">cmux</a> 0.64 or newer, and the agents
+              you want to restore on your <code translate="no">PATH</code>.
             </p>
+            <div class="callout">
+              <p>
+                <strong>On Linux</strong>, sessionsnap installs, updates and uninstalls, but saving
+                and restoring don't work yet: cmux on Linux is a different app with a different
+                command line. On macOS, sessionsnap is verified with cmux 0.64.22.
+              </p>
+            </div>
+            <p>One command installs the latest release:</p>
             <div class="code-panel">
               <pre><code translate="no"><span class="prompt">$ </span>curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh</code></pre>
             </div>
             <p>The installer:</p>
             <ol>
-              <li>Checks that it runs on macOS or Linux and that <code translate="no">curl</code>, <code translate="no">tar</code> and <code translate="no">shasum</code> (or <code translate="no">sha256sum</code> on Linux) are there.</li>
-              <li>Finds the latest release on GitHub, or the one in <code translate="no">SESSIONSNAP_VERSION</code>.</li>
-              <li>Downloads the archive for your system and verifies its SHA-256 checksum.</li>
-              <li>Installs <code translate="no">sessionsnap</code> into <code translate="no">~/.local/bin</code>, and adds that folder to your shell's <code translate="no">PATH</code> if it is missing. Running it again upgrades in place.</li>
-              <li>If <code translate="no">cmux</code> is on your <code translate="no">PATH</code>, runs <code translate="no">sessionsnap install-cmux</code>, which asks before adding the palette commands.</li>
-              <li>Prints the installed version and what to run next.</li>
+              <li>Picks the build for your system: one universal binary for macOS (Apple Silicon and Intel), or a static binary for Linux x86_64 or arm64. It needs <code translate="no">curl</code>, <code translate="no">tar</code>, and <code translate="no">shasum</code> or <code translate="no">sha256sum</code>.</li>
+              <li>Finds the latest release on GitHub, or uses <code translate="no">SESSIONSNAP_VERSION</code>.</li>
+              <li>Downloads the archive and its <code translate="no">.sha256</code> file, and stops if the checksum does not match.</li>
+              <li>Installs <code translate="no">sessionsnap</code> into <code translate="no">~/.local/bin</code> (copy, then rename, so a running sessionsnap keeps its old file). Running it again upgrades in place.</li>
+              <li>Adds that folder to <code translate="no">PATH</code> in your shell's startup file (<code translate="no">.zshrc</code>, <code translate="no">.bash_profile</code> on macOS or <code translate="no">.bashrc</code> on Linux, fish's <code translate="no">config.fish</code>, else <code translate="no">.profile</code>) if it is not there yet.</li>
+              <li>If <code translate="no">cmux</code> is on your <code translate="no">PATH</code> and a terminal is attached, runs <code translate="no">sessionsnap install-cmux</code>, which asks before adding the palette commands; otherwise it says how to run that later.</li>
+              <li>Prints the installed version and the next steps.</li>
             </ol>
             <div class="table-wrap">
               <table class="data-table stack">
@@ -127,8 +135,8 @@
                 </thead>
                 <tbody>
                   <tr><td><code translate="no">SESSIONSNAP_VERSION</code></td><td>Install this version (for example <code translate="no">0.1.0</code>) instead of the latest.</td></tr>
-                  <tr><td><code translate="no">SESSIONSNAP_INSTALL_DIR</code></td><td>Install into this folder instead of <code translate="no">~/.local/bin</code>.</td></tr>
-                  <tr><td><code translate="no">SESSIONSNAP_NO_CMUX=1</code></td><td>Skip the cmux palette step.</td></tr>
+                  <tr><td><code translate="no">SESSIONSNAP_INSTALL_DIR</code></td><td>Install into this folder instead of <code translate="no">~/.local/bin</code> (it is created if missing).</td></tr>
+                  <tr><td><code translate="no">SESSIONSNAP_NO_CMUX=1</code></td><td>Skip the cmux palette step; the installer only says how to run it later.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -150,12 +158,6 @@
             <p>With Rust 1.96 or newer:</p>
             <div class="code-panel">
               <pre><code translate="no"><span class="prompt">$ </span>cargo install --git https://github.com/pawanpaudel93/sessionsnap</code></pre>
-            </div>
-            <div class="callout">
-              <p>
-                <strong>Status:</strong> verified with cmux 0.64.22 on macOS. Linux builds are released
-                but have not yet been checked against a live cmux on Linux.
-              </p>
             </div>
           </section>
 
@@ -479,6 +481,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>Claude Code transcripts (read)</td><td><code translate="no">~/.claude/projects</code>; <code translate="no">SESSIONSNAP_CLAUDE_DIR</code> (another <code translate="no">~/.claude</code>)</td></tr>
                   <tr><td>Codex sessions (read)</td><td><code translate="no">~/.codex/sessions</code>; <code translate="no">SESSIONSNAP_CODEX_DIR</code> (another <code translate="no">~/.codex</code>)</td></tr>
                   <tr><td>cmux binary</td><td><code translate="no">cmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_CMUX_BIN</code></td></tr>
+                  <tr><td>cmux state file (read)</td><td><code translate="no">~/Library/Application Support/cmux/session-com.cmuxterm.app.json</code>; <code translate="no">SESSIONSNAP_CMUX_STATE</code></td></tr>
+                  <tr><td>cmux palette config</td><td><code translate="no">~/.config/cmux/cmux.json</code> (on Linux, <code translate="no">$XDG_CONFIG_HOME/cmux/cmux.json</code> when that is set); <code translate="no">SESSIONSNAP_CMUX_CONFIG</code></td></tr>
+                  <tr><td>Claude Code skill (written by <code translate="no">install-skill</code>)</td><td><code translate="no">~/.claude/skills/sessionsnap</code>; <code translate="no">SESSIONSNAP_SKILLS_DIR</code> (another skills folder)</td></tr>
                 </tbody>
               </table>
             </div>
@@ -507,34 +512,51 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
           <section class="doc-section" id="updating">
             <h2>Updating</h2>
             <div class="code-panel">
-              <pre><code translate="no"><span class="prompt">$ </span>sessionsnap update --check   <span class="comment"># only report whether a newer release exists</span>
+              <pre><code translate="no"><span class="prompt">$ </span>sessionsnap update --check   <span class="comment"># only say whether a newer release exists</span>
 <span class="prompt">$ </span>sessionsnap update           <span class="comment"># replace this binary with the latest release</span></code></pre>
             </div>
             <p>
-              <code translate="no">update</code> downloads the latest release, verifies its checksum and
-              replaces the running binary. A running web UI keeps working until you restart it. If you
-              installed with <code translate="no">cargo install</code>, it does not replace the binary;
-              run <code translate="no">cargo install --git https://github.com/pawanpaudel93/sessionsnap --force</code>
-              or use the installer instead. Running the installer again also upgrades in place.
+              <code translate="no">update</code> asks GitHub for the latest release. If you already have it, it
+              prints <code translate="no">sessionsnap X.Y.Z is the latest release</code>.
+              Otherwise it downloads the archive for your system into a private temporary folder,
+              verifies its SHA-256, checks that the new binary reports the expected version, then
+              copies it next to the running binary and renames it into place, so a running web UI keeps
+              its old file until you restart it. If any check fails, nothing is changed.
+              <code translate="no">--check</code> only reports, for example
+              <code translate="no">sessionsnap 0.2.0 is available (you have 0.1.0); run: sessionsnap update</code>.
+            </p>
+            <ul>
+              <li><strong>Installed with cargo:</strong> <code translate="no">update</code> does not replace a binary under cargo's <code translate="no">bin</code> folder (exit 1). Run <code translate="no">cargo install --git https://github.com/pawanpaudel93/sessionsnap --force</code>, or switch to the installer.</li>
+              <li><strong>No release found</strong> (none published yet, or the repository is private): exit 7. If GitHub can't be reached: exit 1. Both messages name the installer and <code translate="no">cargo install</code> instead.</li>
+              <li><strong>A folder you can't write to:</strong> it suggests running the update as the folder's owner, or reinstalling there with <code translate="no">SESSIONSNAP_INSTALL_DIR</code>.</li>
+            </ul>
+            <p>
+              With <code translate="no">--json</code> it prints <code translate="no">current</code>,
+              <code translate="no">latest</code>, <code translate="no">updateAvailable</code> and
+              <code translate="no">updated</code>, plus <code translate="no">run</code> (with
+              <code translate="no">--check</code>) or <code translate="no">path</code> (after an update).
+              Running the installer again also upgrades in place.
             </p>
           </section>
 
           <section class="doc-section" id="uninstall">
             <h2>Uninstall</h2>
             <div class="code-panel">
-              <pre><code translate="no"><span class="prompt">$ </span>sessionsnap uninstall               <span class="comment"># asks first</span>
+              <pre><code translate="no"><span class="prompt">$ </span>sessionsnap uninstall               <span class="comment"># lists what it removes and asks first</span>
 <span class="prompt">$ </span>sessionsnap uninstall --keep-data   <span class="comment"># keep your snapshots in ~/.sessionsnap</span></code></pre>
             </div>
-            <p>After asking (or with <code translate="no">-y</code>), <code translate="no">uninstall</code> removes:</p>
+            <p>After you confirm (or with <code translate="no">-y</code>), <code translate="no">uninstall</code> removes:</p>
             <ul>
-              <li>the “sessionsnap: …” palette commands from the cmux config, backing the file up first;</li>
-              <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>;</li>
-              <li>your snapshots in <code translate="no">~/.sessionsnap</code>, unless you pass <code translate="no">--keep-data</code>;</li>
-              <li>the <code translate="no">sessionsnap</code> binary. For one installed with cargo, run <code translate="no">cargo uninstall sessionsnap</code>.</li>
+              <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay;</li>
+              <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>, only if sessionsnap wrote it;</li>
+              <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a folder holding files sessionsnap did not make is left alone;</li>
+              <li>the <code translate="no">sessionsnap</code> binary. One installed with cargo is left; run <code translate="no">cargo uninstall sessionsnap</code> afterwards.</li>
             </ul>
             <p>
-              It leaves the <code translate="no">PATH</code> line the installer added to your shell
-              startup file, and says so; remove it by hand if you no longer want it.
+              Anything already gone is reported, not an error. It leaves the <code translate="no">PATH</code>
+              line the installer added (other tools may use <code translate="no">~/.local/bin</code>) and lists
+              it. Under <code translate="no">--json</code>, or without a terminal, it needs
+              <code translate="no">--yes</code>; otherwise it refuses with exit 4.
             </p>
           </section>
         </article>

@@ -84,40 +84,6 @@
               View source
             </a>
           </div>
-          <div class="install">
-            <p class="install-label" id="install-label">Install from Terminal</p>
-            <div class="command" role="group" aria-labelledby="install-label">
-              <code class="desktop-command" translate="no"
-                >curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh</code
-              >
-              <code class="mobile-command" translate="no"
-                >curl -fsSL https://sessionsnap.<br />pawanpaudel.com.np/install.sh | sh</code
-              >
-              <button
-                class="copy-button"
-                type="button"
-                title="Copy install command"
-                aria-label="Copy install command"
-                data-copy-title="Copy install command"
-                data-copy-label="Install command copied."
-                data-copy="curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh"
-              >
-                <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" />
-                </svg>
-                <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" />
-                </svg>
-              </button>
-            </div>
-            <span class="copy-status" aria-live="polite"></span>
-          </div>
-          <p class="requirements">
-            Free and open source (MIT). macOS or Linux, with cmux 0.64 or newer. One binary in
-            <code translate="no">~/.local/bin</code>; nothing runs in the background. Update with
-            <code translate="no">sessionsnap update</code>; remove with <code translate="no">sessionsnap uninstall</code>.
-          </p>
         </div>
 
         <figure class="demo">
@@ -151,6 +117,45 @@ Restore 3 tab(s)? [y/N] y
             Claude Code and Codex sessions resumed; the 26 tabs already open are left alone.
           </figcaption>
         </figure>
+
+        <div class="hero-install">
+          <div class="install">
+            <p class="install-label" id="install-label">Install from Terminal</p>
+            <div class="command" role="group" aria-labelledby="install-label">
+              <code class="desktop-command" translate="no"
+                >curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh</code
+              >
+              <code class="mobile-command" translate="no"
+                >curl -fsSL https://sessionsnap.<br />pawanpaudel.com.np/install.sh | sh</code
+              >
+              <button
+                class="copy-button"
+                type="button"
+                title="Copy install command"
+                aria-label="Copy install command"
+                data-copy-title="Copy install command"
+                data-copy-label="Install command copied."
+                data-copy="curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh"
+              >
+                <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" />
+                </svg>
+                <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" />
+                </svg>
+              </button>
+            </div>
+            <span class="copy-status" aria-live="polite"></span>
+          </div>
+          <p class="requirements">
+            Free and open source (MIT). macOS with cmux 0.64 or newer; one binary in
+            <code translate="no">~/.local/bin</code>, and nothing runs in the background. Update with
+            <code translate="no">sessionsnap update</code>; remove with <code translate="no">sessionsnap uninstall</code>.
+            On Linux, sessionsnap installs, updates and uninstalls, but saving and restoring don't work
+            yet: cmux on Linux is a different app with a different command line.
+          </p>
+        </div>
       </section>
 
       <section class="shell section" id="how" aria-labelledby="how-title">

@@ -856,11 +856,26 @@ footer a {
   display: grid;
   gap: 48px;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  row-gap: 36px;
 }
 
 .demo {
   margin: 0;
   min-width: 0;
+}
+
+/* The install row spans both hero columns so the one-liner fits on one line. */
+.hero-install {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.hero-install .install {
+  margin-top: 0;
+}
+
+.hero-install .requirements {
+  max-width: 760px;
 }
 
 .term-window {
@@ -966,8 +981,17 @@ footer a {
   }
 
   .hero-split {
-    gap: 40px;
+    gap: 32px;
     grid-template-columns: 1fr;
+  }
+
+  /* On one column the install command comes before the terminal sample. */
+  .hero-install {
+    order: 1;
+  }
+
+  .demo {
+    order: 2;
   }
 }
 
@@ -1098,6 +1122,12 @@ footer a {
   .data-table th,
   .data-table td {
     padding: 8px 9px;
+  }
+
+  /* Long commands and URLs in prose break instead of widening the page. */
+  .doc-section p code,
+  .doc-section li code {
+    overflow-wrap: anywhere;
   }
 
   /* Lets the agents table fit a phone instead of scrolling sideways. */
