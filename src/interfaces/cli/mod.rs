@@ -153,6 +153,12 @@ pub enum Command {
     },
     /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
     InstallSkill,
+    /// Remove sessionsnap: palette commands, skill, snapshots and this binary (asks first)
+    Uninstall {
+        /// Keep your snapshots (~/.sessionsnap)
+        #[arg(long)]
+        keep_data: bool,
+    },
     /// Replace this binary with the latest release from GitHub
     Update {
         /// Only say whether a newer release exists

@@ -257,6 +257,8 @@ mod tests {
             for bad in [
                 r#"{"args":["ui"]}"#,
                 r#"{"args":["install-cmux"]}"#,
+                r#"{"args":["update"]}"#,
+                r#"{"args":["uninstall","--yes"]}"#,
                 r#"{"args":["--yes","delete","x"]}"#,
                 r#"{"args":[]}"#,
                 r#"{"args":["edit","work","--batch","/etc/hosts"]}"#,

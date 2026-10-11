@@ -89,7 +89,7 @@ fn create_private(dir: &Path) -> Result<()> {
 }
 
 /// Where `cargo install` puts binaries.
-fn cargo_bin_dir() -> Option<PathBuf> {
+pub(crate) fn cargo_bin_dir() -> Option<PathBuf> {
     let home = std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))?;

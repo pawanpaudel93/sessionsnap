@@ -11,6 +11,7 @@ pub mod install;
 pub mod restore;
 pub mod sessions;
 pub mod snapshots;
+pub mod uninstall;
 pub mod update;
 
 use std::io::IsTerminal;

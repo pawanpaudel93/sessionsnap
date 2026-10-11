@@ -185,6 +185,38 @@ pub fn install_skill(dir: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// What `uninstall_skill` found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillRemoval {
+    Removed,
+    Missing,
+    /// The folder holds something sessionsnap did not put there; it is left alone.
+    NotOurs,
+}
+
+/// Removes `dir/sessionsnap` when it is the skill `install_skill` wrote: only a SKILL.md naming
+/// itself sessionsnap.
+pub fn uninstall_skill(dir: &Path) -> Result<SkillRemoval> {
+    let folder = dir.join("sessionsnap");
+    let Ok(meta) = std::fs::symlink_metadata(&folder) else {
+        return Ok(SkillRemoval::Missing);
+    };
+    let entries: Vec<_> = if meta.is_dir() {
+        std::fs::read_dir(&folder)?.filter_map(|e| e.ok()).map(|e| e.file_name()).collect()
+    } else {
+        vec![]
+    };
+    let ours = entries.len() == 1
+        && entries[0] == "SKILL.md"
+        && std::fs::read_to_string(folder.join("SKILL.md"))
+            .is_ok_and(|t| t.starts_with("---\n") && t.lines().any(|l| l.trim() == "name: sessionsnap"));
+    if !ours {
+        return Ok(SkillRemoval::NotOurs);
+    }
+    std::fs::remove_dir_all(&folder)?;
+    Ok(SkillRemoval::Removed)
+}
+
 fn str_field(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -314,5 +346,24 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = install_skill(d.path()).unwrap();
         assert!(std::fs::read_to_string(p).unwrap().contains("name: sessionsnap"));
+    }
+
+    #[test]
+    fn uninstall_skill_removes_only_our_skill() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(uninstall_skill(d.path()).unwrap(), SkillRemoval::Missing);
+        install_skill(d.path()).unwrap();
+        assert_eq!(uninstall_skill(d.path()).unwrap(), SkillRemoval::Removed);
+        assert!(!d.path().join("sessionsnap").exists());
+
+        install_skill(d.path()).unwrap();
+        fs::write(d.path().join("sessionsnap/notes.md"), "mine").unwrap();
+        assert_eq!(uninstall_skill(d.path()).unwrap(), SkillRemoval::NotOurs);
+        assert!(d.path().join("sessionsnap/notes.md").exists());
+
+        let other = d.path().join("other");
+        fs::create_dir_all(other.join("sessionsnap")).unwrap();
+        fs::write(other.join("sessionsnap/SKILL.md"), "---\nname: something-else\n---\n").unwrap();
+        assert_eq!(uninstall_skill(&other).unwrap(), SkillRemoval::NotOurs);
     }
 }

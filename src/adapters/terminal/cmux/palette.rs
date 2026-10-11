@@ -58,22 +58,51 @@ pub fn install_cmux(config: &Path, exe: &str) -> Result<Option<PathBuf>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(config)?;
-    let updated = with_palette_commands(&text, exe).map_err(|why| {
+    let updated = with_commands(&text, palette_commands(exe)).map_err(|why| {
         failure(
             Exit::Refused,
             format!("{}: {why}; add the commands by hand from `sessionsnap install-cmux --print`", config.display()),
         )
     })?;
+    write_with_backup(config, &updated).map(Some)
+}
+
+/// Removes the "sessionsnap: …" palette commands, keeping every other entry and the comments
+/// outside the `commands` array. Returns the backup path, or None when there was nothing to remove
+/// (no file, or no sessionsnap commands in it).
+pub fn uninstall_cmux(config: &Path) -> Result<Option<PathBuf>> {
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return Ok(None);
+    };
+    let ours = serde_json::from_str::<Value>(&strip_jsonc(&text))
+        .ok()
+        .and_then(|root| root.get("commands").and_then(Value::as_array).cloned())
+        .is_some_and(|list| list.iter().any(is_ours));
+    if !ours {
+        return Ok(None);
+    }
+    let updated = with_commands(&text, vec![]).map_err(|why| {
+        failure(Exit::Refused, format!("{}: {why}; remove the \"sessionsnap: …\" commands by hand", config.display()))
+    })?;
+    write_with_backup(config, &updated).map(Some)
+}
+
+fn is_ours(command: &Value) -> bool {
+    command.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("sessionsnap:"))
+}
+
+/// Backs `config` up next to itself, then replaces it with `text`; returns the backup's path.
+fn write_with_backup(config: &Path, text: &str) -> Result<PathBuf> {
     let backup = config.with_file_name(format!("cmux.json.bak-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
     std::fs::copy(config, &backup).with_context(|| format!("backing up {}", config.display()))?;
     let tmp = config.with_extension("json.tmp");
-    std::fs::write(&tmp, updated)?;
+    std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, config)?;
-    Ok(Some(backup))
+    Ok(backup)
 }
 
-/// Returns `text` with the sessionsnap palette commands in its top-level `commands` array.
-fn with_palette_commands(text: &str, exe: &str) -> std::result::Result<String, String> {
+/// Returns `text` with the sessionsnap commands in its top-level `commands` array replaced by `ours`.
+fn with_commands(text: &str, ours: Vec<Value>) -> std::result::Result<String, String> {
     let plain = strip_jsonc(text);
     let root: Value = serde_json::from_str(&plain).map_err(|e| format!("not valid JSON ({e})"))?;
     let obj = root.as_object().ok_or("not a JSON object")?;
@@ -82,8 +111,8 @@ fn with_palette_commands(text: &str, exe: &str) -> std::result::Result<String, S
         Some(Value::Array(a)) => a.clone(),
         Some(_) => return Err("\"commands\" is not an array".into()),
     };
-    list.retain(|c| !c.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("sessionsnap:")));
-    list.extend(palette_commands(exe));
+    list.retain(|c| !is_ours(c));
+    list.extend(ours);
     let array = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?.replace('\n', "\n  ");
     if let Some((start, end)) = top_level_array(&plain, "commands") {
         if text[start..end] != plain[start..end] {
@@ -341,5 +370,35 @@ mod tests {
         install_cmux(&cfg, "sessionsnap").unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
         assert_eq!(v["commands"].as_array().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn uninstall_removes_only_sessionsnap_commands() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("cmux.json");
+        let original = "// my settings\n{\n  \"theme\": \"dark\", // keep\n  \"commands\": [{\"name\": \"Mine\", \"command\": \"ls\"}]\n}\n";
+        std::fs::write(&cfg, original).unwrap();
+        install_cmux(&cfg, "sessionsnap").unwrap();
+        let installed = std::fs::read_to_string(&cfg).unwrap();
+        let backup = uninstall_cmux(&cfg).unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), installed);
+        let text = std::fs::read_to_string(&cfg).unwrap();
+        assert!(text.starts_with("// my settings\n{"), "{text}");
+        assert!(text.contains("\"theme\": \"dark\", // keep"), "{text}");
+        assert!(!text.contains("sessionsnap:"), "{text}");
+        let root: Value = serde_json::from_str(&strip_jsonc(&text)).unwrap();
+        assert_eq!(root["commands"], json!([{"name": "Mine", "command": "ls"}]));
+    }
+
+    #[test]
+    fn uninstall_without_our_commands_changes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("cmux.json");
+        assert!(uninstall_cmux(&cfg).unwrap().is_none());
+        assert!(!cfg.exists());
+        std::fs::write(&cfg, "{\"theme\": \"dark\"}").unwrap();
+        assert!(uninstall_cmux(&cfg).unwrap().is_none());
+        assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "{\"theme\": \"dark\"}");
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1);
     }
 }

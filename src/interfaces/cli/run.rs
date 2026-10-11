@@ -73,7 +73,29 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             ))
         }
         Command::Update { check } => Ok(updated(app::update::run(check)?)),
+        Command::Uninstall { keep_data } => uninstall(ctx, keep_data),
     }
+}
+
+fn uninstall(ctx: &Ctx, keep_data: bool) -> Result<Outcome> {
+    let paths = app::uninstall::paths(ctx.store.root())?;
+    let removes: Vec<String> = app::uninstall::preview(&paths, keep_data).iter().map(|l| format!("  - {l}")).collect();
+    confirm(ctx, &format!("This removes:\n{}\nUninstall sessionsnap?", removes.join("\n")))?;
+    let report = app::uninstall::run(&paths, keep_data)?;
+    let mut text: Vec<String> = report
+        .steps
+        .iter()
+        .map(|s| match &s.note {
+            Some(note) => format!("{}: {} ({note})", s.what, s.status),
+            None => format!("{}: {}", s.what, s.status),
+        })
+        .collect();
+    text.push("sessionsnap is uninstalled.".into());
+    if !report.left.is_empty() {
+        text.push("Left in place, since other tools may use them:".into());
+        text.extend(report.left.iter().map(|l| format!("  - {l}")));
+    }
+    Ok(Outcome::ok(json!({"steps": report.steps, "left": report.left}), text.join("\n")))
 }
 
 fn updated(update: Update) -> Outcome {

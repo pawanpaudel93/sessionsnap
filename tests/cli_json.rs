@@ -59,3 +59,12 @@ fn json_stays_effective_after_double_dash() {
     assert_eq!(exit, Exit::NotFound);
     assert_eq!(v["error"]["code"], "not-found");
 }
+
+#[test]
+fn uninstall_asks_first() {
+    let env = common::setup();
+    let (exit, v) = run_json(&args(&["uninstall"]), |cli| Ok(env.ctx(true, cli.yes, None)));
+    assert_eq!(exit, Exit::Refused);
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("This removes:") && message.contains("pass --yes"), "{message}");
+}
