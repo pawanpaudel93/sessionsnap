@@ -234,19 +234,34 @@ fn is_version(v: &str) -> bool {
         && pre.is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.'))
 }
 
-/// Whether `latest` is a higher X.Y.Z than `current`. Missing parts count as 0, and a pre-release
-/// ("0.2.0-rc1") comes before its release.
+/// Whether `latest` is a higher X.Y.Z than `current`, by semver precedence: missing parts count
+/// as 0, a pre-release ("0.2.0-rc.1") comes before its release, and pre-releases compare by their
+/// dot-separated identifiers (numbers numerically and below words, so rc.2 < rc.10).
 fn is_newer(latest: &str, current: &str) -> bool {
-    let parse = |v: &str| -> ([u64; 3], bool) {
+    use std::cmp::Ordering;
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    enum Id<'a> {
+        Num(u64),
+        Word(&'a str),
+    }
+    fn parse(v: &str) -> ([u64; 3], Option<Vec<Id<'_>>>) {
         let v = v.split('+').next().unwrap_or_default();
-        let (num, pre) = v.split_once('-').map_or((v, false), |(n, _)| (n, true));
+        let (num, pre) = v.split_once('-').map_or((v, None), |(n, p)| (n, Some(p)));
         let mut x = [0u64; 3];
         for (slot, p) in x.iter_mut().zip(num.split('.')) {
             *slot = p.parse().unwrap_or(0);
         }
-        (x, !pre)
-    };
-    parse(latest) > parse(current)
+        (x, pre.map(|p| p.split('.').map(|id| id.parse().map_or(Id::Word(id), Id::Num)).collect()))
+    }
+    let ((a, a_pre), (b, b_pre)) = (parse(latest), parse(current));
+    match a.cmp(&b) {
+        Ordering::Equal => match (a_pre, b_pre) {
+            (None, Some(_)) => true,
+            (Some(a), Some(b)) => a > b,
+            _ => false,
+        },
+        o => o == Ordering::Greater,
+    }
 }
 
 #[cfg(test)]
@@ -323,6 +338,13 @@ mod tests {
         assert!(!is_newer("0.1.0", "0.1.1"));
         assert!(!is_newer("0.1.0-rc1", "0.1.0"));
         assert!(is_newer("0.2.0", "0.2.0-rc1"));
+        assert!(is_newer("0.2.0-rc.2", "0.2.0-rc.1"));
+        assert!(is_newer("0.2.0-rc.10", "0.2.0-rc.2"));
+        assert!(is_newer("0.2.0-rc.1", "0.2.0-rc"));
+        assert!(is_newer("0.2.0-rc.1", "0.2.0-beta.9"));
+        assert!(is_newer("0.2.0-alpha", "0.2.0-1"));
+        assert!(!is_newer("0.2.0-rc.1", "0.2.0-rc.1"));
+        assert!(!is_newer("0.2.0-rc.1", "0.2.0"));
         assert!(!is_newer("1.0", "1.0.0"));
         assert!(is_newer("1.0.1", "1.0"));
     }
