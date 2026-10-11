@@ -11,38 +11,64 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::cli::{Ctx, Outcome};
+use crate::cmux::Backend;
+use crate::cmux::cli::CmuxCli;
 use crate::error::{Exit, failure};
 use api::{MakeCtx, Server};
 
 /// Fixed so the Dock tab's URL stays valid across restarts.
 pub const DEFAULT_PORT: u16 = 47317;
 
-/// Answers requests one at a time until none has come for `idle`.
-pub fn serve(listener: TcpListener, server: &Server<'_>, make_ctx: &MakeCtx<'_>, idle: Duration) -> Result<()> {
+/// Answers requests one at a time until none has come for `idle`. Showing the page runs on its own
+/// thread: cmux waits for the page to load, and loading it needs this loop. With `show_at_start`,
+/// shows the page once the loop is up.
+pub fn serve(
+    listener: TcpListener,
+    server: &Server<'_>,
+    make_ctx: &MakeCtx<'_>,
+    idle: Duration,
+    show_at_start: bool,
+) -> Result<()> {
     listener.set_nonblocking(true)?;
-    let mut last = Instant::now();
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                handle_connection(&stream, server, make_ctx);
-                last = Instant::now();
-            }
-            Err(e) => {
-                match e.kind() {
-                    io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
-                    // A client gave up before we accepted it, or a signal arrived: try again.
-                    io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted => {}
-                    // E.g. out of file descriptors: often passes, so keep serving.
-                    _ => {
-                        eprintln!("ccsnap: accept failed: {e}");
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
+    std::thread::scope(|scope| {
+        if show_at_start {
+            scope.spawn(|| report_shown(&server.show_page()));
+        }
+        let mut last = Instant::now();
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    handle_connection(scope, stream, server, make_ctx);
+                    last = Instant::now();
                 }
-                if last.elapsed() >= idle {
-                    return Ok(());
+                Err(e) => {
+                    match e.kind() {
+                        io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                        // A client gave up before we accepted it, or a signal arrived: try again.
+                        io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted => {}
+                        // E.g. out of file descriptors: often passes, so keep serving.
+                        _ => {
+                            eprintln!("ccsnap: accept failed: {e}");
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                    }
+                    if last.elapsed() >= idle {
+                        return Ok(());
+                    }
                 }
             }
         }
+    })
+}
+
+/// Prints where `ccsnap ui` showed its page, or why it could not.
+fn report_shown(response: &http::Response) {
+    let body = String::from_utf8_lossy(&response.body);
+    if response.status == 200 {
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        eprintln!("Showed it in cmux ({}).", v["shown"].as_str().unwrap_or("?"));
+    } else {
+        eprintln!("ccsnap: {}\nRun `ccsnap ui` again to show it.", body.trim());
     }
 }
 
@@ -68,18 +94,29 @@ impl Read for Deadline<'_> {
     }
 }
 
-fn handle_connection(stream: &TcpStream, server: &Server<'_>, make_ctx: &MakeCtx<'_>) {
+fn handle_connection<'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    stream: TcpStream,
+    server: &'scope Server<'_>,
+    make_ctx: &MakeCtx<'_>,
+) {
     // Accepted sockets inherit non-blocking mode on macOS.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
-    let reader = Deadline { stream, until: Instant::now() + REQUEST_DEADLINE };
+    let reader = Deadline { stream: &stream, until: Instant::now() + REQUEST_DEADLINE };
     let response = match http::read_request(&mut BufReader::new(reader)) {
+        Ok(req) if req.method == "POST" && req.path == "/api/show" => {
+            scope.spawn(move || {
+                let response = server.handle(&req, &|_, _| anyhow::bail!("/api/show runs no command"));
+                let _ = http::write_response(&mut &stream, &response);
+            });
+            return;
+        }
         Ok(req) => server.handle(&req, make_ctx),
         Err(resp) => resp,
     };
-    let mut out = stream;
-    let _ = http::write_response(&mut out, &response);
+    let _ = http::write_response(&mut &stream, &response);
 }
 
 /// Sends one raw request to the server on `port` and returns the whole response.
@@ -122,16 +159,6 @@ pub fn new_token() -> Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn show(ctx: &Ctx, url: &str, open: bool) -> &'static str {
-    if !open {
-        return "not shown";
-    }
-    ctx.backend.show_url(url).unwrap_or_else(|e| {
-        eprintln!("ccsnap: could not show the UI in cmux: {e:#}");
-        "not shown"
-    })
-}
-
 /// A UI already answers on `port`: its key is only in that server's memory, so ask it to show
 /// its own page.
 fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
@@ -157,7 +184,7 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
 }
 
 /// `ccsnap ui`: serves the page on 127.0.0.1 and shows it in cmux; returns once idle.
-pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
+pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
     let url = format!("http://127.0.0.1:{port}/");
     let idle = idle_minutes
         .checked_mul(60)
@@ -170,17 +197,17 @@ pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome
             return Err(failure(Exit::Error, format!("cannot listen on 127.0.0.1:{port} ({e}); pick another --port")));
         }
     };
-    let server = Server { port, token: new_token()?, show: Box::new(|u| ctx.backend.show_url(u)) };
-    // The key travels in the fragment, which the browser keeps to itself.
-    let shown = show(ctx, &format!("{url}#t={}", server.token), open);
-    eprintln!("ccsnap UI at {url} ({shown}). It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
-    if shown == "not shown" {
+    // Shows run on their own thread, so each opens its own cmux client. The key travels in the
+    // link's fragment, which the browser keeps to itself.
+    let server = Server { port, token: new_token()?, show: Box::new(|u| CmuxCli::open_default()?.show_url(u)) };
+    eprintln!("ccsnap UI at {url}. It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
+    if !open {
         eprintln!("Run `ccsnap ui` again to show it.");
     }
     let make_ctx = |cli: &crate::cli::Cli, input: Option<String>| -> Result<Ctx> {
         Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes)? })
     };
-    serve(listener, &server, &make_ctx, idle)?;
+    serve(listener, &server, &make_ctx, idle, open)?;
     Ok(Outcome::ok(json!({"url": url, "started": true, "stopped": "idle"}), "The ccsnap UI stopped after being idle."))
 }
 
@@ -217,7 +244,7 @@ mod tests {
             })
         };
         let started = Instant::now();
-        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
         let out = client.join().unwrap();
         assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
         assert!(out.contains(r#""app":"ccsnap""#));
@@ -278,7 +305,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
         let started = Instant::now();
-        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
         let out = client.join().unwrap();
         done_tx.send(()).unwrap();
         silent.join().unwrap();
@@ -303,7 +330,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
         let started = Instant::now();
-        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
         let took = started.elapsed();
         drip.join().unwrap();
         assert!(took < Duration::from_secs(8), "{took:?}");
@@ -313,21 +340,65 @@ mod tests {
     fn a_second_ui_asks_the_running_server_to_show_itself() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let seen = std::cell::RefCell::new(vec![]);
+        let seen = std::sync::Mutex::new(vec![]);
         let server = Server {
             port,
             token: "k3y".into(),
             show: Box::new(|u: &str| {
-                seen.borrow_mut().push(u.to_string());
+                seen.lock().unwrap().push(u.to_string());
                 Ok("reused")
             }),
         };
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
         assert_eq!(client.join().unwrap(), Ok("reused".to_string()));
-        assert_eq!(*seen.borrow(), vec![format!("http://127.0.0.1:{port}/#t=k3y")]);
+        assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{port}/#t=k3y")]);
+    }
+
+    /// A show function that, like `cmux browser goto`, returns only once the page has loaded.
+    fn show_that_loads_the_page(port: u16) -> impl Fn(&str) -> Result<&'static str> + Send + Sync {
+        move |_| {
+            let req = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+            let out = request(port, &req, Duration::from_secs(2)).context("navigation_timeout")?;
+            anyhow::ensure!(out.starts_with("HTTP/1.1 200 OK"), "page did not load");
+            Ok("reused")
+        }
+    }
+
+    #[test]
+    fn the_page_loads_while_a_show_waits_for_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server { port, token: "k3y".into(), show: Box::new(show_that_loads_the_page(port)) };
+        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
+        assert_eq!(client.join().unwrap(), Ok("reused".to_string()));
+    }
+
+    #[test]
+    fn showing_at_start_does_not_block_the_page() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let shown = std::sync::Mutex::new(None);
+        let load = show_that_loads_the_page(port);
+        let server = Server {
+            port,
+            token: "k3y".into(),
+            show: Box::new(|u: &str| {
+                let r = load(u);
+                *shown.lock().unwrap() = Some(r.as_ref().map(|s| s.to_string()).map_err(|e| format!("{e:#}")));
+                r
+            }),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(300), true).unwrap();
+        drop(server);
+        assert_eq!(shown.into_inner().unwrap(), Some(Ok("reused".to_string())));
     }
 
     #[test]
@@ -338,7 +409,7 @@ mod tests {
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
         let err = client.join().unwrap().unwrap_err();
         assert!(err.contains("no cmux"), "{err}");
     }

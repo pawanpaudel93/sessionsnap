@@ -21,7 +21,7 @@ pub const ALLOWED: &[&str] = &[
 pub type MakeCtx<'a> = dyn Fn(&Cli, Option<String>) -> Result<Ctx> + 'a;
 
 /// Shows a URL in cmux; returns where ("reused", "dock" or "tab").
-pub type ShowFn<'a> = dyn Fn(&str) -> Result<&'static str> + 'a;
+pub type ShowFn<'a> = dyn Fn(&str) -> Result<&'static str> + Send + Sync + 'a;
 
 pub struct Server<'a> {
     pub port: u16,
@@ -87,6 +87,11 @@ impl Server<'_> {
         if !Self::is_json(req) {
             return Response::text(415, "send JSON");
         }
+        self.show_page()
+    }
+
+    /// Shows the keyed link in cmux: `200 {"shown": …}`, or `502` with the reason.
+    pub fn show_page(&self) -> Response {
         match (self.show)(&format!("http://127.0.0.1:{}/#t={}", self.port, self.token)) {
             Ok(shown) => Response::json(200, &json!({"shown": shown})),
             // cmux's message could quote the link; the key stays out of the answer.
@@ -277,12 +282,12 @@ mod tests {
     #[test]
     fn show_needs_no_token_and_shows_the_keyed_link() {
         with_store(|mk| {
-            let seen = std::cell::RefCell::new(vec![]);
+            let seen = std::sync::Mutex::new(vec![]);
             let s = Server {
                 port: PORT,
                 token: "t0k".into(),
                 show: Box::new(|u: &str| {
-                    seen.borrow_mut().push(u.to_string());
+                    seen.lock().unwrap().push(u.to_string());
                     Ok("reused")
                 }),
             };
@@ -291,7 +296,7 @@ mod tests {
             assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
             assert_eq!(body(&r), json!({"shown": "reused"}));
             assert!(!String::from_utf8_lossy(&r.body).contains("t0k"), "never returns the key");
-            assert_eq!(*seen.borrow(), vec![format!("http://127.0.0.1:{PORT}/#t=t0k")]);
+            assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{PORT}/#t=t0k")]);
             // Without an Origin (a local program such as `ccsnap ui`) it works too.
             assert_eq!(s.handle(&show_req(&[("content-type", "application/json")]), mk).status, 200);
             assert_eq!(s.handle(&req("GET", "/api/show", &[], ""), mk).status, 405);
