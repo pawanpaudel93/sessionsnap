@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::adapters::agents::Agents;
 use crate::adapters::agents::claude::Claude;
+use crate::adapters::store::Store;
+use crate::app::Ctx;
 
 pub const A: &str = "11111111-1111-4111-8111-111111111111";
 pub const B: &str = "22222222-2222-4222-8222-222222222222";
@@ -20,6 +23,20 @@ pub fn write_transcript(claude_root: &Path, cwd: &str, id: &str, title: &str) ->
     ];
     std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
     path
+}
+
+/// A context on a store under `dir/store`, Claude data under `dir/claude` and `terminal`, as the
+/// binary would build it for these flags.
+pub fn ctx(dir: &Path, terminal: FakeTerminal, json: bool, yes: bool, input: Option<String>) -> Ctx {
+    Ctx {
+        store: Store::new(dir.join("store")),
+        agents: Agents::new(Claude::new(dir.join("claude"))),
+        terminal: Box::new(terminal),
+        json,
+        yes,
+        interactive: false,
+        input,
+    }
 }
 
 /// An open workspace with ref "workspace:<id>"; tabs are (title, cwd, session).
@@ -43,17 +60,17 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
     }
 }
 
-/// In-memory cmux for tests. Clones share state, so a test can inspect it after handing one over.
+/// In-memory terminal for tests. Clones share state, so a test can inspect it after handing one over.
 #[derive(Clone)]
-pub struct FakeBackend {
+pub struct FakeTerminal {
     pub state: std::rc::Rc<std::cell::RefCell<crate::ports::OpenState>>,
     pub log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub running: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
-impl Default for FakeBackend {
+impl Default for FakeTerminal {
     fn default() -> Self {
-        FakeBackend {
+        FakeTerminal {
             state: std::rc::Rc::new(std::cell::RefCell::new(crate::ports::OpenState {
                 live: true,
                 ..Default::default()
@@ -73,7 +90,7 @@ fn open_tab(t: &crate::domain::model::Tab) -> crate::ports::OpenTab {
     }
 }
 
-impl crate::ports::Terminal for FakeBackend {
+impl crate::ports::Terminal for FakeTerminal {
     fn is_running(&self) -> bool {
         self.running.get()
     }

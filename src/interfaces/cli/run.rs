@@ -90,7 +90,7 @@ fn save(
 ) -> Result<Outcome> {
     let name = match name {
         Some(n) => n,
-        None if pick_flag && ctx.interactive => pick::choose_save_name(&ctx.store)?,
+        None if pick_flag && ctx.interactive => pick::choose_save_name(app::snapshots::names(ctx)?)?,
         None => return Err(failure(Exit::Error, "give a snapshot name (or --pick in a terminal)")),
     };
     let commit = app::snapshots::save(ctx, &name, only, from.as_deref(), message)?;
@@ -316,7 +316,7 @@ fn restore(
 ) -> Result<Outcome> {
     let snapshot = match snapshot {
         Some(s) => s,
-        None if pick_flag && ctx.interactive => pick::choose_snapshot(&ctx.store)?,
+        None if pick_flag && ctx.interactive => pick::choose_snapshot(app::snapshots::names(ctx)?)?,
         None => return Err(failure(Exit::Error, "give a snapshot (or --pick in a terminal)")),
     };
     let source = app::restore::snapshot_source(ctx, &snapshot, workspaces, tabs)?;

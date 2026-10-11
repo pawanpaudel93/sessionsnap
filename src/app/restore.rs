@@ -25,14 +25,14 @@ pub fn sessions_source(sessions: &[SessionInfo]) -> PlanSource {
 /// Only planning needs the terminal running already; restoring starts it.
 pub fn require_terminal(ctx: &Ctx, plan_only: bool) -> Result<()> {
     if plan_only {
-        if !ctx.backend.is_running() {
+        if !ctx.terminal.is_running() {
             return Err(failure(
                 Exit::CmuxUnreachable,
                 "cmux is not running; start it first (restore without --plan starts it)",
             ));
         }
     } else {
-        ctx.backend.ensure_running()?;
+        ctx.terminal.ensure_running()?;
     }
     Ok(())
 }
@@ -40,8 +40,8 @@ pub fn require_terminal(ctx: &Ctx, plan_only: bool) -> Result<()> {
 /// Makes a plan against what is open now and, unless it is empty, keeps it for `apply`.
 pub fn prepare(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Plan> {
     require_terminal(ctx, plan_only)?;
-    let open = ctx.backend.read_open_state()?;
-    let plan = make_plan(source, &ctx.store, &ctx.claude, &open)?;
+    let open = ctx.terminal.read_open_state()?;
+    let plan = make_plan(source, &ctx.store, ctx.agents.history(), &open)?;
     if !plan.is_empty() {
         ctx.store.save_plan(&plan)?;
     }
@@ -51,13 +51,13 @@ pub fn prepare(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Plan> {
 /// A kept plan, with the terminal started to apply it.
 pub fn load_for_apply(ctx: &Ctx, plan_id: &str) -> Result<Plan> {
     let plan = ctx.store.load_plan(plan_id)?;
-    ctx.backend.ensure_running()?;
+    ctx.terminal.ensure_running()?;
     Ok(plan)
 }
 
 /// Applies `plan` to the terminal; one step per workspace created or tab added.
 pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
-    apply_plan(plan, &ctx.store, &ctx.claude, ctx.backend.as_ref())
+    apply_plan(plan, &ctx.store, ctx.agents.history(), ctx.terminal.as_ref())
 }
 
 /// The workspaces a plan restores: a snapshot selection, or recovered sessions in one workspace.
@@ -126,10 +126,11 @@ fn step(description: String, result: Result<()>) -> ApplyStep {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::agents::Agents;
     use crate::adapters::agents::claude::Claude;
     use crate::domain::model::Tab;
     use crate::error::exit_of;
-    use crate::testing::{A, B, C, FakeBackend, open_ws, write_transcript};
+    use crate::testing::{A, B, C, FakeTerminal, open_ws, write_transcript};
 
     const D: &str = "44444444-4444-4444-8444-444444444444";
 
@@ -155,7 +156,7 @@ mod tests {
         write_transcript(&croot, "/w/a", A, "one");
         write_transcript(&croot, "/w/a", B, "two");
         write_transcript(&croot, "/w/c", C, "three");
-        let (store, claude) = (Store::new(d.path().join("s")), Claude::new(croot));
+        let (store, agents) = (Store::new(d.path().join("s")), Agents::new(Claude::new(croot)));
         let saved = vec![
             workspace(
                 "Alpha",
@@ -171,21 +172,21 @@ mod tests {
             workspace("Delta", "/w/d", None, vec![claude_tab("lost", "/w/d", D)]),
         ];
         store.save_new("work", "m", Default::default(), saved).unwrap();
-        let fake = FakeBackend::default();
+        let fake = FakeTerminal::default();
         *fake.state.borrow_mut() = OpenState {
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("WA", "Alpha", "/w/a", &[("one", "/w/a", Some(A))])],
         };
         let source = PlanSource::Snapshot { snapshot: "work".into(), version: 1, selection: Selection::default() };
-        let plan = make_plan(source.clone(), &store, &claude, &fake.read_open_state().unwrap()).unwrap();
+        let plan = make_plan(source.clone(), &store, agents.history(), &fake.read_open_state().unwrap()).unwrap();
         assert_eq!(plan.tab_count(), 3);
         store.save_plan(&plan).unwrap();
         assert_eq!(store.load_plan(&plan.plan_id).unwrap(), plan);
-        let steps = apply_plan(&plan, &store, &claude, &fake).unwrap();
+        let steps = apply_plan(&plan, &store, agents.history(), &fake).unwrap();
         assert!(steps.iter().all(|s| s.ok), "{steps:?}");
         assert_eq!(*fake.log.borrow(), ["add workspace:WA two", "create Gamma 1", "create Delta 1"]);
-        assert_eq!(exit_of(&apply_plan(&plan, &store, &claude, &fake).unwrap_err()), Exit::PlanStale);
-        assert!(make_plan(source, &store, &claude, &fake.read_open_state().unwrap()).unwrap().is_empty());
+        assert_eq!(exit_of(&apply_plan(&plan, &store, agents.history(), &fake).unwrap_err()), Exit::PlanStale);
+        assert!(make_plan(source, &store, agents.history(), &fake.read_open_state().unwrap()).unwrap().is_empty());
     }
 }

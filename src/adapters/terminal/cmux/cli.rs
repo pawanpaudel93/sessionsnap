@@ -11,7 +11,7 @@ use crate::domain::model::Tab;
 use crate::error::{Exit, failure};
 use crate::ports::{OpenState, Terminal};
 
-/// The cmux backend: reads state from the `cmux` CLI and the state file, opens tabs via the CLI.
+/// The cmux terminal: reads state from the `cmux` CLI and the state file, opens tabs via the CLI.
 pub struct CmuxCli<R: Runner> {
     pub runner: R,
     pub program: String,

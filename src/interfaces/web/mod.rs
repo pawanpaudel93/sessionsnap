@@ -221,10 +221,8 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::agents::claude::Claude;
-    use crate::adapters::store::fs::Store;
     use crate::interfaces::cli::Cli;
-    use crate::testing::FakeBackend;
+    use crate::testing::FakeTerminal;
 
     #[test]
     fn serves_requests_until_idle() {
@@ -240,15 +238,7 @@ mod tests {
         });
         let dir = tempfile::tempdir().unwrap();
         let make = |cli: &Cli, input: Option<String>| -> Result<Ctx> {
-            Ok(Ctx {
-                store: Store::new(dir.path().join("store")),
-                claude: Claude::new(dir.path().join("claude")),
-                backend: Box::new(FakeBackend::default()),
-                json: cli.json,
-                yes: cli.yes,
-                interactive: false,
-                input,
-            })
+            Ok(crate::testing::ctx(dir.path(), FakeTerminal::default(), cli.json, cli.yes, input))
         };
         let started = Instant::now();
         serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
@@ -279,17 +269,7 @@ mod tests {
     }
 
     fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + '_ {
-        move |cli, input| {
-            Ok(Ctx {
-                store: Store::new(dir.join("store")),
-                claude: Claude::new(dir.join("claude")),
-                backend: Box::new(FakeBackend::default()),
-                json: cli.json,
-                yes: cli.yes,
-                interactive: false,
-                input,
-            })
-        }
+        move |cli, input| Ok(crate::testing::ctx(dir, FakeTerminal::default(), cli.json, cli.yes, input))
     }
 
     #[test]

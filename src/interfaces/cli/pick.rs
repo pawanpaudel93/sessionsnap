@@ -4,7 +4,6 @@ use std::io::{self, BufRead, Write};
 
 use anyhow::Result;
 
-use crate::adapters::store::fs::Store;
 use crate::error::{Exit, failure};
 
 fn read_line() -> Result<String> {
@@ -38,16 +37,17 @@ pub fn choose(title: &str, items: &[String]) -> Result<usize> {
     }
 }
 
-pub fn choose_save_name(store: &Store) -> Result<String> {
-    let mut items = store.list()?;
+/// Picks one of the snapshot `names`, or asks for a new one.
+pub fn choose_save_name(names: Vec<String>) -> Result<String> {
+    let mut items = names;
     let existing = items.len();
     items.push("(new snapshot)".into());
     let i = choose("Save to which snapshot?", &items)?;
     if i < existing { Ok(items[i].clone()) } else { ask("New snapshot name") }
 }
 
-pub fn choose_snapshot(store: &Store) -> Result<String> {
-    let items = store.list()?;
+pub fn choose_snapshot(names: Vec<String>) -> Result<String> {
+    let items = names;
     if items.is_empty() {
         return Err(failure(Exit::NotFound, "no snapshots yet"));
     }

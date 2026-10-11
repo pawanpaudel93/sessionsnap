@@ -1,7 +1,7 @@
 mod common;
 
-use sessionsnap::cli::run_json;
 use sessionsnap::error::Exit;
+use sessionsnap::interfaces::cli::run_json;
 
 fn args(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()

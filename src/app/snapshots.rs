@@ -34,8 +34,8 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
             (src.workspaces, source)
         }
         None => {
-            let open = ctx.backend.read_open_state()?;
-            let captured = capture(&open, &ctx.claude, only)?;
+            let open = ctx.terminal.read_open_state()?;
+            let captured = capture(&open, ctx.agents.history(), only)?;
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
                 Some(p) => carry_over(&p.workspaces, captured),
@@ -65,8 +65,13 @@ pub fn commit(
     let message = message
         .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
     let v = ctx.store.save_new(name, &message, source, workspaces)?;
-    let warnings = edit::warnings(&v.workspaces, &ctx.claude);
+    let warnings = edit::warnings(&v.workspaces, ctx.agents.history());
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
+}
+
+/// Every snapshot's name.
+pub fn names(ctx: &Ctx) -> Result<Vec<String>> {
+    ctx.store.list()
 }
 
 /// Every snapshot's name with its latest version.
@@ -83,7 +88,7 @@ pub fn list(ctx: &Ctx) -> Result<Vec<(String, Version)>> {
 pub fn show(ctx: &Ctx, snapshot: &str) -> Result<(Version, Vec<String>)> {
     let (name, version) = parse_ref(snapshot)?;
     let v = ctx.store.load(&name, version)?;
-    let warnings = edit::warnings(&v.workspaces, &ctx.claude);
+    let warnings = edit::warnings(&v.workspaces, ctx.agents.history());
     Ok((v, warnings))
 }
 

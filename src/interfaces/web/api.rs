@@ -142,9 +142,7 @@ fn same(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::agents::claude::Claude;
-    use crate::adapters::store::fs::Store;
-    use crate::testing::FakeBackend;
+    use crate::testing::FakeTerminal;
     use serde_json::json;
 
     const PORT: u16 = 47317;
@@ -177,15 +175,7 @@ mod tests {
     fn with_store<T>(f: impl FnOnce(&MakeCtx<'_>) -> T) -> T {
         let dir = tempfile::tempdir().unwrap();
         let make = |cli: &Cli, input: Option<String>| -> anyhow::Result<Ctx> {
-            Ok(Ctx {
-                store: Store::new(dir.path().join("store")),
-                claude: Claude::new(dir.path().join("claude")),
-                backend: Box::new(FakeBackend::default()),
-                json: cli.json,
-                yes: cli.yes,
-                interactive: false,
-                input,
-            })
+            Ok(crate::testing::ctx(dir.path(), FakeTerminal::default(), cli.json, cli.yes, input))
         };
         f(&make)
     }

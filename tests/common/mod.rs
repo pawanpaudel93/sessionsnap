@@ -1,37 +1,27 @@
 #![allow(dead_code)]
 
 use clap::Parser;
-use sessionsnap::claude::Claude;
-use sessionsnap::cli::{Cli, Ctx, Outcome, run::dispatch};
-use sessionsnap::store::Store;
-use sessionsnap::testing::{A, B, FakeBackend, open_ws, write_transcript};
+use sessionsnap::interfaces::cli::{Cli, Ctx, Outcome, run::dispatch};
+use sessionsnap::testing::{A, B, FakeTerminal, open_ws, write_transcript};
 
-/// Temporary store + Claude dir + fake cmux; `run` parses args like the real binary.
+/// Temporary store + Claude dir + fake terminal; `run` parses args like the real binary.
 pub struct Env {
     pub dir: tempfile::TempDir,
-    pub fake: FakeBackend,
+    pub fake: FakeTerminal,
 }
 
 impl Env {
     pub fn new() -> Self {
-        Env { dir: tempfile::tempdir().unwrap(), fake: FakeBackend::default() }
+        Env { dir: tempfile::tempdir().unwrap(), fake: FakeTerminal::default() }
     }
 
     pub fn claude_root(&self) -> std::path::PathBuf {
         self.dir.path().join("claude")
     }
 
-    /// A context like the binary's, on this test's store, Claude dir and fake cmux.
+    /// A context like the binary's, on this test's store, Claude dir and fake terminal.
     pub fn ctx(&self, json: bool, yes: bool, input: Option<String>) -> Ctx {
-        Ctx {
-            store: Store::new(self.dir.path().join("store")),
-            claude: Claude::new(self.claude_root()),
-            backend: Box::new(self.fake.clone()),
-            json,
-            yes,
-            interactive: false,
-            input,
-        }
+        sessionsnap::testing::ctx(self.dir.path(), self.fake.clone(), json, yes, input)
     }
 
     pub fn run(&self, args: &[&str]) -> anyhow::Result<Outcome> {

@@ -25,16 +25,19 @@ pub enum Edited {
 pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Edited> {
     let previous = ctx.store.load(name, None)?;
     let mut workspaces = previous.workspaces.clone();
-    let open =
-        if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
+    let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
+        Some(ctx.terminal.read_open_state()?)
+    } else {
+        None
+    };
     edit::apply_ops(
         &mut workspaces,
         &ops,
-        &EditCtx { history: &ctx.claude, snapshots: &ctx.store, open: open.as_ref() },
+        &EditCtx { history: ctx.agents.history(), snapshots: &ctx.store, open: open.as_ref() },
     )?;
     if dry_run {
         let changes = diff::diff(&previous.workspaces, &workspaces);
-        let warnings = edit::warnings(&workspaces, &ctx.claude);
+        let warnings = edit::warnings(&workspaces, ctx.agents.history());
         return Ok(Edited::DryRun { base_version: previous.version, workspaces, changes, warnings });
     }
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };

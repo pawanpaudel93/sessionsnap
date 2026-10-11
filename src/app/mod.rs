@@ -13,7 +13,7 @@ pub mod snapshots;
 
 use std::io::IsTerminal;
 
-use crate::adapters::agents::claude::Claude;
+use crate::adapters::agents::Agents;
 use crate::adapters::store::Store;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
 use crate::ports::Terminal;
@@ -24,9 +24,10 @@ use crate::ports::Terminal;
 /// them.
 pub struct Ctx {
     pub store: Store,
-    pub claude: Claude,
+    /// The coding agents sessionsnap knows, with their session histories.
+    pub agents: Agents,
     /// The terminal (cmux).
-    pub backend: Box<dyn Terminal>,
+    pub terminal: Box<dyn Terminal>,
     pub json: bool,
     pub yes: bool,
     /// Prompts allowed (a terminal on stdin and not --json).
@@ -39,8 +40,8 @@ impl Ctx {
     pub fn open_default(json: bool, yes: bool) -> anyhow::Result<Ctx> {
         Ok(Ctx {
             store: Store::open_default()?,
-            claude: Claude::open_default()?,
-            backend: Box::new(CmuxCli::open_default()?),
+            agents: Agents::open_default()?,
+            terminal: Box::new(CmuxCli::open_default()?),
             json,
             yes,
             interactive: !json && std::io::stdin().is_terminal(),
