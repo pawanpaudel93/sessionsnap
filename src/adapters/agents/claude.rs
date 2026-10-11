@@ -113,6 +113,10 @@ impl Claude {
 }
 
 impl SessionHistory for Claude {
+    fn agent(&self) -> &'static str {
+        KIND
+    }
+
     fn contains(&self, session_id: &str) -> bool {
         self.find_transcript(session_id).is_some()
     }

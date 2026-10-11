@@ -4,6 +4,7 @@
 //! `interfaces`.
 
 pub mod claude;
+pub mod codex;
 #[cfg(test)]
 mod contract;
 pub mod registry;

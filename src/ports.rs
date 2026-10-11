@@ -105,6 +105,8 @@ impl SessionInfo {
 /// What the domain needs from one agent's session history. Implementations live in
 /// `adapters::agents`.
 pub trait SessionHistory {
+    /// The agent's kind in the registry, e.g. "claude".
+    fn agent(&self) -> &'static str;
     /// True when the history has session `session_id` (in any folder).
     fn contains(&self, session_id: &str) -> bool {
         self.find(session_id).ok().flatten().is_some()

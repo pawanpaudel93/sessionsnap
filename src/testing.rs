@@ -39,6 +39,25 @@ pub fn ctx(dir: &Path, terminal: FakeTerminal, json: bool, yes: bool, input: Opt
     }
 }
 
+/// Writes a minimal Codex rollout for `id`, started in `cwd`, whose first real prompt is `prompt`.
+pub fn write_rollout(codex_root: &Path, cwd: &str, id: &str, prompt: &str) -> PathBuf {
+    let dir = codex_root.join("sessions/2026/10/11");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("rollout-2026-10-11T09-30-00-{id}.jsonl"));
+    let user = |text: &str| {
+        serde_json::json!({"type": "response_item", "payload": {"type": "message", "role": "user",
+                           "content": [{"type": "input_text", "text": text}]}})
+    };
+    let lines = [
+        serde_json::json!({"type": "session_meta", "payload": {"id": id, "cwd": cwd, "timestamp": "2026-10-11T09:30:00Z",
+                           "source": "cli", "originator": "codex_cli_rs", "cli_version": "0.50.0"}}),
+        user("<environment_context>\n  <cwd>/w</cwd>\n</environment_context>"),
+        user(prompt),
+    ];
+    std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    path
+}
+
 /// An open workspace with ref "workspace:<id>"; tabs are (title, cwd, session).
 pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str>)]) -> crate::ports::OpenWorkspace {
     crate::ports::OpenWorkspace {
@@ -161,6 +180,10 @@ impl FakeHistory {
 }
 
 impl crate::ports::SessionHistory for FakeHistory {
+    fn agent(&self) -> &'static str {
+        "claude"
+    }
+
     fn contains(&self, session_id: &str) -> bool {
         self.sessions.iter().any(|s| s.session_id == session_id)
     }
