@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.96"
 description = "Named, versioned snapshots of cmux workspaces and coding-agent sessions"
 license = "MIT"
+repository = "https://github.com/pawanpaudel93/sessionsnap"
 
 [dependencies]
 anyhow = "1"
