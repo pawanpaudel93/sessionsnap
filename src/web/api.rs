@@ -84,6 +84,9 @@ impl Server {
         if !body.args.first().is_some_and(|c| ALLOWED.contains(&c.as_str())) {
             return Response::text(403, "command not allowed from the UI");
         }
+        if body.args.iter().any(|a| a == "--") {
+            return Response::text(403, "arguments may not contain --");
+        }
         // Batches come in `input`, never from a file the server would read.
         let file_batch = body.args.windows(2).any(|w| w[0] == "--batch" && w[1] != "-")
             || body.args.iter().any(|a| a.starts_with("--batch="));
@@ -228,6 +231,7 @@ mod tests {
                 r#"{"args":[]}"#,
                 r#"{"args":["edit","work","--batch","/etc/hosts"]}"#,
                 r#"{"args":["edit","work","--batch=/etc/hosts"]}"#,
+                r#"{"args":["restore","work","--pick","--","x"]}"#,
             ] {
                 assert_eq!(s.handle(&api(bad), mk).status, 403, "{bad}");
             }

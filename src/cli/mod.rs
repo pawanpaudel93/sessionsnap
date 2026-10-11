@@ -253,10 +253,11 @@ pub fn error_json(e: &anyhow::Error) -> Value {
 /// `make_ctx` builds the context from the parsed flags (the web UI passes its own).
 pub fn run_json(args: &[String], make_ctx: impl FnOnce(&Cli) -> anyhow::Result<Ctx>) -> (Exit, Value) {
     let mut argv = vec!["ccsnap".to_string()];
-    argv.extend(args.iter().cloned());
+    // Before the caller's args, so a `--` among them cannot turn it into a positional.
     if !args.iter().any(|a| a == "--json") {
         argv.push("--json".to_string());
     }
+    argv.extend(args.iter().cloned());
     let cli = match Cli::try_parse_from(argv) {
         Ok(cli) => cli,
         Err(e) => {

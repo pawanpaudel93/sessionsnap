@@ -46,3 +46,16 @@ fn passes_yes_and_input() {
     assert_eq!(exit, Exit::Ok);
     assert_eq!(v["deleted"], true);
 }
+
+#[test]
+fn json_stays_effective_after_double_dash() {
+    let env = common::setup();
+    let mut json_seen = false;
+    let (exit, v) = run_json(&args(&["show", "--", "nope"]), |cli| {
+        json_seen = cli.json;
+        Ok(env.ctx(true, cli.yes, None))
+    });
+    assert!(json_seen, "--json must not be swallowed as a positional after --");
+    assert_eq!(exit, Exit::NotFound);
+    assert_eq!(v["error"]["code"], "not-found");
+}
