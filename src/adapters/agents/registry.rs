@@ -21,21 +21,22 @@ pub enum Support {
 pub enum Ids {
     /// A UUID.
     Uuid,
-    /// 1 to 200 characters from `[A-Za-z0-9._:-]`.
+    /// 1 to 200 characters from `[A-Za-z0-9._:-]`, starting with a letter or digit.
     Token,
 }
 
-/// Which saved launch flags are passed again when resuming.
+/// Which saved launch flags are passed again when resuming. For every agent, the words of its own
+/// resume command are dropped as well (see `AgentSpec::kept_args`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flags {
-    /// Claude Code: all but -r/--resume <id>, -c/--continue, --session-id <id>, -p/--print and
-    /// --fork-session.
+    /// Claude Code: also -r/--resume [id], -c/--continue, --session-id <id>, -p/--print,
+    /// --fork-session, and positional arguments (an initial prompt).
     Claude,
-    /// Codex: all but a leading subcommand and its positional arguments (`resume <id>`,
-    /// `exec <prompt>`), and --last/--all after `resume`/`fork`.
+    /// Codex: also the subcommand wherever it is among the positionals (`resume <id>`,
+    /// `exec <prompt>`), its positional arguments, and --last/--all after `resume`/`fork`.
     Codex,
-    /// All of them, as saved.
-    Verbatim,
+    /// The rest as saved.
+    Others,
 }
 
 /// One agent: its names, how to resume a session and what sessionsnap knows about it.
@@ -69,7 +70,7 @@ const fn agent(
         program,
         resume,
         ids: Ids::Token,
-        flags: Flags::Verbatim,
+        flags: Flags::Others,
         support: Support::ResumeOnly,
     }
 }
@@ -127,19 +128,24 @@ impl AgentSpec {
     pub fn valid_id(&self, id: &str) -> bool {
         match self.ids {
             Ids::Uuid => is_session_id(id),
+            // Starting with a letter or digit, so the ID is never read as a flag.
             Ids::Token => {
-                !id.is_empty() && id.len() <= 200 && id.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+                id.len() <= 200
+                    && id.starts_with(|c: char| c.is_ascii_alphanumeric())
+                    && id.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
             }
         }
     }
 
-    /// The saved launch flags that resuming passes again.
+    /// The saved launch flags that resuming passes again: per `Flags`, then without the words of
+    /// this agent's own resume command (the session would be given twice).
     pub fn kept_args(&self, args: &[String]) -> Vec<String> {
-        match self.flags {
-            Flags::Verbatim => args.to_vec(),
+        let args = match self.flags {
+            Flags::Others => args.to_vec(),
             Flags::Claude => claude_args(args),
             Flags::Codex => codex_args(args),
-        }
+        };
+        drop_resume_words(self.resume, &args)
     }
 
     /// `[program, resume…, id, kept flags…]`, or None when `id` is not a valid ID for this agent or a
@@ -168,6 +174,79 @@ impl AgentSpec {
     }
 }
 
+/// Drops the words of a resume template from saved args. The template is subcommand words `S`
+/// (e.g. `threads continue`, `rovodev run`) and an optional trailing flag `F` (e.g. `--session`).
+/// - `S` is dropped wherever it appears in a row; without `F`, so is the ID after it.
+/// - `F <value>` and `F=<value>` are dropped anywhere (the value only when it is not a flag).
+fn drop_resume_words(template: &[&str], args: &[String]) -> Vec<String> {
+    let words: Vec<&str> = template.iter().copied().take_while(|w| !w.starts_with('-')).collect();
+    let flag = template.last().copied().filter(|w| w.starts_with('-'));
+    let mut out = vec![];
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if !words.is_empty() && args.len() - i >= words.len() && args[i..i + words.len()].iter().eq(words.iter()) {
+            i += words.len();
+            if flag.is_none() && args.get(i).is_some_and(|v| !v.starts_with('-')) {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(f) = flag {
+            if a == f {
+                i += 1;
+                if args.get(i).is_some_and(|v| !v.starts_with('-')) {
+                    i += 1;
+                }
+                continue;
+            }
+            if a.strip_prefix(f).is_some_and(|rest| rest.starts_with('=')) {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(args[i].clone());
+        i += 1;
+    }
+    out
+}
+
+/// Claude Code flags that take one value.
+const CLAUDE_VALUE_FLAGS: &[&str] = &[
+    "--model",
+    "--permission-mode",
+    "--append-system-prompt",
+    "--append-system-prompt-file",
+    "--system-prompt",
+    "--system-prompt-file",
+    "--settings",
+    "--output-format",
+    "--input-format",
+    "--fallback-model",
+    "--agents",
+    "--agent",
+    "--max-turns",
+    "--permission-prompt-tool",
+    "--setting-sources",
+    "--plugin-dir",
+    "--max-budget-usd",
+    "--json-schema",
+    "--debug-file",
+    "--name",
+    "-n",
+];
+/// Claude Code flags that take one or more values.
+const CLAUDE_LIST_FLAGS: &[&str] = &[
+    "--add-dir",
+    "--allowedTools",
+    "--allowed-tools",
+    "--disallowedTools",
+    "--disallowed-tools",
+    "--mcp-config",
+    "--betas",
+    "--tools",
+];
+
 fn claude_args(args: &[String]) -> Vec<String> {
     let mut out = vec![];
     let mut it = args.iter().peekable();
@@ -182,23 +261,72 @@ fn claude_args(args: &[String]) -> Vec<String> {
                 it.next();
             }
             s if s.starts_with("--resume=") || s.starts_with("--session-id=") => {}
-            _ => out.push(a.clone()),
+            s if CLAUDE_VALUE_FLAGS.contains(&s) => {
+                out.push(a.clone());
+                out.extend(it.next().cloned());
+            }
+            s if CLAUDE_LIST_FLAGS.contains(&s) => {
+                out.push(a.clone());
+                while let Some(v) = it.next_if(|v| !v.starts_with('-')) {
+                    out.push(v.clone());
+                }
+            }
+            s if s.starts_with('-') => out.push(a.clone()),
+            // A positional is the initial prompt: never sent again.
+            _ => {}
         }
     }
     out
 }
 
+/// Codex options that take a value (`--x=y` forms are one word).
+const CODEX_VALUE_FLAGS: &[&str] = &[
+    "-c",
+    "--config",
+    "-m",
+    "--model",
+    "-p",
+    "--profile",
+    "-a",
+    "--ask-for-approval",
+    "-s",
+    "--sandbox",
+    "-C",
+    "--cd",
+    "-i",
+    "--image",
+    "--add-dir",
+    "--enable",
+    "--disable",
+    "--local-provider",
+];
+
 fn codex_args(args: &[String]) -> Vec<String> {
-    let Some(sub) = args.first().filter(|a| !a.starts_with('-')) else { return args.to_vec() };
-    let rest = args[1..].iter().skip_while(|a| !a.starts_with('-'));
-    let resuming = sub == "resume" || sub == "fork";
-    rest.filter(|a| !(resuming && (*a == "--last" || *a == "--all"))).cloned().collect()
+    let mut out = vec![];
+    let mut sub: Option<&str> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if CODEX_VALUE_FLAGS.contains(&a.as_str()) {
+            out.push(a.clone());
+            out.extend(it.next().cloned());
+        } else if a.starts_with('-') {
+            let resuming = matches!(sub, Some("resume" | "fork"));
+            if !(resuming && (a == "--last" || a == "--all")) {
+                out.push(a.clone());
+            }
+        } else if sub.is_none() {
+            // The first positional is the subcommand (or a prompt); both are dropped, and so are
+            // the positionals after it.
+            sub = Some(a.as_str());
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::A;
+    use crate::testing::{A, B};
 
     fn strings(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
@@ -314,6 +442,9 @@ mod tests {
             "--verbose",
         ]);
         assert_eq!(claude.kept_args(&args), strings(&["--model", "opus", "--add-dir", "/a", "--verbose"]));
+        // An initial prompt (a positional) is never sent again; flag values are kept.
+        let args = strings(&["--model", "opus", "fix the login bug", "--add-dir", "/a", "/b", "--verbose", "again"]);
+        assert_eq!(claude.kept_args(&args), strings(&["--model", "opus", "--add-dir", "/a", "/b", "--verbose"]));
     }
 
     #[test]
@@ -327,12 +458,51 @@ mod tests {
         assert_eq!(codex.kept_args(&last), strings(&["-s", "read-only"]));
         let exec = strings(&["exec", "fix it", "--json"]);
         assert_eq!(codex.kept_args(&exec), strings(&["--json"]));
+        // A subcommand after global flags (their values are skipped).
+        let late = strings(&["-m", "o3", "resume", "old", "-s", "x"]);
+        assert_eq!(codex.kept_args(&late), strings(&["-m", "o3", "-s", "x"]));
+        let late = strings(&["-c", "k=v", "-a", "never", "exec", "do it", "--json"]);
+        assert_eq!(codex.kept_args(&late), strings(&["-c", "k=v", "-a", "never", "--json"]));
+        let last = strings(&["-m", "gpt-5", "resume", "--last"]);
+        assert_eq!(codex.kept_args(&last), strings(&["-m", "gpt-5"]));
+        // A prompt given without a subcommand is not sent again.
+        assert_eq!(codex.kept_args(&strings(&["-C", "/w", "fix the bug"])), strings(&["-C", "/w"]));
     }
 
     #[test]
-    fn resume_only_agents_keep_flags_verbatim() {
+    fn every_agent_drops_its_own_resume_words() {
+        for spec in AGENTS {
+            let id = if spec.ids == Ids::Uuid { A } else { "old-1" };
+            let mut args = strings(&["--keep"]);
+            args.extend(spec.resume.iter().map(|w| w.to_string()));
+            args.push(id.to_string());
+            args.push("--also".into());
+            assert_eq!(spec.kept_args(&args), strings(&["--keep", "--also"]), "{}", spec.kind);
+            let new = if spec.ids == Ids::Uuid { B } else { "new-1" };
+            let want = format!("{} {new} --keep --also", spec.usage().trim_end_matches(" <id>"));
+            assert_eq!(spec.resume_command(new, &args).unwrap(), want, "{}", spec.kind);
+        }
+        let rovodev = find("rovodev").unwrap();
+        assert_eq!(rovodev.kept_args(&strings(&["rovodev", "run", "--yolo"])), strings(&["--yolo"]));
+        assert_eq!(
+            rovodev.resume_command("r1", &strings(&["rovodev", "run", "--yolo"])).unwrap(),
+            "acli rovodev run --restore r1 --yolo"
+        );
+        let amp = find("amp").unwrap();
+        assert_eq!(amp.kept_args(&strings(&["threads", "continue", "T-1"])), strings(&[]));
         let gemini = find("gemini").unwrap();
-        let args = strings(&["--resume", "x", "-m", "pro"]);
-        assert_eq!(gemini.kept_args(&args), args);
+        assert_eq!(gemini.kept_args(&strings(&["--resume", "x", "-m", "pro"])), strings(&["-m", "pro"]));
+        assert_eq!(gemini.kept_args(&strings(&["--resume=x", "--resume", "-m", "pro"])), strings(&["-m", "pro"]));
+        let opencode = find("opencode").unwrap();
+        assert_eq!(opencode.kept_args(&strings(&["--session", "s0", "--model", "m"])), strings(&["--model", "m"]));
+    }
+
+    #[test]
+    fn token_ids_never_look_like_flags() {
+        let grok = find("grok").unwrap();
+        assert!(!grok.valid_id("--yolo"));
+        assert!(!grok.valid_id("-x"));
+        assert!(!grok.valid_id(".x"));
+        assert!(grok.valid_id("x-1"));
     }
 }

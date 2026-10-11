@@ -24,8 +24,11 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// `s` as one shell word: as is when it has only characters that are safe unquoted, else quoted.
+/// A leading `=` or `~` is quoted too: zsh expands `=cmd` to the path of `cmd`.
 pub fn shell_word(s: &str) -> String {
-    let safe = !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
+    let safe = !s.is_empty()
+        && !s.starts_with(['=', '~'])
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
     if safe { s.to_string() } else { shell_quote(s) }
 }
 
@@ -40,6 +43,8 @@ mod tests {
         assert_eq!(shell_word("a b"), "'a b'");
         assert_eq!(shell_word(""), "''");
         assert_eq!(shell_word("~/x"), "'~/x'");
+        assert_eq!(shell_word("=foo"), "'=foo'");
+        assert_eq!(shell_word("a=b"), "a=b");
         assert_eq!(shell_word("$(id)"), "'$(id)'");
         assert_eq!(shell_word("it's"), r"'it'\''s'");
     }
