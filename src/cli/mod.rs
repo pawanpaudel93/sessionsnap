@@ -124,6 +124,17 @@ pub enum Command {
         #[arg(long)]
         pick: bool,
     },
+    /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock
+    Ui {
+        #[arg(long, default_value_t = crate::web::DEFAULT_PORT)]
+        port: u16,
+        /// Stop after this many minutes without requests
+        #[arg(long, default_value_t = 30)]
+        idle_minutes: u64,
+        /// Do not show the page in cmux
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Add ccsnap commands to the cmux command palette (~/.config/cmux/cmux.json)
     InstallCmux {
         /// Print the commands instead of installing them

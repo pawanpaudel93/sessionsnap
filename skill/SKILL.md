@@ -21,6 +21,7 @@ named snapshots with versions, and reopens only what is missing.
   `steps[].error`), not the `{"error": …}` shape. Argument (usage) errors print plain text and exit 1.
 - Never pass `--yes` to `delete`, `prune` or `install-cmux` unless the user asked for that exact action.
 - Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
+- Do not start `ccsnap ui` unless the user asks for the UI; it is for people.
 - `save` only reads cmux. If nothing changed it writes nothing and exits 3.
 
 ## Commands
@@ -41,6 +42,8 @@ named snapshots with versions, and reopens only what is missing.
 | Add a session as a tab | `ccsnap tab <name> <ws> --add-session <id> --json` |
 | Edit a workspace | `ccsnap ws <name> <ws> --rename/--color/--index/--remove --json` |
 | Many edits as one version | `ccsnap edit <name> --batch - --json` with a JSON array on stdin, e.g. `[{"op":"tab-move","tab":"Alpha#2","to":"Beta"}]` |
+| Workspaces and tabs open in cmux now | `ccsnap open --json` |
+| Preview edits without saving | `ccsnap edit <name> --batch - --dry-run --json` (ops on stdin) |
 
 Tabs are `<workspace>#<position>` (1-based) or `<workspace>:"<part of the title>"`.
 Edit ops: `ws-rename {ws,to}`, `ws-color {ws,color}`, `ws-index {ws,index}`, `ws-remove {ws}`,

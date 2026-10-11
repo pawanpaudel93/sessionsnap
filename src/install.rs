@@ -53,6 +53,7 @@ pub fn palette_commands(exe: &str) -> Vec<Value> {
         entry("ccsnap: Restore snapshot", &["snapshot", "restore", "claude"], "restore --pick"),
         entry("ccsnap: Recent sessions not open", &["recent", "recover", "claude"], "recent --pick"),
         entry("ccsnap: List snapshots", &["snapshot", "list"], "list"),
+        entry("ccsnap: Open UI", &["ui", "web", "dock", "snapshot"], "ui"),
     ]
 }
 
@@ -256,6 +257,7 @@ mod tests {
                 "ccsnap: Restore snapshot",
                 "ccsnap: Recent sessions not open",
                 "ccsnap: List snapshots",
+                "ccsnap: Open UI",
             ]
         );
         assert_eq!(v["other"], 1);
@@ -302,7 +304,7 @@ mod tests {
         for line in ["  // This file uses JSON with comments (JSONC).", "  /* block */", "  //   \"app\" : {"] {
             assert!(text.contains(line), "lost {line:?} in:\n{text}");
         }
-        assert_eq!(names(&text).len(), 4);
+        assert_eq!(names(&text).len(), 5);
         let v: Value = serde_json::from_str(&strip_jsonc(&text)).unwrap();
         assert_eq!(v["schemaVersion"], 1);
         assert_eq!(v["$schema"], "https://example.com/cmux.schema.json");
@@ -321,7 +323,7 @@ mod tests {
         install_cmux(&cfg, "ccsnap").unwrap();
         let text = std::fs::read_to_string(&cfg).unwrap();
         let n = names(&text);
-        assert_eq!(n.len(), 5, "{n:?}");
+        assert_eq!(n.len(), 6, "{n:?}");
         assert_eq!(n[0], "Mine");
         assert!(text.contains("  /* block */"));
     }
@@ -343,7 +345,7 @@ mod tests {
         std::fs::write(&cfg, "{}\n").unwrap();
         install_cmux(&cfg, "ccsnap").unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
-        assert_eq!(v["commands"].as_array().unwrap().len(), 4);
+        assert_eq!(v["commands"].as_array().unwrap().len(), 5);
     }
 
     #[test]

@@ -33,6 +33,23 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 Exit codes: 0 ok, 1 error, 2 cmux unreachable, 3 nothing to do, 4 refused, 5 unknown cmux state
 format, 6 plan stale, 7 not found.
 
+## Web UI
+
+`ccsnap ui` serves a small page on `http://127.0.0.1:47317/` and shows it in the cmux Dock (the
+right sidebar). It runs while its terminal is open and stops after 30 minutes without use; nothing
+starts at login. From the palette: "ccsnap: Open UI".
+
+- **Snapshots:** save what is open, update a snapshot from what is open, delete one.
+- **Workspaces:** rename (double-click), reorder, remove, drag tabs to reorder or move them, add a
+  Claude session or a shell tab, add a workspace from cmux or from another snapshot. Edits are
+  previewed and saved together as one version.
+- **History:** compare two versions; restore an older one.
+- **Restore:** tick workspaces and tabs, see what would open, then restore.
+- **Recent:** Claude sessions from the last days that are not open in cmux.
+
+In cmux 0.64 the Dock is a beta feature (Settings → Beta Features → Dock). Without it the page
+opens as a normal browser tab.
+
 ## Where things live
 
 - Snapshots: `~/.ccsnap/snapshots/<name>/<NNNN>-<time>.json` (`CCSNAP_HOME` to change)
