@@ -9,12 +9,22 @@ use crate::adapters::{home_dir, shell_quote};
 use crate::error::{Exit, failure};
 use crate::util::json::write_json_atomic;
 
-/// `$SESSIONSNAP_CMUX_CONFIG`, else `~/.config/cmux/cmux.json`.
+/// `$SESSIONSNAP_CMUX_CONFIG`, else `cmux/cmux.json` in `$XDG_CONFIG_HOME` (Linux) or `~/.config`.
 pub fn cmux_config_path() -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("SESSIONSNAP_CMUX_CONFIG") {
         return Ok(p.into());
     }
-    Ok(home_dir()?.join(".config/cmux/cmux.json"))
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute());
+    Ok(config_path_for(std::env::consts::OS, &home_dir()?, xdg.as_deref()))
+}
+
+/// cmux reads `~/.config/cmux/cmux.json` on macOS; on Linux it follows XDG.
+pub fn config_path_for(os: &str, home: &Path, xdg_config: Option<&Path>) -> PathBuf {
+    let base = match xdg_config {
+        Some(dir) if os != "macos" => dir.to_path_buf(),
+        _ => home.join(".config"),
+    };
+    base.join("cmux/cmux.json")
 }
 
 /// Name of the workspace the palette commands open.
@@ -400,5 +410,14 @@ mod tests {
         assert!(uninstall_cmux(&cfg).unwrap().is_none());
         assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "{\"theme\": \"dark\"}");
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn config_path_per_os() {
+        let home = Path::new("/home/u");
+        let xdg = Some(Path::new("/xdg"));
+        assert_eq!(config_path_for("macos", home, xdg), Path::new("/home/u/.config/cmux/cmux.json"));
+        assert_eq!(config_path_for("linux", home, None), Path::new("/home/u/.config/cmux/cmux.json"));
+        assert_eq!(config_path_for("linux", home, xdg), Path::new("/xdg/cmux/cmux.json"));
     }
 }

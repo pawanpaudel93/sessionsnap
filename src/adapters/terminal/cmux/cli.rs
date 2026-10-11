@@ -15,6 +15,14 @@ pub struct CmuxCli<R: Runner> {
     pub program: String,
     pub state_path: PathBuf,
     pub launch_timeout: Duration,
+    /// The command that starts the cmux app; None where sessionsnap does not know one.
+    pub launcher: Option<Vec<String>>,
+}
+
+/// How to start cmux on `os`: `open -a cmux` on macOS. On Linux cmux ships as a separate app
+/// whose launcher sessionsnap does not know yet, so the user starts it.
+pub fn launcher_for(os: &str) -> Option<Vec<String>> {
+    (os == "macos").then(|| vec!["open".to_string(), "-a".to_string(), "cmux".to_string()])
 }
 
 impl CmuxCli<ProcessRunner> {
@@ -24,6 +32,7 @@ impl CmuxCli<ProcessRunner> {
             program: std::env::var("SESSIONSNAP_CMUX_BIN").unwrap_or_else(|_| "cmux".into()),
             state_path: state_file::default_path()?,
             launch_timeout: Duration::from_secs(30),
+            launcher: launcher_for(std::env::consts::OS),
         })
     }
 }
@@ -61,7 +70,10 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         if self.is_running() {
             return Ok(());
         }
-        self.runner.run("open", &["-a".to_string(), "cmux".to_string()])?;
+        let Some((program, args)) = self.launcher.as_deref().and_then(<[String]>::split_first) else {
+            return Err(failure(Exit::CmuxUnreachable, "cmux is not running; start it and try again"));
+        };
+        self.runner.run(program, args)?;
         let deadline = Instant::now() + self.launch_timeout;
         loop {
             if self.is_running() {
@@ -228,6 +240,7 @@ mod tests {
             program: "cmux".into(),
             state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
             launch_timeout: Duration::from_millis(10),
+            launcher: launcher_for("macos"),
         }
     }
 
@@ -360,7 +373,17 @@ mod tests {
     fn ensure_running_launches_then_times_out() {
         let b = backend(false);
         assert_eq!(exit_of(&b.ensure_running().unwrap_err()), Exit::CmuxUnreachable);
-        assert!(b.runner.calls.borrow().iter().any(|c| c[0] == "open"));
+        assert!(b.runner.calls.borrow().iter().any(|c| c[..] == ["open", "-a", "cmux"]));
+    }
+
+    #[test]
+    fn without_a_launcher_asks_the_user_to_start_cmux() {
+        let mut b = backend(false);
+        b.launcher = launcher_for("linux");
+        let err = b.ensure_running().unwrap_err();
+        assert_eq!(exit_of(&err), Exit::CmuxUnreachable);
+        assert!(err.to_string().contains("start it"), "{err}");
+        assert!(!b.runner.calls.borrow().iter().any(|c| c[0] == "open"));
     }
 
     #[test]

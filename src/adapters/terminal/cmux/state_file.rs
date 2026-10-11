@@ -30,12 +30,24 @@ pub struct FilePanel {
     pub agent: Option<AgentRef>,
 }
 
-/// `$SESSIONSNAP_CMUX_STATE`, else cmux's state file in Application Support.
+/// `$SESSIONSNAP_CMUX_STATE`, else cmux's state file for this OS.
 pub fn default_path() -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("SESSIONSNAP_CMUX_STATE") {
         return Ok(PathBuf::from(p));
     }
-    Ok(home_dir()?.join("Library/Application Support/cmux/session-com.cmuxterm.app.json"))
+    let xdg_state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute());
+    Ok(path_for(std::env::consts::OS, &home_dir()?, xdg_state.as_deref()))
+}
+
+/// Where cmux keeps its state file on `os`. macOS: Application Support (checked against cmux
+/// 0.64). Elsewhere: the XDG state folder; cmux's Linux app has not been checked, so this is a
+/// guess that `SESSIONSNAP_CMUX_STATE` overrides.
+pub fn path_for(os: &str, home: &Path, xdg_state: Option<&Path>) -> PathBuf {
+    const FILE: &str = "session-com.cmuxterm.app.json";
+    if os == "macos" {
+        return home.join("Library/Application Support/cmux").join(FILE);
+    }
+    xdg_state.map_or_else(|| home.join(".local/state"), Path::to_path_buf).join("cmux").join(FILE)
 }
 
 pub fn read(path: &Path) -> Result<(u64, Vec<FileWorkspace>)> {
@@ -249,5 +261,16 @@ mod tests {
     fn never_keeps_environment() {
         let (_, ws) = parse(FIXTURE).unwrap();
         assert!(!format!("{ws:?}").contains("do-not-copy"));
+    }
+
+    #[test]
+    fn state_file_path_per_os() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            path_for("macos", home, Some(Path::new("/x"))),
+            Path::new("/home/u/Library/Application Support/cmux/session-com.cmuxterm.app.json")
+        );
+        assert_eq!(path_for("linux", home, None), Path::new("/home/u/.local/state/cmux/session-com.cmuxterm.app.json"));
+        assert_eq!(path_for("linux", home, Some(Path::new("/s"))), Path::new("/s/cmux/session-com.cmuxterm.app.json"));
     }
 }
