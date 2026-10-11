@@ -14,7 +14,7 @@ const APP_CSS: &str = include_str!("assets/app.css");
 /// Commands the page may run (not `ui` nor the installers).
 pub const ALLOWED: &[&str] = &[
     "list", "open", "show", "history", "diff", "save", "ws", "tab", "edit", "restore", "apply", "sessions", "recent",
-    "delete", "prune",
+    "delete", "prune", "agents",
 ];
 
 /// Builds the context for one API call; the `Option<String>` is the call's `input`.

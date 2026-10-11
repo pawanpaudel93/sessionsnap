@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
-use crate::domain::model::Version;
+use crate::domain::model::{SessionRef, Version};
 use anyhow::Result;
 
 /// What is open in the terminal.
@@ -37,12 +37,30 @@ pub struct OpenTab {
     pub reference: Option<String>,
     pub title: String,
     pub cwd: String,
-    pub session_id: Option<String>,
+    /// The agent running in the tab, when the terminal knows one.
+    pub agent: Option<AgentRef>,
+}
+
+/// A coding agent's session running in a terminal tab, as the terminal reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRef {
+    /// The agent's kind as the terminal names it (e.g. "claude", "codex").
+    pub kind: String,
+    pub session_id: String,
+    /// The flags the agent was started with (without the program).
+    pub args: Vec<String>,
+}
+
+impl OpenTab {
+    pub fn session(&self) -> Option<SessionRef> {
+        self.agent.as_ref().map(|a| SessionRef::new(&a.kind, &a.session_id))
+    }
 }
 
 impl OpenState {
-    pub fn open_sessions(&self) -> HashSet<String> {
-        self.workspaces.iter().flat_map(|w| &w.tabs).filter_map(|t| t.session_id.clone()).collect()
+    /// Every agent session open in a tab.
+    pub fn open_sessions(&self) -> HashSet<SessionRef> {
+        self.workspaces.iter().flat_map(|w| &w.tabs).filter_map(OpenTab::session).collect()
     }
 }
 
@@ -117,6 +135,21 @@ pub trait SessionHistory {
     fn title_for(&self, cwd: &str, session_id: &str) -> Option<String>;
     /// Sessions changed within `within` (all when None), newest first.
     fn scan(&self, within: Option<Duration>) -> Result<Vec<SessionInfo>>;
+}
+
+/// What the domain needs to know about coding agents: their names, what their session IDs look
+/// like, and the session histories sessionsnap can read. Implemented by `adapters::agents::Agents`.
+pub trait AgentCatalog {
+    /// The kind of the agent with this name, alias or program name; None when unknown.
+    fn kind_of(&self, name: &str) -> Option<&'static str>;
+    /// A name for people, e.g. "Codex"; the name itself for unknown agents.
+    fn display_name(&self, name: &str) -> String;
+    /// True when `session_id` is a session ID of agent `kind` (false for unknown agents).
+    fn valid_id(&self, kind: &str, session_id: &str) -> bool;
+    /// The session history of agent `kind`, for agents sessionsnap fully supports.
+    fn history(&self, kind: &str) -> Option<&dyn SessionHistory>;
+    /// Every session history, in registry order.
+    fn histories(&self) -> Vec<&dyn SessionHistory>;
 }
 
 /// Read access to saved snapshots, for edits that copy from another snapshot.

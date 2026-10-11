@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::agents::{Resume, problem, resume_status, unknown_session};
 use crate::domain::edit::{find_ws, locate, parse_tab_ref};
-use crate::domain::model::{Tab, Workspace, is_session_id};
+use crate::domain::model::{SessionRef, Tab, Workspace};
 use crate::error::{Exit, failure};
-use crate::ports::{OpenState, OpenWorkspace, SessionHistory};
+use crate::ports::{AgentCatalog, OpenState, OpenWorkspace};
 
 /// Which workspaces (whole) and tabs (`<ws>#<n>` / `<ws>:"title"`) to restore; empty = all.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -22,7 +23,7 @@ pub struct Selection {
 #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum PlanSource {
     Snapshot { snapshot: String, version: u32, selection: Selection },
-    Sessions { session_ids: Vec<String> },
+    Sessions { sessions: Vec<SessionRef> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,19 +102,25 @@ pub fn select(workspaces: Vec<Workspace>, sel: &Selection) -> Result<Vec<Workspa
         .collect())
 }
 
-/// Recovered sessions as one "Recovered sessions" workspace, titled from the history.
-pub fn recovered_workspace(session_ids: &[String], history: &dyn SessionHistory) -> Result<Vec<Workspace>> {
+/// Recovered sessions as one "Recovered sessions" workspace, titled from their histories.
+pub fn recovered_workspace(sessions: &[SessionRef], agents: &dyn AgentCatalog) -> Result<Vec<Workspace>> {
     let mut tabs = vec![];
-    for id in session_ids {
-        if !is_session_id(id) {
-            return Err(failure(Exit::Error, format!("'{id}' is not a session ID (a UUID)")));
+    for s in sessions {
+        let status = resume_status(agents, s);
+        if matches!(status, Resume::UnknownAgent | Resume::InvalidId) {
+            return Err(failure(Exit::Error, problem(agents, s, status)));
         }
-        let info =
-            history.find(id)?.ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))?;
-        tabs.push(Tab::Claude {
+        let info = agents
+            .history(&s.agent)
+            .ok_or_else(|| failure(Exit::Error, format!("sessionsnap cannot read {}'s sessions", s.agent)))?
+            .find(&s.session_id)?
+            .ok_or_else(|| unknown_session(&s.session_id))?;
+        tabs.push(Tab::Agent {
             title: info.label(),
             cwd: info.cwd.clone().unwrap_or_default(),
-            session_id: id.clone(),
+            agent: s.agent.clone(),
+            session_id: s.session_id.clone(),
+            args: vec![],
         });
     }
     let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
@@ -128,38 +135,49 @@ pub fn recovered_workspace(session_ids: &[String], history: &dyn SessionHistory)
 }
 
 /// What to open so that `saved` is open, given what is open now.
-/// - Claude tabs whose session is open anywhere are skipped; a session listed twice opens once.
-/// - Claude tabs without a resumable transcript become plain shells (with a warning).
-/// - A saved workspace matching an open one gets only its missing Claude tabs added; shells are
+/// - Agent tabs whose session (agent and ID) is open anywhere are skipped; a session listed twice
+///   opens once.
+/// - Agent tabs that cannot be resumed (unknown agent, invalid ID, session gone from the agent's
+///   history) become plain shells in their folder (with a warning); their ID is never run.
+/// - A saved workspace matching an open one gets only its missing agent tabs added; shells are
 ///   not added to open workspaces (they would duplicate). Unmatched workspaces are created.
-pub fn build_actions(saved: &[Workspace], open: &OpenState, history: &dyn SessionHistory) -> Built {
+pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCatalog) -> Built {
     let open_sessions = open.open_sessions();
-    let mut planned: HashSet<String> = HashSet::new();
+    let mut planned: HashSet<SessionRef> = HashSet::new();
     let mut b = Built::default();
     for ws in saved {
         let live = match_workspace(ws, open);
         let mut pending = vec![];
         for tab in &ws.tabs {
             let label = format!("{} › {}", ws.name, tab.title());
-            match tab.session_id() {
-                Some(id) if open_sessions.contains(id) => b.skipped.push(format!("{label}: already open")),
-                Some(id) if planned.contains(id) => b.skipped.push(format!("{label}: same session listed earlier")),
-                Some(id) if (!is_session_id(id) || !history.contains(id)) && live.is_some() => {
-                    b.skipped.push(format!("{label}: transcript not found; not added to an open workspace"));
+            let Some(s) = tab.session() else {
+                pending.push(tab.clone());
+                continue;
+            };
+            if open_sessions.contains(&s) {
+                b.skipped.push(format!("{label}: already open"));
+                continue;
+            }
+            if planned.contains(&s) {
+                b.skipped.push(format!("{label}: same session listed earlier"));
+                continue;
+            }
+            match resume_status(agents, &s) {
+                Resume::Ready => {
+                    planned.insert(s);
+                    pending.push(tab.clone());
                 }
-                Some(id) if !is_session_id(id) || !history.contains(id) => {
-                    b.warnings.push(format!("{label}: transcript not found, opening a plain shell"));
+                status if live.is_some() => {
+                    b.skipped.push(format!("{label}: {}; not added to an open workspace", problem(agents, &s, status)));
+                }
+                status => {
+                    b.warnings.push(format!("{label}: {}, opening a plain shell", problem(agents, &s, status)));
                     pending.push(Tab::Terminal {
                         title: tab.title().to_string(),
                         cwd: tab.cwd().to_string(),
                         command: None,
                     });
                 }
-                Some(id) => {
-                    planned.insert(id.to_string());
-                    pending.push(tab.clone());
-                }
-                None => pending.push(tab.clone()),
             }
         }
         if pending.is_empty() {
@@ -167,8 +185,8 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, history: &dyn Sessio
         }
         match live {
             Some(live) => {
-                let (claude_tabs, shells): (Vec<Tab>, Vec<Tab>) =
-                    pending.into_iter().partition(|t| t.session_id().is_some());
+                let (agent_tabs, shells): (Vec<Tab>, Vec<Tab>) =
+                    pending.into_iter().partition(|t| t.session().is_some());
                 for s in shells {
                     b.skipped.push(format!(
                         "{} › {}: shell tabs are not added to an open workspace",
@@ -176,11 +194,11 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, history: &dyn Sessio
                         s.title()
                     ));
                 }
-                if !claude_tabs.is_empty() {
+                if !agent_tabs.is_empty() {
                     b.actions.push(Action::AddTabs {
                         workspace_ref: live.reference.clone().unwrap_or_default(),
                         workspace_name: live.name.clone(),
-                        tabs: claude_tabs,
+                        tabs: agent_tabs,
                     });
                 }
             }
@@ -192,8 +210,8 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, history: &dyn Sessio
     b
 }
 
-/// The open workspace a saved one corresponds to: same cmux ID, else the one holding most of its
-/// Claude sessions, else the same name. Only live workspaces (with a ref) count.
+/// The open workspace a saved one corresponds to: same terminal ID, else the one holding most of
+/// its agent sessions, else the same name. Only live workspaces (with a ref) count.
 fn match_workspace<'a>(ws: &Workspace, open: &'a OpenState) -> Option<&'a OpenWorkspace> {
     let live: Vec<&OpenWorkspace> = open.workspaces.iter().filter(|w| w.reference.is_some()).collect();
     if let Some(id) = &ws.cmux_workspace_id
@@ -201,13 +219,12 @@ fn match_workspace<'a>(ws: &Workspace, open: &'a OpenState) -> Option<&'a OpenWo
     {
         return Some(w);
     }
-    let sessions: HashSet<&str> = ws.tabs.iter().filter_map(|t| t.session_id()).collect();
+    let sessions: HashSet<SessionRef> = ws.tabs.iter().filter_map(Tab::session).collect();
     let best = live
         .iter()
         .copied()
         .map(|w| {
-            let shared =
-                w.tabs.iter().filter(|t| t.session_id.as_deref().is_some_and(|s| sessions.contains(s))).count();
+            let shared = w.tabs.iter().filter(|t| t.session().is_some_and(|s| sessions.contains(&s))).count();
             (w, shared)
         })
         .filter(|(_, n)| *n > 0)
@@ -222,16 +239,16 @@ fn match_workspace<'a>(ws: &Workspace, open: &'a OpenState) -> Option<&'a OpenWo
 mod tests {
     use super::*;
     use crate::error::exit_of;
-    use crate::testing::{A, B, C, FakeHistory, open_ws};
+    use crate::testing::{A, B, C, FakeHistory, TestAgents, agent_tab, agents, open_ws};
 
     const D: &str = "44444444-4444-4444-8444-444444444444";
 
-    fn history() -> FakeHistory {
-        FakeHistory::with(&[(A, "/w/a", "one"), (B, "/w/a", "two"), (C, "/w/c", "three")])
+    fn history() -> TestAgents {
+        agents(vec![FakeHistory::with(&[(A, "/w/a", "one"), (B, "/w/a", "two"), (C, "/w/c", "three")])])
     }
 
     fn claude_tab(title: &str, cwd: &str, id: &str) -> Tab {
-        Tab::Claude { title: title.into(), cwd: cwd.into(), session_id: id.into() }
+        agent_tab("claude", title, cwd, id)
     }
 
     fn workspace(name: &str, cwd: &str, id: Option<&str>, tabs: Vec<Tab>) -> Workspace {
@@ -311,9 +328,70 @@ mod tests {
     }
 
     #[test]
-    fn sessions_source_rejects_non_uuid_ids() {
-        let err = recovered_workspace(&["../x".into()], &history()).unwrap_err();
+    fn sessions_source_rejects_invalid_ids_and_unknown_agents() {
+        let err = recovered_workspace(&[SessionRef::new("claude", "../x")], &history()).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Error);
+        let err = recovered_workspace(&[SessionRef::new("aider", A)], &history()).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::Error);
+        let ws = recovered_workspace(&[SessionRef::new("claude", B)], &history()).unwrap();
+        assert_eq!(ws[0].tabs, [claude_tab("two", "/w/a", B)]);
+    }
+
+    #[test]
+    fn matches_open_sessions_by_agent_and_id() {
+        let both = agents(vec![FakeHistory::with(&[(A, "/w/a", "one")]), FakeHistory::codex(&[(A, "/w/a", "uno")])]);
+        let saved = vec![workspace(
+            "Alpha",
+            "/w/a",
+            Some("WA"),
+            vec![claude_tab("one", "/w/a", A), agent_tab("codex", "uno", "/w/a", A)],
+        )];
+        // The Claude session is open; the Codex session with the same ID is not.
+        let b = build_actions(&saved, &alpha_with_one_open(), &both);
+        assert_eq!(
+            b.actions,
+            vec![Action::AddTabs {
+                workspace_ref: "workspace:WA".into(),
+                workspace_name: "Alpha".into(),
+                tabs: vec![agent_tab("codex", "uno", "/w/a", A)],
+            }]
+        );
+        assert_eq!(b.skipped, ["Alpha › one: already open"]);
+    }
+
+    #[test]
+    fn unresumable_tabs_open_plain_shells_with_a_warning() {
+        let saved = vec![workspace(
+            "Gamma",
+            "/w/c",
+            None,
+            vec![
+                agent_tab("aider", "unknown agent", "/w/c", A),
+                agent_tab("claude", "bad id", "/w/c", "x; rm -rf ~"),
+                agent_tab("opencode", "resume only", "/w/c", "ses_1"),
+            ],
+        )];
+        let b = build_actions(&saved, &OpenState::default(), &history());
+        let shell = |title: &str| Tab::Terminal { title: title.into(), cwd: "/w/c".into(), command: None };
+        assert_eq!(
+            b.actions,
+            vec![Action::CreateWorkspace {
+                name: "Gamma".into(),
+                cwd: "/w/c".into(),
+                tabs: vec![
+                    shell("unknown agent"),
+                    shell("bad id"),
+                    agent_tab("opencode", "resume only", "/w/c", "ses_1")
+                ],
+            }]
+        );
+        assert_eq!(
+            b.warnings,
+            [
+                "Gamma › unknown agent: sessionsnap doesn't know how to resume aider yet, opening a plain shell",
+                "Gamma › bad id: 'x; rm -rf ~' is not a Claude Code session ID, opening a plain shell",
+            ]
+        );
     }
 
     #[test]

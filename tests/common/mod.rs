@@ -4,7 +4,7 @@ use clap::Parser;
 use sessionsnap::interfaces::cli::{Cli, Ctx, Outcome, run::dispatch};
 use sessionsnap::testing::{A, B, FakeTerminal, open_ws, write_transcript};
 
-/// Temporary store + Claude dir + fake terminal; `run` parses args like the real binary.
+/// Temporary store + Claude Code and Codex dirs + fake terminal; `run` parses args like the real binary.
 pub struct Env {
     pub dir: tempfile::TempDir,
     pub fake: FakeTerminal,
@@ -17,6 +17,10 @@ impl Env {
 
     pub fn claude_root(&self) -> std::path::PathBuf {
         self.dir.path().join("claude")
+    }
+
+    pub fn codex_root(&self) -> std::path::PathBuf {
+        self.dir.path().join("codex")
     }
 
     /// A context like the binary's, on this test's store, Claude dir and fake terminal.

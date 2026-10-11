@@ -4,8 +4,8 @@ use anyhow::Result;
 
 use crate::error::{Exit, failure};
 
-/// Version of sessionsnap's own file format.
-pub const FORMAT: u32 = 1;
+/// Version of sessionsnap's own file format. 2: agent tabs (`"type": "agent"`) replace Claude tabs.
+pub const FORMAT: u32 = 2;
 
 /// One immutable version of a named snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,64 +45,85 @@ pub struct Workspace {
     pub tabs: Vec<Tab>,
 }
 
+/// A saved tab: a plain terminal (optionally running a command) or a coding agent's session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", rename_all_fields = "camelCase")]
 pub enum Tab {
-    Claude {
-        title: String,
-        cwd: String,
-        session_id: String,
-    },
     Terminal {
         title: String,
         cwd: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<String>,
     },
+    Agent {
+        title: String,
+        cwd: String,
+        /// The agent's kind, e.g. "claude" or "codex" (kept as saved, even when unknown).
+        agent: String,
+        session_id: String,
+        /// The flags the agent was started with, passed again when it resumes.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+    },
+}
+
+/// One agent session: which agent, and its ID there. Two tabs hold the same session when these match.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRef {
+    pub agent: String,
+    pub session_id: String,
+}
+
+impl SessionRef {
+    pub fn new(agent: impl Into<String>, session_id: impl Into<String>) -> Self {
+        SessionRef { agent: agent.into(), session_id: session_id.into() }
+    }
 }
 
 impl Tab {
     pub fn title(&self) -> &str {
         match self {
-            Tab::Claude { title, .. } | Tab::Terminal { title, .. } => title,
+            Tab::Agent { title, .. } | Tab::Terminal { title, .. } => title,
         }
     }
 
     pub fn cwd(&self) -> &str {
         match self {
-            Tab::Claude { cwd, .. } | Tab::Terminal { cwd, .. } => cwd,
+            Tab::Agent { cwd, .. } | Tab::Terminal { cwd, .. } => cwd,
         }
     }
 
-    pub fn session_id(&self) -> Option<&str> {
+    /// The agent session of an agent tab.
+    pub fn session(&self) -> Option<SessionRef> {
         match self {
-            Tab::Claude { session_id, .. } => Some(session_id),
+            Tab::Agent { agent, session_id, .. } => Some(SessionRef::new(agent, session_id)),
             Tab::Terminal { .. } => None,
         }
     }
 
     pub fn set_title(&mut self, new: String) {
         match self {
-            Tab::Claude { title, .. } | Tab::Terminal { title, .. } => *title = new,
+            Tab::Agent { title, .. } | Tab::Terminal { title, .. } => *title = new,
         }
     }
 
     pub fn set_cwd(&mut self, new: String) {
         match self {
-            Tab::Claude { cwd, .. } | Tab::Terminal { cwd, .. } => *cwd = new,
+            Tab::Agent { cwd, .. } | Tab::Terminal { cwd, .. } => *cwd = new,
         }
     }
 
-    /// Identity used by diffs: the session for Claude tabs, folder + command for terminals.
+    /// Identity used by diffs: the session for agent tabs, folder + command for terminals.
     pub fn key(&self) -> String {
         match self {
-            Tab::Claude { session_id, .. } => format!("claude:{session_id}"),
+            Tab::Agent { agent, session_id, .. } => format!("agent:{agent}:{session_id}"),
             Tab::Terminal { cwd, command, .. } => format!("terminal:{cwd}|{}", command.as_deref().unwrap_or("")),
         }
     }
 }
 
-/// True for Claude Code session IDs (UUIDs), the only values sessionsnap passes to `claude --resume`.
+/// True for UUIDs, the session IDs of Claude Code and Codex.
 pub fn is_session_id(s: &str) -> bool {
     s.len() == 36
         && s.chars().enumerate().all(
@@ -172,11 +193,38 @@ mod tests {
     const ID: &str = "97aeb422-20c1-41f7-a9c6-0f7c5a658991";
 
     #[test]
-    fn claude_tab_json_shape() {
-        let t = Tab::Claude { title: "fix".into(), cwd: "/w".into(), session_id: ID.into() };
+    fn agent_tab_json_shape() {
+        let t = Tab::Agent {
+            title: "fix".into(),
+            cwd: "/w".into(),
+            agent: "codex".into(),
+            session_id: ID.into(),
+            args: vec!["-a".into(), "on-request".into()],
+        };
         let v = serde_json::to_value(&t).unwrap();
-        assert_eq!(v, serde_json::json!({"type": "claude", "title": "fix", "cwd": "/w", "sessionId": ID}));
+        assert_eq!(
+            v,
+            serde_json::json!({"type": "agent", "title": "fix", "cwd": "/w", "agent": "codex", "sessionId": ID,
+                               "args": ["-a", "on-request"]})
+        );
         assert_eq!(serde_json::from_value::<Tab>(v).unwrap(), t);
+        // No args: the field is left out.
+        let t = Tab::Agent {
+            title: "t".into(),
+            cwd: "/w".into(),
+            agent: "claude".into(),
+            session_id: ID.into(),
+            args: vec![],
+        };
+        assert!(serde_json::to_value(&t).unwrap().get("args").is_none());
+        assert_eq!(t.session(), Some(SessionRef::new("claude", ID)));
+        // Format 1's Claude tabs are not read.
+        assert!(
+            serde_json::from_value::<Tab>(
+                serde_json::json!({"type": "claude", "title": "t", "cwd": "/w", "sessionId": ID})
+            )
+            .is_err()
+        );
     }
 
     #[test]

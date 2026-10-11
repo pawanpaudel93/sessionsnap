@@ -5,6 +5,7 @@
 //! Layer rule: app may use `domain`, `ports` and `adapters`; it never depends on `interfaces`, and
 //! never prints or prompts.
 
+pub mod agents;
 pub mod edit;
 pub mod install;
 pub mod restore;
@@ -16,7 +17,7 @@ use std::io::IsTerminal;
 use crate::adapters::agents::Agents;
 use crate::adapters::store::Store;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
-use crate::ports::Terminal;
+use crate::ports::{OpenState, Terminal};
 
 /// Everything a command needs; tests build it with fakes.
 ///
@@ -48,4 +49,18 @@ impl Ctx {
             input: None,
         })
     }
+}
+
+/// What is open in the terminal, with each agent named by its registry kind (cmux may report an
+/// alias or program name), so tabs match saved sessions by (agent, ID).
+pub fn read_open(terminal: &dyn Terminal) -> anyhow::Result<OpenState> {
+    let mut open = terminal.read_open_state()?;
+    for tab in open.workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
+        if let Some(a) = &mut tab.agent
+            && let Some(spec) = Agents::spec(&a.kind)
+        {
+            a.kind = spec.kind.to_string();
+        }
+    }
+    Ok(open)
 }

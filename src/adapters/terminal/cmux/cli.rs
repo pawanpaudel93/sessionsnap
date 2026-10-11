@@ -256,7 +256,7 @@ mod tests {
         let s = backend(true).read_open_state().unwrap();
         assert!(s.live);
         assert_eq!(s.state_version, Some(1));
-        assert_eq!(s.workspaces[0].tabs[1].session_id.as_deref(), Some(A));
+        assert_eq!(s.workspaces[0].tabs[1].agent.as_ref().unwrap().session_id, A);
     }
 
     #[test]

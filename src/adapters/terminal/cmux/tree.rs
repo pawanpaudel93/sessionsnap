@@ -86,7 +86,7 @@ fn norm_tty(t: &str) -> &str {
     t.trim_start_matches("/dev/")
 }
 
-/// Live refs and order from the tree; folders and Claude sessions from the state file, matched by
+/// Live refs and order from the tree; folders and agent sessions from the state file, matched by
 /// workspace ID and tty. Workspaces cmux has not written to its file yet get empty folders.
 pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
     tree.into_iter()
@@ -103,7 +103,7 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> Vec<OpenWorkspa
                         reference: Some(s.reference),
                         title: clean_title(&s.title),
                         cwd: panel.map(|p| p.cwd.clone()).unwrap_or_default(),
-                        session_id: panel.and_then(|p| p.session_id.clone()),
+                        agent: panel.and_then(|p| p.agent.clone()),
                     }
                 })
                 .collect();
@@ -135,7 +135,7 @@ pub fn from_file(file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
                     reference: None,
                     title: clean_title(&p.title),
                     cwd: p.cwd.clone(),
-                    session_id: p.session_id.clone(),
+                    agent: p.agent.clone(),
                 })
                 .collect(),
         })
@@ -187,10 +187,10 @@ mod tests {
         assert_eq!(ws[0].tabs.len(), 2);
         assert_eq!(ws[0].tabs[1].reference.as_deref(), Some("surface:1"));
         assert_eq!(ws[0].tabs[1].title, "fix login");
-        assert_eq!(ws[0].tabs[1].session_id.as_deref(), Some(A));
+        assert_eq!(ws[0].tabs[1].agent.as_ref().unwrap().session_id, A);
         assert_eq!(ws[0].tabs[1].cwd, "/w/alpha/sub");
         assert_eq!(ws[1].name, "Fresh");
-        assert_eq!(ws[1].tabs[0].session_id, None);
+        assert_eq!(ws[1].tabs[0].agent, None);
     }
 
     #[test]
@@ -199,6 +199,6 @@ mod tests {
         let ws = from_file(&file);
         assert_eq!(ws.len(), 2);
         assert!(ws[0].reference.is_none());
-        assert_eq!(ws[1].tabs[0].session_id.as_deref(), Some(B));
+        assert_eq!(ws[1].tabs[0].agent.as_ref().unwrap().session_id, B);
     }
 }

@@ -16,7 +16,7 @@ use crate::error::{Exit, exit_of};
 #[command(
     name = "sessionsnap",
     version,
-    about = "Named, versioned snapshots of cmux workspaces and Claude Code sessions"
+    about = "Named, versioned snapshots of cmux workspaces and agent sessions (Claude Code, Codex and more)"
 )]
 pub struct Cli {
     /// Print machine-readable JSON (never prompts)
@@ -101,7 +101,7 @@ pub enum Command {
     },
     /// Apply a plan made by restore or recent
     Apply { plan_id: String },
-    /// List Claude sessions on disk
+    /// List agent sessions on disk (agents with a readable history: Claude Code, Codex)
     Sessions {
         /// Text to find in titles, prompts, folders or IDs
         #[arg(long)]
@@ -111,11 +111,17 @@ pub enum Command {
         cwd: Option<String>,
         #[arg(long, default_value_t = 30)]
         days: u64,
+        /// Only this agent's sessions (e.g. claude, codex)
+        #[arg(long)]
+        agent: Option<String>,
     },
-    /// Interactive Claude sessions active recently that are not open in cmux
+    /// Interactive agent sessions active recently that are not open in cmux
     Recent {
         #[arg(long, default_value_t = 24)]
         hours: u64,
+        /// Only this agent's sessions (e.g. claude, codex)
+        #[arg(long)]
+        agent: Option<String>,
         /// Plan reopening them (applies with --yes or after confirmation)
         #[arg(long)]
         restore: bool,
@@ -126,6 +132,8 @@ pub enum Command {
         #[arg(long)]
         pick: bool,
     },
+    /// List the agents sessionsnap can resume, how well, and whether their program is on PATH
+    Agents,
     /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock
     Ui {
         #[arg(long, default_value_t = crate::interfaces::web::DEFAULT_PORT)]
@@ -191,12 +199,15 @@ pub struct TabArgs {
     /// Change the folder (or the folder of a new terminal tab)
     #[arg(long)]
     pub cwd: Option<String>,
-    /// Change the Claude session
+    /// Change the agent session (an ID from `sessionsnap sessions`)
     #[arg(long)]
     pub session: Option<String>,
-    /// Add a Claude tab for this session ID
+    /// Add an agent tab for this session ID
     #[arg(long)]
     pub add_session: Option<String>,
+    /// The agent of --session/--add-session (needed when no history has the ID, or several do)
+    #[arg(long)]
+    pub agent: Option<String>,
     /// Add a terminal tab (needs --cwd)
     #[arg(long)]
     pub add_terminal: bool,

@@ -140,7 +140,20 @@ impl Store {
                 *versions.last().ok_or_else(|| failure(Exit::NotFound, format!("snapshot '{name}' has no versions")))?
             }
         };
-        read_json(&self.version_path(name, v)?)
+        let path = self.version_path(name, v)?;
+        let raw: serde_json::Value = read_json(&path)?;
+        let format = raw.get("sessionsnap").and_then(serde_json::Value::as_u64);
+        if format != Some(u64::from(FORMAT)) {
+            let found = format.map_or("an unknown format".to_string(), |f| format!("format {f}"));
+            return Err(failure(
+                Exit::UnknownFormat,
+                format!(
+                    "snapshot '{name}' v{v} is in sessionsnap {found}; this sessionsnap reads format {FORMAT} only ({})",
+                    path.display()
+                ),
+            ));
+        }
+        serde_json::from_value(raw).with_context(|| format!("parsing {}", path.display()))
     }
 
     /// Writes the next version of `name` and returns it.
@@ -248,6 +261,20 @@ mod tests {
         assert_eq!(exit_of(&s.load("nope", None).unwrap_err()), Exit::NotFound);
         s.save_new("work", "m", Source::default(), vec![]).unwrap();
         assert_eq!(exit_of(&s.load("work", Some(9)).unwrap_err()), Exit::NotFound);
+    }
+
+    #[test]
+    fn format_1_files_are_refused_with_their_version() {
+        let (_d, s) = store();
+        s.save_new("work", "m", Source::default(), vec![ws("A")]).unwrap();
+        let path = s.version_path("work", 1).unwrap();
+        let v1 = r#"{"sessionsnap": 1, "snapshot": "work", "version": 1, "createdAt": "", "message": "m",
+                     "source": {"kind": "live"}, "workspaces": [{"name": "A", "cwd": "/w", "tabs": [
+                       {"type": "claude", "title": "t", "cwd": "/w", "sessionId": "11111111-1111-4111-8111-111111111111"}]}]}"#;
+        fs::write(&path, v1).unwrap();
+        let err = s.load("work", None).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::UnknownFormat);
+        assert!(err.to_string().contains("format 1") && err.to_string().contains("format 2"), "{err}");
     }
 
     #[test]

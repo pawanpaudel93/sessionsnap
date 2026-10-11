@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use super::clean_title;
 use crate::adapters::home_dir;
-use crate::domain::model::is_session_id;
 use crate::error::{Exit, failure};
+use crate::ports::AgentRef;
 
 /// cmux state-file versions sessionsnap understands.
 pub const KNOWN_VERSIONS: &[u64] = &[1];
@@ -27,7 +27,7 @@ pub struct FilePanel {
     pub tty: Option<String>,
     pub title: String,
     pub cwd: String,
-    pub session_id: Option<String>,
+    pub agent: Option<AgentRef>,
 }
 
 /// `$SESSIONSNAP_CMUX_STATE`, else cmux's state file in Application Support.
@@ -125,25 +125,43 @@ fn collect_panel_ids(v: &Value, out: &mut Vec<String>) {
     }
 }
 
-/// Terminal panels only; the Claude session comes from `agent`, else from a claude `resumeBinding`.
+/// Terminal panels only. The agent session comes from `terminal.agent` (any kind; its launch flags
+/// are `launchCommand.arguments` after the program), else from a `resumeBinding`. Agent kinds and
+/// session IDs are passed on as cmux wrote them; sessionsnap checks them before resuming.
 fn parse_panel(p: &Value) -> Option<FilePanel> {
     if p.get("type").and_then(Value::as_str) != Some("terminal") {
         return None;
     }
     let term = p.get("terminal");
-    let agent = term.and_then(|t| t.get("agent")).filter(|a| a.get("kind").and_then(Value::as_str) == Some("claude"));
-    let binding =
-        term.and_then(|t| t.get("resumeBinding")).filter(|b| b.get("kind").and_then(Value::as_str) == Some("claude"));
-    let session_id = agent
-        .and_then(|a| s(a, "sessionId"))
-        .or_else(|| binding.and_then(|b| s(b, "checkpointId")))
-        .filter(|id| is_session_id(id));
+    let agent = term.and_then(|t| t.get("agent")).filter(|a| s(a, "kind").is_some() && s(a, "sessionId").is_some());
+    let from_agent = agent.map(|a| AgentRef {
+        kind: s(a, "kind").unwrap_or_default(),
+        session_id: s(a, "sessionId").unwrap_or_default(),
+        args: a
+            .pointer("/launchCommand/arguments")
+            .and_then(Value::as_array)
+            .map(|args| args.iter().skip(1).filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default(),
+    });
+    let from_binding = || {
+        let b = term.and_then(|t| t.get("resumeBinding"))?;
+        Some(AgentRef {
+            kind: s(b, "kind")?,
+            session_id: s(b, "checkpointId").or_else(|| s(b, "sessionId"))?,
+            args: vec![],
+        })
+    };
     let cwd = agent
         .and_then(|a| s(a, "workingDirectory"))
         .or_else(|| s(p, "directory"))
         .or_else(|| term.and_then(|t| s(t, "workingDirectory")))
         .unwrap_or_default();
-    Some(FilePanel { tty: s(p, "ttyName"), title: s(p, "title").unwrap_or_default(), cwd, session_id })
+    Some(FilePanel {
+        tty: s(p, "ttyName"),
+        title: s(p, "title").unwrap_or_default(),
+        cwd,
+        agent: from_agent.or_else(from_binding),
+    })
 }
 
 #[cfg(test)]
@@ -152,6 +170,7 @@ mod tests {
     use crate::error::exit_of;
     use crate::testing::{A, B};
 
+    const CODEX: &str = "01a12bb7-d379-7541-a81a-7895725dc6dd";
     const FIXTURE: &str = include_str!("../../../../tests/fixtures/cmux-state.json");
 
     #[test]
@@ -163,12 +182,29 @@ mod tests {
         assert_eq!(alpha.id, "WS-ALPHA");
         assert_eq!(alpha.git_branch.as_deref(), Some("main"));
         assert_eq!(alpha.panels.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(), vec!["zsh", "✳ fix login"]);
-        assert_eq!(alpha.panels[1].session_id.as_deref(), Some(A));
+        let claude = alpha.panels[1].agent.as_ref().unwrap();
+        assert_eq!((claude.kind.as_str(), claude.session_id.as_str()), ("claude", A));
+        assert_eq!(claude.args, ["--model", "opus"]);
         assert_eq!(alpha.panels[1].cwd, "/w/alpha/sub");
         assert_eq!(alpha.panels[1].tty.as_deref(), Some("ttys001"));
-        assert_eq!(alpha.panels[0].session_id, None);
+        assert_eq!(alpha.panels[0].agent, None);
         // resumeBinding fallback, even with autoResume false (cmux #13021)
-        assert_eq!(ws[1].panels[0].session_id.as_deref(), Some(B));
+        let beta = &ws[1].panels;
+        assert_eq!(beta[0].agent, Some(AgentRef { kind: "claude".into(), session_id: B.into(), args: vec![] }));
+        // Any agent kind, with its launch flags (the program is left out).
+        assert_eq!(
+            beta[1].agent,
+            Some(AgentRef {
+                kind: "codex".into(),
+                session_id: CODEX.into(),
+                args: ["-a", "on-request", "-s", "workspace-write"].map(String::from).to_vec(),
+            })
+        );
+        assert_eq!(beta[1].cwd, "/w/beta/api");
+        // A kind sessionsnap does not know is passed on as is.
+        assert_eq!(beta[2].agent.as_ref().map(|a| (a.kind.as_str(), a.session_id.as_str())), Some(("aider", "chat-7")));
+        // An agent record without a session ID is no agent.
+        assert_eq!(beta[3].agent, None);
     }
 
     #[test]

@@ -99,7 +99,7 @@ mod tests {
     use crate::testing::{A, B, C};
 
     fn claude(title: &str, id: &str) -> Tab {
-        Tab::Claude { title: title.into(), cwd: "/w".into(), session_id: id.into() }
+        crate::testing::agent_tab("claude", title, "/w", id)
     }
 
     fn ws(name: &str, tabs: Vec<Tab>) -> Workspace {

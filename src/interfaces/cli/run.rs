@@ -10,6 +10,7 @@ use crate::app::edit::Edited;
 use crate::app::snapshots::Commit;
 use crate::domain::diff;
 use crate::domain::edit::Op;
+use crate::domain::model::SessionRef;
 use crate::domain::model::tab_count;
 use crate::domain::plan::{Plan, PlanSource};
 use crate::error::{Exit, failure};
@@ -50,8 +51,17 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             restore(ctx, snapshot, workspaces, tabs, plan, pick)
         }
         Command::Apply { plan_id } => apply(ctx, &plan_id),
-        Command::Sessions { search, cwd, days } => sessions(ctx, search.as_deref(), cwd.as_deref(), days),
-        Command::Recent { hours, restore, plan, pick } => recent(ctx, hours, restore, plan, pick),
+        Command::Sessions { search, cwd, days, agent } => {
+            sessions(ctx, search.as_deref(), cwd.as_deref(), days, agent.as_deref())
+        }
+        Command::Recent { hours, agent, restore, plan, pick } => {
+            recent(ctx, hours, agent.as_deref(), restore, plan, pick)
+        }
+        Command::Agents => {
+            let list = app::agents::list(ctx);
+            let text = human::agents(&list);
+            Ok(Outcome::ok(json!({"agents": list}), text))
+        }
         Command::Ui { port, idle_minutes, no_open } => crate::interfaces::web::ui(ctx, port, idle_minutes, !no_open),
         Command::InstallCmux { print } => install_cmux(ctx, print),
         Command::InstallSkill => {
@@ -122,8 +132,14 @@ fn open_now(ctx: &Ctx) -> Result<Outcome> {
         .workspaces
         .iter()
         .map(|w| {
-            let tabs: Vec<Value> =
-                w.tabs.iter().map(|t| json!({"title": t.title, "cwd": t.cwd, "sessionId": t.session_id})).collect();
+            let tabs: Vec<Value> = w
+                .tabs
+                .iter()
+                .map(|t| {
+                    let (agent, id) = t.agent.as_ref().map(|a| (&a.kind, &a.session_id)).unzip();
+                    json!({"title": t.title, "cwd": t.cwd, "agent": agent, "sessionId": id})
+                })
+                .collect();
             json!({"name": w.name, "cwd": w.cwd, "tabs": tabs})
         })
         .collect();
@@ -258,7 +274,12 @@ fn ws_ops(a: &WsArgs) -> Result<Vec<Op>> {
 
 fn tab_ops(a: &TabArgs) -> Result<Vec<Op>> {
     if let Some(id) = &a.add_session {
-        return Ok(vec![Op::TabAddSession { ws: a.target.clone(), session_id: id.clone(), title: a.title.clone() }]);
+        return Ok(vec![Op::TabAddSession {
+            ws: a.target.clone(),
+            session_id: id.clone(),
+            agent: a.agent.clone(),
+            title: a.title.clone(),
+        }]);
     }
     if a.add_terminal {
         let cwd = a.cwd.clone().ok_or_else(|| failure(Exit::Error, "--add-terminal needs --cwd"))?;
@@ -292,7 +313,7 @@ fn tab_ops(a: &TabArgs) -> Result<Vec<Op>> {
         ops.push(Op::TabSetCwd { tab: t.clone(), cwd: cwd.clone() });
     }
     if let Some(session) = &a.session {
-        ops.push(Op::TabSetSession { tab: t.clone(), session_id: session.clone() });
+        ops.push(Op::TabSetSession { tab: t.clone(), session_id: session.clone(), agent: a.agent.clone() });
     }
     // Rename last: a title-based ref would not match after renaming.
     if let Some(to) = &a.rename {
@@ -363,10 +384,12 @@ fn apply(ctx: &Ctx, plan_id: &str) -> Result<Outcome> {
     applied(ctx, &plan)
 }
 
-fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Result<Outcome> {
-    let (list, open) = app::sessions::list(ctx, search, cwd, days)?;
-    let rows: Vec<Value> =
-        list.iter().map(|s| json!({"session": session_json(s), "open": open.contains(&s.session_id)})).collect();
+fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64, agent: Option<&str>) -> Result<Outcome> {
+    let (list, open) = app::sessions::list(ctx, search, cwd, days, agent)?;
+    let rows: Vec<Value> = list
+        .iter()
+        .map(|s| json!({"session": session_json(s), "open": open.contains(&SessionRef::new(&s.agent, &s.session_id))}))
+        .collect();
     Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)))
 }
 
@@ -378,16 +401,23 @@ fn session_json(s: &SessionInfo) -> Value {
     })
 }
 
-fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
+fn recent(
+    ctx: &Ctx,
+    hours: u64,
+    agent: Option<&str>,
+    restore: bool,
+    plan_only: bool,
+    pick_flag: bool,
+) -> Result<Outcome> {
     let wants_plan = restore || plan_only || (pick_flag && ctx.interactive);
     if wants_plan {
         app::restore::require_terminal(ctx, plan_only)?;
     }
-    let (list, open) = app::sessions::recent(ctx, hours)?;
+    let (list, open) = app::sessions::recent(ctx, hours, agent)?;
     if list.is_empty() {
         return Ok(Outcome::ok(
             json!({"sessions": []}),
-            format!("No Claude sessions from the last {hours}h are missing from cmux."),
+            format!("No agent sessions from the last {hours}h are missing from cmux."),
         )
         .with_exit(Exit::NothingToDo));
     }

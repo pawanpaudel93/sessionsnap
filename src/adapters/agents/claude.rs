@@ -1,5 +1,5 @@
-//! Claude Code: its session history (`~/.claude/projects`), how a saved tab resumes a session,
-//! and the sessionsnap skill installed for it.
+//! Claude Code: its session history (`~/.claude/projects`) and the sessionsnap skill installed
+//! for it.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -10,7 +10,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::adapters::home_dir;
-use crate::domain::model::{Tab, is_session_id};
+use crate::domain::model::is_session_id;
 use crate::ports::{SessionHistory, SessionInfo};
 
 /// The registry kind of Claude Code.
@@ -168,15 +168,6 @@ impl SessionHistory for Claude {
     }
 }
 
-/// The command a restored tab runs. Claude tabs only with a valid session ID.
-pub fn tab_command(tab: &Tab) -> Option<String> {
-    match tab {
-        Tab::Claude { session_id, .. } if is_session_id(session_id) => Some(format!("claude --resume {session_id}")),
-        Tab::Claude { .. } => None,
-        Tab::Terminal { command, .. } => command.clone(),
-    }
-}
-
 pub const SKILL: &str = include_str!("../../../skill/SKILL.md");
 
 /// `$SESSIONSNAP_SKILLS_DIR`, else `~/.claude/skills`.
@@ -299,16 +290,6 @@ mod tests {
         let all = c.scan(None).unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].session_id, B);
-    }
-
-    #[test]
-    fn tab_command_only_for_valid_sessions() {
-        let ok = Tab::Claude { title: "t".into(), cwd: "/w".into(), session_id: A.into() };
-        assert_eq!(tab_command(&ok).unwrap(), format!("claude --resume {A}"));
-        let bad = Tab::Claude { title: "t".into(), cwd: "/w".into(), session_id: "x; rm -rf ~".into() };
-        assert_eq!(tab_command(&bad), None);
-        let term = Tab::Terminal { title: "t".into(), cwd: "/w".into(), command: Some("npm run dev".into()) };
-        assert_eq!(tab_command(&term).as_deref(), Some("npm run dev"));
     }
 
     #[test]
