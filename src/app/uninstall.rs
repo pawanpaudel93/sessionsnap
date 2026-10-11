@@ -152,7 +152,9 @@ fn leftovers(p: &Paths) -> Vec<String> {
         .iter()
         .map(|rc| p.home.join(rc))
         .filter(|rc| {
-            std::fs::read_to_string(rc).is_ok_and(|t| t.lines().any(|l| l.contains("PATH") && l.contains(&dir)))
+            std::fs::read_to_string(rc).is_ok_and(|t| {
+                t.lines().any(|l| l.contains(&dir) && (l.contains("PATH") || l.contains("fish_add_path")))
+            })
         })
         .map(|rc| format!("the PATH line for {dir} in {}", rc.display()))
         .collect()
@@ -207,6 +209,18 @@ mod tests {
         assert_eq!(r.left.len(), 1);
         assert!(r.left[0].contains(".zshrc"), "{:?}", r.left);
         assert!(std::fs::read_to_string(d.path().join(".zshrc")).unwrap().contains("PATH"));
+    }
+
+    #[test]
+    fn lists_the_fish_path_line_too() {
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        let fish = d.path().join(".config/fish/config.fish");
+        std::fs::create_dir_all(fish.parent().unwrap()).unwrap();
+        std::fs::write(&fish, format!("fish_add_path \"{}\"\n", d.path().join(".local/bin").display())).unwrap();
+        let left = leftovers(&p);
+        assert_eq!(left.len(), 2, "{left:?}");
+        assert!(left[1].contains("config.fish"), "{left:?}");
     }
 
     #[test]
