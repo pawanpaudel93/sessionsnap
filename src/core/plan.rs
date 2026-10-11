@@ -1,15 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::time::Duration;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::agents::claude::Claude;
-use crate::adapters::store::fs::{Store, read_json, write_json_atomic};
-use crate::adapters::terminal::cmux::{Backend, OpenState, OpenWorkspace};
 use crate::core::edit::{find_ws, locate, parse_tab_ref};
 use crate::core::model::{Tab, Workspace, is_session_id};
 use crate::error::{Exit, failure};
+use crate::ports::{OpenState, OpenWorkspace, SessionHistory};
 
 /// Which workspaces (whole) and tabs (`<ws>#<n>` / `<ws>:"title"`) to restore; empty = all.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -104,39 +101,30 @@ pub fn select(workspaces: Vec<Workspace>, sel: &Selection) -> Result<Vec<Workspa
         .collect())
 }
 
-/// The workspaces a plan restores: a snapshot selection, or recovered sessions in one workspace.
-pub fn source_workspaces(source: &PlanSource, store: &Store, claude: &Claude) -> Result<Vec<Workspace>> {
-    match source {
-        PlanSource::Snapshot { snapshot, version, selection } => {
-            select(store.load(snapshot, Some(*version))?.workspaces, selection)
+/// Recovered sessions as one "Recovered sessions" workspace, titled from the history.
+pub fn recovered_workspace(session_ids: &[String], history: &dyn SessionHistory) -> Result<Vec<Workspace>> {
+    let mut tabs = vec![];
+    for id in session_ids {
+        if !is_session_id(id) {
+            return Err(failure(Exit::Error, format!("'{id}' is not a Claude session ID")));
         }
-        PlanSource::Sessions { session_ids } => {
-            let mut tabs = vec![];
-            for id in session_ids {
-                if !is_session_id(id) {
-                    return Err(failure(Exit::Error, format!("'{id}' is not a Claude session ID")));
-                }
-                let path = claude
-                    .find_transcript(id)
-                    .ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))?;
-                let info = claude.info(&path)?;
-                tabs.push(Tab::Claude {
-                    title: info.label(),
-                    cwd: info.cwd.clone().unwrap_or_default(),
-                    session_id: id.clone(),
-                });
-            }
-            let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
-            Ok(vec![Workspace {
-                name: "Recovered sessions".into(),
-                color: None,
-                cwd,
-                git_branch: None,
-                cmux_workspace_id: None,
-                tabs,
-            }])
-        }
+        let info =
+            history.find(id)?.ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))?;
+        tabs.push(Tab::Claude {
+            title: info.label(),
+            cwd: info.cwd.clone().unwrap_or_default(),
+            session_id: id.clone(),
+        });
     }
+    let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
+    Ok(vec![Workspace {
+        name: "Recovered sessions".into(),
+        color: None,
+        cwd,
+        git_branch: None,
+        cmux_workspace_id: None,
+        tabs,
+    }])
 }
 
 /// What to open so that `saved` is open, given what is open now.
@@ -144,7 +132,7 @@ pub fn source_workspaces(source: &PlanSource, store: &Store, claude: &Claude) ->
 /// - Claude tabs without a resumable transcript become plain shells (with a warning).
 /// - A saved workspace matching an open one gets only its missing Claude tabs added; shells are
 ///   not added to open workspaces (they would duplicate). Unmatched workspaces are created.
-pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> Built {
+pub fn build_actions(saved: &[Workspace], open: &OpenState, history: &dyn SessionHistory) -> Built {
     let open_sessions = open.open_sessions();
     let mut planned: HashSet<String> = HashSet::new();
     let mut b = Built::default();
@@ -156,10 +144,10 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, claude: &Claude) -> 
             match tab.session_id() {
                 Some(id) if open_sessions.contains(id) => b.skipped.push(format!("{label}: already open")),
                 Some(id) if planned.contains(id) => b.skipped.push(format!("{label}: same session listed earlier")),
-                Some(id) if (!is_session_id(id) || claude.find_transcript(id).is_none()) && live.is_some() => {
+                Some(id) if (!is_session_id(id) || !history.contains(id)) && live.is_some() => {
                     b.skipped.push(format!("{label}: transcript not found; not added to an open workspace"));
                 }
-                Some(id) if !is_session_id(id) || claude.find_transcript(id).is_none() => {
+                Some(id) if !is_session_id(id) || !history.contains(id) => {
                     b.warnings.push(format!("{label}: transcript not found, opening a plain shell"));
                     pending.push(Tab::Terminal {
                         title: tab.title().to_string(),
@@ -230,98 +218,16 @@ fn match_workspace<'a>(ws: &Workspace, open: &'a OpenState) -> Option<&'a OpenWo
     live.into_iter().find(|w| w.name.eq_ignore_ascii_case(&ws.name))
 }
 
-pub fn make_plan(source: PlanSource, store: &Store, claude: &Claude, open: &OpenState) -> Result<Plan> {
-    let built = build_actions(&source_workspaces(&source, store, claude)?, open, claude);
-    let now = chrono::Local::now();
-    Ok(Plan {
-        plan_id: format!("p{}", now.format("%Y%m%d%H%M%S%3f")),
-        created_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
-        source,
-        actions: built.actions,
-        skipped: built.skipped,
-        warnings: built.warnings,
-    })
-}
-
-/// Saves a plan for `sessionsnap apply`, deleting plans older than an hour.
-pub fn save_plan(store: &Store, plan: &Plan) -> Result<()> {
-    let dir = store.plans_dir();
-    std::fs::create_dir_all(&dir)?;
-    for entry in std::fs::read_dir(&dir)?.flatten() {
-        let expired = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|m| m.elapsed().unwrap_or_default() > Duration::from_secs(3600))
-            .unwrap_or(false);
-        if expired {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-    write_json_atomic(&dir.join(format!("{}.json", plan.plan_id)), plan)
-}
-
-pub fn load_plan(store: &Store, id: &str) -> Result<Plan> {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(failure(Exit::Error, format!("invalid plan id '{id}'")));
-    }
-    let path = store.plans_dir().join(format!("{id}.json"));
-    if !path.is_file() {
-        return Err(failure(Exit::NotFound, format!("plan {id} not found (plans expire after an hour)")));
-    }
-    read_json(&path)
-}
-
-/// Applies a plan if it still matches what is open; continues past failed steps.
-pub fn apply_plan(plan: &Plan, store: &Store, claude: &Claude, backend: &dyn Backend) -> Result<Vec<ApplyStep>> {
-    let open = backend.read_open_state()?;
-    let rebuilt = build_actions(&source_workspaces(&plan.source, store, claude)?, &open, claude);
-    if rebuilt.actions != plan.actions {
-        return Err(failure(Exit::PlanStale, "what is open in cmux changed since this plan was made; make a new plan"));
-    }
-    let mut steps = vec![];
-    for action in &plan.actions {
-        match action {
-            Action::CreateWorkspace { name, cwd, tabs } => steps.push(step(
-                format!("create workspace {name} with {} tab(s)", tabs.len()),
-                backend.create_workspace(name, cwd, tabs).map(|_| ()),
-            )),
-            Action::AddTabs { workspace_ref, workspace_name, tabs } => {
-                for tab in tabs {
-                    steps.push(step(
-                        format!("add {} to {workspace_name}", tab.title()),
-                        backend.add_tab(workspace_ref, tab),
-                    ));
-                }
-            }
-        }
-    }
-    let _ = std::fs::remove_file(store.plans_dir().join(format!("{}.json", plan.plan_id)));
-    Ok(steps)
-}
-
-fn step(description: String, result: Result<()>) -> ApplyStep {
-    match result {
-        Ok(()) => ApplyStep { description, ok: true, error: None },
-        Err(e) => ApplyStep { description, ok: false, error: Some(format!("{e:#}")) },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::exit_of;
-    use crate::testing::{A, B, C, FakeBackend, open_ws, write_transcript};
+    use crate::testing::{A, B, C, FakeHistory, open_ws};
 
     const D: &str = "44444444-4444-4444-8444-444444444444";
 
-    fn setup() -> (tempfile::TempDir, Store, Claude) {
-        let d = tempfile::tempdir().unwrap();
-        let croot = d.path().join("c");
-        write_transcript(&croot, "/w/a", A, "one");
-        write_transcript(&croot, "/w/a", B, "two");
-        write_transcript(&croot, "/w/c", C, "three");
-        let store = Store::new(d.path().join("s"));
-        (d, store, Claude::new(croot))
+    fn history() -> FakeHistory {
+        FakeHistory::with(&[(A, "/w/a", "one"), (B, "/w/a", "two"), (C, "/w/c", "three")])
     }
 
     fn claude_tab(title: &str, cwd: &str, id: &str) -> Tab {
@@ -366,8 +272,8 @@ mod tests {
 
     #[test]
     fn plans_only_missing_tabs() {
-        let (_d, _s, claude) = setup();
-        let b = build_actions(&saved(), &alpha_with_one_open(), &claude);
+        let history = history();
+        let b = build_actions(&saved(), &alpha_with_one_open(), &history);
         assert_eq!(
             b.actions,
             vec![
@@ -394,10 +300,10 @@ mod tests {
 
     #[test]
     fn missing_transcript_in_matched_workspace_is_skipped_without_warning() {
-        let (_d, _s, claude) = setup();
+        let history = history();
         let ws =
             workspace("Alpha", "/w/a", Some("WA"), vec![claude_tab("one", "/w/a", A), claude_tab("lost", "/w/a", D)]);
-        let b = build_actions(&[ws], &alpha_with_one_open(), &claude);
+        let b = build_actions(&[ws], &alpha_with_one_open(), &history);
         assert!(b.actions.is_empty(), "{:?}", b.actions);
         assert!(b.warnings.is_empty(), "{:?}", b.warnings);
         let want = "Alpha › lost: transcript not found; not added to an open workspace";
@@ -406,15 +312,13 @@ mod tests {
 
     #[test]
     fn sessions_source_rejects_non_uuid_ids() {
-        let (_d, store, claude) = setup();
-        let source = PlanSource::Sessions { session_ids: vec!["../x".into()] };
-        let err = source_workspaces(&source, &store, &claude).unwrap_err();
+        let err = recovered_workspace(&["../x".into()], &history()).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Error);
     }
 
     #[test]
     fn matches_renamed_workspace_by_sessions() {
-        let (_d, _s, claude) = setup();
+        let history = history();
         let mut ws = saved();
         ws[0].cmux_workspace_id = None;
         ws[0].name = "Old name".into();
@@ -423,7 +327,7 @@ mod tests {
             state_version: None,
             workspaces: vec![open_ws("X9", "New name", "/w/a", &[("one", "/w/a", Some(A))])],
         };
-        let b = build_actions(&ws[..1], &open, &claude);
+        let b = build_actions(&ws[..1], &open, &history);
         assert_eq!(
             b.actions,
             vec![Action::AddTabs {
@@ -436,10 +340,10 @@ mod tests {
 
     #[test]
     fn duplicate_sessions_open_once() {
-        let (_d, _s, claude) = setup();
+        let history = history();
         let mut ws = saved();
         ws[1].tabs.push(claude_tab("three again", "/w/c", C));
-        let b = build_actions(&ws[1..2], &OpenState::default(), &claude);
+        let b = build_actions(&ws[1..2], &OpenState::default(), &history);
         assert_eq!(
             b.actions,
             vec![Action::CreateWorkspace {
@@ -456,23 +360,5 @@ mod tests {
             select(saved(), &Selection { workspaces: vec!["gamma".into()], tabs: vec!["Alpha#2".into()] }).unwrap();
         assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Gamma"]);
         assert_eq!(ws[0].tabs, vec![claude_tab("two", "/w/a", B)]);
-    }
-
-    #[test]
-    fn apply_runs_actions_and_detects_stale_plans() {
-        let (_d, store, claude) = setup();
-        store.save_new("work", "m", Default::default(), saved()).unwrap();
-        let fake = FakeBackend::default();
-        *fake.state.borrow_mut() = alpha_with_one_open();
-        let source = PlanSource::Snapshot { snapshot: "work".into(), version: 1, selection: Selection::default() };
-        let plan = make_plan(source.clone(), &store, &claude, &fake.read_open_state().unwrap()).unwrap();
-        assert_eq!(plan.tab_count(), 3);
-        save_plan(&store, &plan).unwrap();
-        assert_eq!(load_plan(&store, &plan.plan_id).unwrap(), plan);
-        let steps = apply_plan(&plan, &store, &claude, &fake).unwrap();
-        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
-        assert_eq!(*fake.log.borrow(), ["add workspace:WA two", "create Gamma 1", "create Delta 1"]);
-        assert_eq!(exit_of(&apply_plan(&plan, &store, &claude, &fake).unwrap_err()), Exit::PlanStale);
-        assert!(make_plan(source, &store, &claude, &fake.read_open_state().unwrap()).unwrap().is_empty());
     }
 }

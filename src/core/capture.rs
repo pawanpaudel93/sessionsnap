@@ -1,12 +1,11 @@
 use anyhow::Result;
 
-use crate::adapters::agents::claude::Claude;
-use crate::adapters::terminal::cmux::{OpenState, OpenTab, OpenWorkspace};
 use crate::core::model::{Tab, Workspace, find_by_name};
+use crate::ports::{OpenState, OpenTab, OpenWorkspace, SessionHistory};
 
 /// Turns open workspaces (all, or those named in `only`) into snapshot workspaces. Claude tabs
-/// take their title from the transcript (session name, else automatic title).
-pub fn capture(open: &OpenState, claude: &Claude, only: &[String]) -> Result<Vec<Workspace>> {
+/// take their title from the session history (session name, else automatic title).
+pub fn capture(open: &OpenState, history: &dyn SessionHistory, only: &[String]) -> Result<Vec<Workspace>> {
     let chosen: Vec<&OpenWorkspace> = if only.is_empty() {
         open.workspaces.iter().collect()
     } else {
@@ -24,7 +23,7 @@ pub fn capture(open: &OpenState, claude: &Claude, only: &[String]) -> Result<Vec
             cwd: w.cwd.clone(),
             git_branch: w.git_branch.clone(),
             cmux_workspace_id: Some(w.id.clone()),
-            tabs: w.tabs.iter().map(|t| to_tab(t, claude)).collect(),
+            tabs: w.tabs.iter().map(|t| to_tab(t, history)).collect(),
         })
         .collect())
 }
@@ -42,10 +41,10 @@ fn unique_name(name: &str, used: &mut Vec<String>) -> String {
     candidate
 }
 
-fn to_tab(t: &OpenTab, claude: &Claude) -> Tab {
+fn to_tab(t: &OpenTab, history: &dyn SessionHistory) -> Tab {
     match &t.session_id {
         Some(id) => Tab::Claude {
-            title: claude.title_for(&t.cwd, id).unwrap_or_else(|| t.title.clone()),
+            title: history.title_for(&t.cwd, id).unwrap_or_else(|| t.title.clone()),
             cwd: t.cwd.clone(),
             session_id: id.clone(),
         },
@@ -96,7 +95,7 @@ pub fn carry_over(previous: &[Workspace], captured: Vec<Workspace>) -> Vec<Works
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{A, open_ws, write_transcript};
+    use crate::testing::{A, FakeHistory, open_ws};
 
     fn open_state() -> OpenState {
         OpenState {
@@ -111,10 +110,8 @@ mod tests {
 
     #[test]
     fn captures_tabs_with_transcript_titles() {
-        let d = tempfile::tempdir().unwrap();
-        let claude = Claude::new(d.path());
-        write_transcript(d.path(), "/w/a", A, "login fix");
-        let ws = capture(&open_state(), &claude, &[]).unwrap();
+        let history = FakeHistory::with(&[(A, "/w/a", "login fix")]);
+        let ws = capture(&open_state(), &history, &[]).unwrap();
         assert_eq!(ws.len(), 2);
         assert_eq!(ws[0].cmux_workspace_id.as_deref(), Some("WA"));
         assert_eq!(ws[0].tabs[0], Tab::Claude { title: "login fix".into(), cwd: "/w/a".into(), session_id: A.into() });
@@ -123,21 +120,19 @@ mod tests {
 
     #[test]
     fn workspace_named_sessionsnap_is_captured() {
-        let d = tempfile::tempdir().unwrap();
-        let claude = Claude::new(d.path());
+        let history = FakeHistory::default();
         let open = OpenState {
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("W1", "Alpha", "/w/a", &[]), open_ws("W2", "sessionsnap", "~", &[])],
         };
-        let all = capture(&open, &claude, &[]).unwrap();
+        let all = capture(&open, &history, &[]).unwrap();
         assert_eq!(all.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "sessionsnap"]);
     }
 
     #[test]
     fn captured_names_are_unique() {
-        let d = tempfile::tempdir().unwrap();
-        let claude = Claude::new(d.path());
+        let history = FakeHistory::default();
         let open = OpenState {
             live: true,
             state_version: Some(1),
@@ -147,19 +142,18 @@ mod tests {
                 open_ws("W3", "", "/w/c", &[]),
             ],
         };
-        let ws = capture(&open, &claude, &[]).unwrap();
+        let ws = capture(&open, &history, &[]).unwrap();
         let names: Vec<&str> = ws.iter().map(|w| w.name.as_str()).collect();
         assert_eq!(names, ["Alpha", "Alpha (2)", "workspace"]);
     }
 
     #[test]
     fn carry_over_keeps_color_and_terminal_commands() {
-        let d = tempfile::tempdir().unwrap();
-        let claude = Claude::new(d.path());
-        let mut prev = capture(&open_state(), &claude, &[]).unwrap();
+        let history = FakeHistory::default();
+        let mut prev = capture(&open_state(), &history, &[]).unwrap();
         prev[0].color = Some("blue".into());
         prev[0].tabs[1] = Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) };
-        let fresh = capture(&open_state(), &claude, &[]).unwrap();
+        let fresh = capture(&open_state(), &history, &[]).unwrap();
         let out = carry_over(&prev, fresh);
         assert_eq!(out[0].color.as_deref(), Some("blue"));
         assert_eq!(
@@ -171,11 +165,10 @@ mod tests {
 
     #[test]
     fn capture_filters_and_merge_replaces_by_name() {
-        let d = tempfile::tempdir().unwrap();
-        let claude = Claude::new(d.path());
-        let only_beta = capture(&open_state(), &claude, &["beta".to_string()]).unwrap();
+        let history = FakeHistory::default();
+        let only_beta = capture(&open_state(), &history, &["beta".to_string()]).unwrap();
         assert_eq!(only_beta.len(), 1);
-        let mut base = capture(&open_state(), &claude, &[]).unwrap();
+        let mut base = capture(&open_state(), &history, &[]).unwrap();
         base[1].color = Some("blue".into());
         let mut changed = only_beta;
         changed[0].cwd = "/w/b2".into();

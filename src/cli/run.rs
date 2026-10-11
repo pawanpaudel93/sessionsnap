@@ -5,16 +5,17 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
-use crate::adapters::agents::claude::SessionInfo;
 use crate::adapters::home_dir;
-use crate::adapters::store::fs::{parse_ref, validate_name};
+use crate::app::restore as plan;
 use crate::core::capture::{capture, carry_over, merge};
 use crate::core::diff;
 use crate::core::edit;
 use crate::core::edit::{EditCtx, Op};
 use crate::core::model::{Source, Version, Workspace, tab_count};
-use crate::core::plan::{self, Plan, PlanSource, Selection};
+use crate::core::model::{parse_ref, validate_name};
+use crate::core::plan::{Plan, PlanSource, Selection};
 use crate::error::{Exit, failure};
+use crate::ports::{SessionHistory, SessionInfo};
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
@@ -254,7 +255,11 @@ fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, d
     let mut workspaces = previous.workspaces.clone();
     let open =
         if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
-    edit::apply_ops(&mut workspaces, &ops, &EditCtx { claude: &ctx.claude, store: &ctx.store, open: open.as_ref() })?;
+    edit::apply_ops(
+        &mut workspaces,
+        &ops,
+        &EditCtx { history: &ctx.claude, snapshots: &ctx.store, open: open.as_ref() },
+    )?;
     if dry_run {
         let changes = diff::diff(&previous.workspaces, &workspaces);
         let warnings = edit::warnings(&workspaces, &ctx.claude);

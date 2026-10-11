@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::core::model::{FORMAT, Source, Version, Workspace};
+use crate::core::model::{FORMAT, Source, Version, Workspace, validate_name};
 use crate::error::{Exit, failure};
+use crate::ports::Snapshots;
 
 /// Snapshot versions live in `<root>/snapshots/<name>/<NNNN>-<timestamp>.json`; restore plans in
 /// `<root>/plans/<id>.json`.
@@ -148,36 +149,16 @@ impl Store {
     }
 }
 
-pub fn validate_name(name: &str) -> Result<()> {
-    let ok = !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
-    if ok {
-        Ok(())
-    } else {
-        Err(failure(Exit::Error, format!("invalid snapshot name '{name}': use letters, digits, '.', '_' or '-'")))
-    }
-}
-
-/// "work" → ("work", None); "work@3" → ("work", Some(3)); "work@latest" → ("work", None).
-pub fn parse_ref(s: &str) -> Result<(String, Option<u32>)> {
-    let (name, v) = match s.split_once('@') {
-        Some((n, v)) => (n, Some(v)),
-        None => (s, None),
-    };
-    validate_name(name)?;
-    let version = match v {
-        None | Some("latest") => None,
-        Some(v) => Some(v.parse::<u32>().map_err(|_| failure(Exit::Error, format!("invalid version '{v}' in '{s}'")))?),
-    };
-    Ok((name.to_string(), version))
-}
-
 fn parse_version_file(fname: &str) -> Option<u32> {
     let stem = fname.strip_suffix(".json")?;
     let (num, _) = stem.split_once('-')?;
     num.parse().ok()
+}
+
+impl Snapshots for Store {
+    fn load(&self, name: &str, version: Option<u32>) -> Result<Version> {
+        Store::load(self, name, version)
+    }
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
@@ -249,16 +230,6 @@ mod tests {
         assert_eq!(exit_of(&s.load("nope", None).unwrap_err()), Exit::NotFound);
         s.save_new("work", "m", Source::default(), vec![]).unwrap();
         assert_eq!(exit_of(&s.load("work", Some(9)).unwrap_err()), Exit::NotFound);
-    }
-
-    #[test]
-    fn refs_and_names() {
-        assert_eq!(parse_ref("work").unwrap(), ("work".to_string(), None));
-        assert_eq!(parse_ref("work@3").unwrap(), ("work".to_string(), Some(3)));
-        assert_eq!(parse_ref("work@latest").unwrap(), ("work".to_string(), None));
-        assert!(parse_ref("work@x").is_err());
-        assert!(validate_name("../etc").is_err());
-        assert!(validate_name("my-day_2.0").is_ok());
     }
 
     #[test]

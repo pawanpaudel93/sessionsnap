@@ -7,40 +7,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
-use serde::Serialize;
 use serde_json::Value;
 
 use crate::adapters::home_dir;
 use crate::core::model::{Tab, is_session_id};
+use crate::ports::{SessionHistory, SessionInfo};
 
 /// Claude Code's data directory (`~/.claude`); transcripts are `projects/<project>/<id>.jsonl`.
 pub struct Claude {
     root: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionInfo {
-    pub session_id: String,
-    pub cwd: Option<String>,
-    /// The session's name (`/rename`, `claude --name`), else Claude's automatic title.
-    pub title: Option<String>,
-    pub first_prompt: Option<String>,
-    /// "cli" for interactive sessions; other values for `claude -p` and SDK runs.
-    pub entrypoint: Option<String>,
-    /// Last change, RFC 3339 local time.
-    pub modified: String,
-    #[serde(skip)]
-    pub modified_at: SystemTime,
-    #[serde(skip)]
-    pub path: PathBuf,
-}
-
-impl SessionInfo {
-    /// Best label: title, then first prompt, then the ID.
-    pub fn label(&self) -> String {
-        self.title.clone().or_else(|| self.first_prompt.clone()).unwrap_or_else(|| self.session_id.clone())
-    }
 }
 
 impl Claude {
@@ -73,12 +48,6 @@ impl Claude {
     pub fn find_transcript(&self, session_id: &str) -> Option<PathBuf> {
         let name = format!("{session_id}.jsonl");
         fs::read_dir(self.projects()).ok()?.flatten().map(|e| e.path().join(&name)).find(|p| p.is_file())
-    }
-
-    pub fn title_for(&self, cwd: &str, session_id: &str) -> Option<String> {
-        let direct = self.transcript_path(cwd, session_id);
-        let path = if direct.is_file() { direct } else { self.find_transcript(session_id)? };
-        self.info(&path).ok().and_then(|i| i.title.or(i.first_prompt))
     }
 
     /// Reads a transcript's folder, name, first real prompt and entrypoint.
@@ -132,9 +101,28 @@ impl Claude {
             path: path.to_path_buf(),
         })
     }
+}
+
+impl SessionHistory for Claude {
+    fn contains(&self, session_id: &str) -> bool {
+        self.find_transcript(session_id).is_some()
+    }
+
+    fn find(&self, session_id: &str) -> Result<Option<SessionInfo>> {
+        match self.find_transcript(session_id) {
+            Some(path) => self.info(&path).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn title_for(&self, cwd: &str, session_id: &str) -> Option<String> {
+        let direct = self.transcript_path(cwd, session_id);
+        let path = if direct.is_file() { direct } else { self.find_transcript(session_id)? };
+        self.info(&path).ok().and_then(|i| i.title.or(i.first_prompt))
+    }
 
     /// Sessions whose transcript changed within `within` (all when None), newest first.
-    pub fn scan(&self, within: Option<Duration>) -> Result<Vec<SessionInfo>> {
+    fn scan(&self, within: Option<Duration>) -> Result<Vec<SessionInfo>> {
         let cutoff = within.and_then(|d| SystemTime::now().checked_sub(d));
         let mut out = vec![];
         let Ok(projects) = fs::read_dir(self.projects()) else { return Ok(out) };

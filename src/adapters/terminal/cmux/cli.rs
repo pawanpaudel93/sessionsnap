@@ -5,10 +5,11 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::runner::{Output, ProcessRunner, Runner};
-use super::{Backend, OpenState, state_file, tree};
+use super::{state_file, tree};
 use crate::adapters::agents::claude::tab_command;
 use crate::core::model::Tab;
 use crate::error::{Exit, failure};
+use crate::ports::{OpenState, Terminal};
 
 /// The cmux backend: reads state from the `cmux` CLI and the state file, opens tabs via the CLI.
 pub struct CmuxCli<R: Runner> {
@@ -53,7 +54,7 @@ impl<R: Runner> CmuxCli<R> {
     }
 }
 
-impl<R: Runner> Backend for CmuxCli<R> {
+impl<R: Runner> Terminal for CmuxCli<R> {
     fn is_running(&self) -> bool {
         self.cmux(&["ping"]).map(|o| o.success).unwrap_or(false)
     }

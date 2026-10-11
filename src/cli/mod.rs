@@ -10,9 +10,9 @@ use serde_json::{Value, json};
 
 use crate::adapters::agents::claude::Claude;
 use crate::adapters::store::fs::Store;
-use crate::adapters::terminal::cmux::Backend;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
 use crate::error::{Exit, exit_of};
+use crate::ports::Terminal;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -216,7 +216,7 @@ pub struct TabArgs {
 pub struct Ctx {
     pub store: Store,
     pub claude: Claude,
-    pub backend: Box<dyn Backend>,
+    pub backend: Box<dyn Terminal>,
     pub json: bool,
     pub yes: bool,
     /// Prompts allowed (a terminal on stdin and not --json).

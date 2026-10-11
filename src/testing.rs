@@ -23,13 +23,8 @@ pub fn write_transcript(claude_root: &Path, cwd: &str, id: &str, title: &str) ->
 }
 
 /// An open workspace with ref "workspace:<id>"; tabs are (title, cwd, session).
-pub fn open_ws(
-    id: &str,
-    name: &str,
-    cwd: &str,
-    tabs: &[(&str, &str, Option<&str>)],
-) -> crate::adapters::terminal::cmux::OpenWorkspace {
-    crate::adapters::terminal::cmux::OpenWorkspace {
+pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str>)]) -> crate::ports::OpenWorkspace {
+    crate::ports::OpenWorkspace {
         id: id.to_string(),
         reference: Some(format!("workspace:{id}")),
         name: name.to_string(),
@@ -38,7 +33,7 @@ pub fn open_ws(
         tabs: tabs
             .iter()
             .enumerate()
-            .map(|(i, (title, cwd, session))| crate::adapters::terminal::cmux::OpenTab {
+            .map(|(i, (title, cwd, session))| crate::ports::OpenTab {
                 reference: Some(format!("surface:{id}-{i}")),
                 title: title.to_string(),
                 cwd: cwd.to_string(),
@@ -51,7 +46,7 @@ pub fn open_ws(
 /// In-memory cmux for tests. Clones share state, so a test can inspect it after handing one over.
 #[derive(Clone)]
 pub struct FakeBackend {
-    pub state: std::rc::Rc<std::cell::RefCell<crate::adapters::terminal::cmux::OpenState>>,
+    pub state: std::rc::Rc<std::cell::RefCell<crate::ports::OpenState>>,
     pub log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub running: std::rc::Rc<std::cell::Cell<bool>>,
 }
@@ -59,7 +54,7 @@ pub struct FakeBackend {
 impl Default for FakeBackend {
     fn default() -> Self {
         FakeBackend {
-            state: std::rc::Rc::new(std::cell::RefCell::new(crate::adapters::terminal::cmux::OpenState {
+            state: std::rc::Rc::new(std::cell::RefCell::new(crate::ports::OpenState {
                 live: true,
                 ..Default::default()
             })),
@@ -69,8 +64,8 @@ impl Default for FakeBackend {
     }
 }
 
-fn open_tab(t: &crate::core::model::Tab) -> crate::adapters::terminal::cmux::OpenTab {
-    crate::adapters::terminal::cmux::OpenTab {
+fn open_tab(t: &crate::core::model::Tab) -> crate::ports::OpenTab {
+    crate::ports::OpenTab {
         reference: None,
         title: t.title().to_string(),
         cwd: t.cwd().to_string(),
@@ -78,7 +73,7 @@ fn open_tab(t: &crate::core::model::Tab) -> crate::adapters::terminal::cmux::Ope
     }
 }
 
-impl crate::adapters::terminal::cmux::Backend for FakeBackend {
+impl crate::ports::Terminal for FakeBackend {
     fn is_running(&self) -> bool {
         self.running.get()
     }
@@ -88,7 +83,7 @@ impl crate::adapters::terminal::cmux::Backend for FakeBackend {
         Ok(())
     }
 
-    fn read_open_state(&self) -> anyhow::Result<crate::adapters::terminal::cmux::OpenState> {
+    fn read_open_state(&self) -> anyhow::Result<crate::ports::OpenState> {
         Ok(self.state.borrow().clone())
     }
 
@@ -117,5 +112,68 @@ impl crate::adapters::terminal::cmux::Backend for FakeBackend {
     fn show_url(&self, url: &str) -> anyhow::Result<&'static str> {
         self.log.borrow_mut().push(format!("show {url}"));
         Ok("dock")
+    }
+}
+
+/// What `write_transcript` records, as a history entry: named `title`, first prompt "start <title>".
+pub fn session_info(id: &str, cwd: &str, title: &str) -> crate::ports::SessionInfo {
+    crate::ports::SessionInfo {
+        session_id: id.to_string(),
+        cwd: Some(cwd.to_string()),
+        title: Some(title.to_string()),
+        first_prompt: Some(format!("start {title}")),
+        entrypoint: Some("cli".into()),
+        modified: String::new(),
+        modified_at: std::time::SystemTime::UNIX_EPOCH,
+        path: PathBuf::new(),
+    }
+}
+
+/// In-memory session history for tests: sessions are found by ID in any folder.
+#[derive(Default)]
+pub struct FakeHistory {
+    pub sessions: Vec<crate::ports::SessionInfo>,
+}
+
+impl FakeHistory {
+    /// Sessions (id, cwd, title) as `write_transcript` would record them.
+    pub fn with(sessions: &[(&str, &str, &str)]) -> Self {
+        FakeHistory { sessions: sessions.iter().map(|(id, cwd, title)| session_info(id, cwd, title)).collect() }
+    }
+}
+
+impl crate::ports::SessionHistory for FakeHistory {
+    fn contains(&self, session_id: &str) -> bool {
+        self.sessions.iter().any(|s| s.session_id == session_id)
+    }
+
+    fn find(&self, session_id: &str) -> anyhow::Result<Option<crate::ports::SessionInfo>> {
+        Ok(self.sessions.iter().find(|s| s.session_id == session_id).cloned())
+    }
+
+    fn title_for(&self, _cwd: &str, session_id: &str) -> Option<String> {
+        let s = self.sessions.iter().find(|s| s.session_id == session_id)?;
+        s.title.clone().or_else(|| s.first_prompt.clone())
+    }
+
+    fn scan(&self, _within: Option<std::time::Duration>) -> anyhow::Result<Vec<crate::ports::SessionInfo>> {
+        Ok(self.sessions.clone())
+    }
+}
+
+/// In-memory saved snapshots for tests.
+#[derive(Default)]
+pub struct FakeSnapshots {
+    pub versions: Vec<crate::core::model::Version>,
+}
+
+impl crate::ports::Snapshots for FakeSnapshots {
+    fn load(&self, name: &str, version: Option<u32>) -> anyhow::Result<crate::core::model::Version> {
+        self.versions
+            .iter()
+            .filter(|v| v.snapshot == name && version.is_none_or(|n| v.version == n))
+            .max_by_key(|v| v.version)
+            .cloned()
+            .ok_or_else(|| crate::error::failure(crate::error::Exit::NotFound, format!("snapshot '{name}' not found")))
     }
 }

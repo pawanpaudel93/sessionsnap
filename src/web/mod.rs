@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::adapters::terminal::cmux::Backend;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
 use crate::cli::{Ctx, Outcome};
 use crate::error::{Exit, failure};
+use crate::ports::Terminal;
 use api::{MakeCtx, Server};
 
 /// Fixed so the Dock tab's URL stays valid across restarts.

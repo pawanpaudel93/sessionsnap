@@ -1,9 +1,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use super::clean_title;
 use super::state_file::FileWorkspace;
-use super::{OpenTab, OpenWorkspace, clean_title};
 use crate::error::{Exit, failure};
+use crate::ports::{OpenTab, OpenWorkspace};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeWorkspace {

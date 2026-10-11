@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use anyhow::Result;
+
 use crate::error::{Exit, failure};
 
 /// Version of sessionsnap's own file format.
@@ -136,6 +138,32 @@ pub fn find_by_name(names: &[&str], query: &str, noun: &str) -> anyhow::Result<u
     }
 }
 
+pub fn validate_name(name: &str) -> Result<()> {
+    let ok = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    if ok {
+        Ok(())
+    } else {
+        Err(failure(Exit::Error, format!("invalid snapshot name '{name}': use letters, digits, '.', '_' or '-'")))
+    }
+}
+
+/// "work" → ("work", None); "work@3" → ("work", Some(3)); "work@latest" → ("work", None).
+pub fn parse_ref(s: &str) -> Result<(String, Option<u32>)> {
+    let (name, v) = match s.split_once('@') {
+        Some((n, v)) => (n, Some(v)),
+        None => (s, None),
+    };
+    validate_name(name)?;
+    let version = match v {
+        None | Some("latest") => None,
+        Some(v) => Some(v.parse::<u32>().map_err(|_| failure(Exit::Error, format!("invalid version '{v}' in '{s}'")))?),
+    };
+    Ok((name.to_string(), version))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +204,15 @@ mod tests {
         assert_eq!(find_by_name(&names, "skills", "workspace").unwrap(), 2);
         assert!(find_by_name(&names, "skill", "workspace").unwrap_err().to_string().contains("several"));
         assert_eq!(exit_of(&find_by_name(&names, "nope", "workspace").unwrap_err()), Exit::NotFound);
+    }
+
+    #[test]
+    fn refs_and_names() {
+        assert_eq!(parse_ref("work").unwrap(), ("work".to_string(), None));
+        assert_eq!(parse_ref("work@3").unwrap(), ("work".to_string(), Some(3)));
+        assert_eq!(parse_ref("work@latest").unwrap(), ("work".to_string(), None));
+        assert!(parse_ref("work@x").is_err());
+        assert!(validate_name("../etc").is_err());
+        assert!(validate_name("my-day_2.0").is_ok());
     }
 }

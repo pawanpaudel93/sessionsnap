@@ -1,7 +1,9 @@
 pub mod adapters;
+pub mod app;
 pub mod cli;
 pub mod core;
 pub mod error;
+pub mod ports;
 #[doc(hidden)]
 pub mod testing;
 pub mod web;

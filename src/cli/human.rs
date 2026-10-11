@@ -130,10 +130,7 @@ pub fn steps(steps: &[crate::core::plan::ApplyStep]) -> String {
         .join("\n")
 }
 
-pub fn sessions(
-    list: &[crate::adapters::agents::claude::SessionInfo],
-    open: &std::collections::HashSet<String>,
-) -> String {
+pub fn sessions(list: &[crate::ports::SessionInfo], open: &std::collections::HashSet<String>) -> String {
     if list.is_empty() {
         return "No sessions.".into();
     }

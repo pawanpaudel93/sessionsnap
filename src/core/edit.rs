@@ -3,12 +3,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::agents::claude::Claude;
-use crate::adapters::store::fs::{Store, parse_ref};
-use crate::adapters::terminal::cmux::OpenState;
 use crate::core::capture;
-use crate::core::model::{Tab, Workspace, find_by_name, is_session_id};
+use crate::core::model::{Tab, Workspace, find_by_name, is_session_id, parse_ref};
 use crate::error::{Exit, failure};
+use crate::ports::{OpenState, SessionHistory, Snapshots};
 
 /// One change to a saved snapshot. Positions (`index`) are 1-based.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,8 +125,9 @@ pub fn locate(workspaces: &[Workspace], r: &TabRef) -> Result<(usize, usize)> {
 }
 
 pub struct EditCtx<'a> {
-    pub claude: &'a Claude,
-    pub store: &'a Store,
+    pub history: &'a dyn SessionHistory,
+    /// Needed only by `ws-from`.
+    pub snapshots: &'a dyn Snapshots,
     /// Needed only by `ws-add-live`.
     pub open: Option<&'a OpenState>,
 }
@@ -175,12 +174,12 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
             let open = ctx
                 .open
                 .ok_or_else(|| failure(Exit::CmuxUnreachable, "adding an open workspace needs cmux's state"))?;
-            let mut captured = capture::capture(open, ctx.claude, std::slice::from_ref(w))?;
+            let mut captured = capture::capture(open, ctx.history, std::slice::from_ref(w))?;
             add_workspace(ws, captured.remove(0))?;
         }
         Op::WsFrom { from, ws: w } => {
             let (name, version) = parse_ref(from)?;
-            let src = ctx.store.load(&name, version)?;
+            let src = ctx.snapshots.load(&name, version)?;
             let i = find_ws(&src.workspaces, w)?;
             add_workspace(ws, src.workspaces[i].clone())?;
         }
@@ -207,7 +206,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
         Op::TabAddSession { ws: w, session_id, title } => {
             let i = find_ws(ws, w)?;
             check_session_id(session_id)?;
-            let info = ctx.claude.info(&ensure_known(ctx.claude, session_id)?)?;
+            let info = ensure_known(ctx.history, session_id)?;
             let cwd = info
                 .cwd
                 .clone()
@@ -234,7 +233,9 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
         Op::TabSetSession { tab, session_id } => {
             check_session_id(session_id)?;
             let (w, t) = tab_at(ws, tab)?;
-            ensure_known(ctx.claude, session_id)?;
+            if !ctx.history.contains(session_id) {
+                return Err(unknown_session(session_id));
+            }
             let (title, cwd) = (ws[w].tabs[t].title().to_string(), ws[w].tabs[t].cwd().to_string());
             ws[w].tabs[t] = Tab::Claude { title, cwd, session_id: session_id.clone() };
         }
@@ -261,9 +262,13 @@ fn check_session_id(id: &str) -> Result<()> {
     }
 }
 
-/// The session's transcript, from any project; `claude --resume <id>` finds it from any folder.
-fn ensure_known(claude: &Claude, id: &str) -> Result<std::path::PathBuf> {
-    claude.find_transcript(id).ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))
+/// The session, from any folder; `claude --resume <id>` finds it from any folder.
+fn ensure_known(history: &dyn SessionHistory, id: &str) -> Result<crate::ports::SessionInfo> {
+    history.find(id)?.ok_or_else(|| unknown_session(id))
+}
+
+fn unknown_session(id: &str) -> anyhow::Error {
+    failure(Exit::NotFound, format!("no transcript for session {id}"))
 }
 
 fn folder_name(cwd: &str) -> String {
@@ -271,14 +276,14 @@ fn folder_name(cwd: &str) -> String {
 }
 
 /// Problems worth showing with a snapshot: missing transcripts and duplicated sessions.
-pub fn warnings(workspaces: &[Workspace], claude: &Claude) -> Vec<String> {
+pub fn warnings(workspaces: &[Workspace], history: &dyn SessionHistory) -> Vec<String> {
     let mut out = vec![];
     let mut seen: HashMap<&str, usize> = HashMap::new();
     for w in workspaces {
         for (i, t) in w.tabs.iter().enumerate() {
             if let Some(id) = t.session_id() {
                 *seen.entry(id).or_default() += 1;
-                if claude.find_transcript(id).is_none() {
+                if !history.contains(id) {
                     out.push(format!(
                         "{}#{} '{}': transcript not found, restores as a plain shell",
                         w.name,
@@ -300,17 +305,12 @@ pub fn warnings(workspaces: &[Workspace], claude: &Claude) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::model::Version;
     use crate::error::exit_of;
-    use crate::testing::{A, B, C, open_ws, write_transcript};
+    use crate::testing::{A, B, C, FakeHistory, FakeSnapshots, open_ws};
 
-    fn setup() -> (tempfile::TempDir, Store, Claude, Vec<Workspace>) {
-        let d = tempfile::tempdir().unwrap();
-        let croot = d.path().join("c");
-        write_transcript(&croot, "/w/a", A, "one");
-        write_transcript(&croot, "/w/b", B, "two");
-        write_transcript(&croot, "/w/c", C, "three");
-        let store = Store::new(d.path().join("s"));
-        let claude = Claude::new(croot);
+    fn setup() -> (FakeSnapshots, FakeHistory, Vec<Workspace>) {
+        let history = FakeHistory::with(&[(A, "/w/a", "one"), (B, "/w/b", "two"), (C, "/w/c", "three")]);
         let ws = vec![
             Workspace {
                 name: "Alpha".into(),
@@ -332,7 +332,7 @@ mod tests {
                 tabs: vec![Tab::Claude { title: "two".into(), cwd: "/w/b".into(), session_id: B.into() }],
             },
         ];
-        (d, store, claude, ws)
+        (FakeSnapshots::default(), history, ws)
     }
 
     fn titles(w: &Workspace) -> Vec<&str> {
@@ -352,8 +352,8 @@ mod tests {
 
     #[test]
     fn rename_move_reorder_remove() {
-        let (_d, store, claude, mut ws) = setup();
-        let ctx = EditCtx { claude: &claude, store: &store, open: None };
+        let (snapshots, history, mut ws) = setup();
+        let ctx = EditCtx { history: &history, snapshots: &snapshots, open: None };
         apply_ops(
             &mut ws,
             &[
@@ -376,8 +376,8 @@ mod tests {
 
     #[test]
     fn rename_refuses_duplicates_and_empty() {
-        let (_d, store, claude, mut ws) = setup();
-        let ctx = EditCtx { claude: &claude, store: &store, open: None };
+        let (snapshots, history, mut ws) = setup();
+        let ctx = EditCtx { history: &history, snapshots: &snapshots, open: None };
         let err = apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "beta".into() }], &ctx).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Refused);
         let err = apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "  ".into() }], &ctx).unwrap_err();
@@ -388,8 +388,8 @@ mod tests {
 
     #[test]
     fn session_edits_are_checked() {
-        let (_d, store, claude, mut ws) = setup();
-        let ctx = EditCtx { claude: &claude, store: &store, open: None };
+        let (snapshots, history, mut ws) = setup();
+        let ctx = EditCtx { history: &history, snapshots: &snapshots, open: None };
         // Resume by ID works from any folder (Claude Code ≥ 2.1.223), so a new folder is fine.
         apply_ops(&mut ws, &[Op::TabSetCwd { tab: "Alpha#1".into(), cwd: "/w/b".into() }], &ctx).unwrap();
         assert_eq!(ws[0].tabs[0].cwd(), "/w/b");
@@ -406,33 +406,34 @@ mod tests {
         apply_ops(&mut ws, &[Op::TabSetSession { tab: "Alpha#2".into(), session_id: A.into() }], &ctx).unwrap();
         assert_eq!(ws[0].tabs[1].session_id(), Some(A));
         assert_eq!(ws[0].tabs[1].title(), "zsh");
-        assert!(warnings(&ws, &claude).iter().any(|w| w.contains("in 2 tabs")));
+        assert!(warnings(&ws, &history).iter().any(|w| w.contains("in 2 tabs")));
     }
 
     #[test]
     fn workspace_copies_and_live_adds() {
-        let (_d, store, claude, mut ws) = setup();
-        store
-            .save_new(
-                "other",
-                "m",
-                Default::default(),
-                vec![Workspace {
-                    name: "Gamma".into(),
-                    color: None,
-                    cwd: "/w/c".into(),
-                    git_branch: None,
-                    cmux_workspace_id: None,
-                    tabs: vec![],
-                }],
-            )
-            .unwrap();
+        let (mut snapshots, history, mut ws) = setup();
+        snapshots.versions.push(Version {
+            sessionsnap: crate::core::model::FORMAT,
+            snapshot: "other".into(),
+            version: 1,
+            created_at: String::new(),
+            message: "m".into(),
+            source: Default::default(),
+            workspaces: vec![Workspace {
+                name: "Gamma".into(),
+                color: None,
+                cwd: "/w/c".into(),
+                git_branch: None,
+                cmux_workspace_id: None,
+                tabs: vec![],
+            }],
+        });
         let open = OpenState {
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("WD", "Delta", "/w/d", &[("zsh", "/w/d", None)])],
         };
-        let ctx = EditCtx { claude: &claude, store: &store, open: Some(&open) };
+        let ctx = EditCtx { history: &history, snapshots: &snapshots, open: Some(&open) };
         apply_ops(
             &mut ws,
             &[Op::WsFrom { from: "other@1".into(), ws: "gamma".into() }, Op::WsAddLive { ws: "Delta".into() }],
