@@ -1,18 +1,16 @@
+//! The command line: clap definitions, prompts, human and JSON output, and `run_json` (the
+//! in-process `--json` runner the web UI uses). Commands run through `app` use cases.
+
 pub mod human;
 pub mod pick;
 pub mod run;
 
-use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use serde_json::{Value, json};
 
-use crate::adapters::agents::claude::Claude;
-use crate::adapters::store::fs::Store;
-use crate::adapters::terminal::cmux::cli::CmuxCli;
 use crate::error::{Exit, exit_of};
-use crate::ports::Terminal;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -212,32 +210,7 @@ pub struct TabArgs {
     pub message: Option<String>,
 }
 
-/// Everything a command needs; tests build it with fakes.
-pub struct Ctx {
-    pub store: Store,
-    pub claude: Claude,
-    pub backend: Box<dyn Terminal>,
-    pub json: bool,
-    pub yes: bool,
-    /// Prompts allowed (a terminal on stdin and not --json).
-    pub interactive: bool,
-    /// Text for `--batch -` when the caller is not a terminal (the web UI); stdin when None.
-    pub input: Option<String>,
-}
-
-impl Ctx {
-    pub fn open_default(json: bool, yes: bool) -> anyhow::Result<Ctx> {
-        Ok(Ctx {
-            store: Store::open_default()?,
-            claude: Claude::open_default()?,
-            backend: Box::new(CmuxCli::open_default()?),
-            json,
-            yes,
-            interactive: !json && std::io::stdin().is_terminal(),
-            input: None,
-        })
-    }
-}
+pub use crate::app::Ctx;
 
 /// A command's result: exit code, JSON for --json, text for people.
 #[derive(Debug)]

@@ -1,21 +1,18 @@
-use std::collections::HashSet;
-use std::time::Duration;
+//! Runs a parsed command: resolves prompts, calls the `app` use case, and turns its result into
+//! an `Outcome` (JSON for `--json`, text for people).
 
 use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
-use crate::adapters::home_dir;
-use crate::app::restore as plan;
-use crate::core::capture::{capture, carry_over, merge};
+use crate::app;
+use crate::app::edit::Edited;
+use crate::app::snapshots::Commit;
 use crate::core::diff;
-use crate::core::edit;
-use crate::core::edit::{EditCtx, Op};
-use crate::core::model::{Source, Version, Workspace, tab_count};
-use crate::core::model::{parse_ref, validate_name};
-use crate::core::plan::{Plan, PlanSource, Selection};
+use crate::core::edit::Op;
+use crate::core::model::tab_count;
+use crate::core::plan::{Plan, PlanSource};
 use crate::error::{Exit, failure};
-use crate::ports::{SessionHistory, SessionInfo};
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
@@ -57,7 +54,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Ui { port, idle_minutes, no_open } => crate::interfaces::web::ui(ctx, port, idle_minutes, !no_open),
         Command::InstallCmux { print } => install_cmux(ctx, print),
         Command::InstallSkill => {
-            let path = crate::adapters::agents::claude::install_skill(&crate::adapters::agents::claude::skills_dir()?)?;
+            let path = app::install::install_skill()?;
             Ok(Outcome::ok(
                 json!({"installed": path}),
                 format!("Installed the sessionsnap skill at {}", path.display()),
@@ -67,15 +64,15 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
 }
 
 fn install_cmux(ctx: &Ctx, print: bool) -> Result<Outcome> {
-    let exe = std::env::current_exe()?.to_string_lossy().into_owned();
+    let exe = app::install::current_exe()?;
     if print {
-        let commands = crate::adapters::terminal::cmux::palette::palette_commands(&exe);
+        let commands = app::install::palette_commands(&exe);
         let text = serde_json::to_string_pretty(&commands)?;
         return Ok(Outcome::ok(json!({"commands": commands}), text));
     }
-    let config = crate::adapters::terminal::cmux::palette::cmux_config_path()?;
+    let config = app::install::cmux_config_path()?;
     confirm(ctx, &format!("Add sessionsnap commands to {}?", config.display()))?;
-    let backup = crate::adapters::terminal::cmux::palette::install_cmux(&config, &exe)?;
+    let backup = app::install::install_cmux(&config, &exe)?;
     let note = backup.as_ref().map(|b| format!(" (backup: {})", b.display())).unwrap_or_default();
     Ok(Outcome::ok(
         json!({"config": config, "backup": backup}),
@@ -96,67 +93,30 @@ fn save(
         None if pick_flag && ctx.interactive => pick::choose_save_name(&ctx.store)?,
         None => return Err(failure(Exit::Error, "give a snapshot name (or --pick in a terminal)")),
     };
-    validate_name(&name)?;
-    let previous = if ctx.store.exists(&name) { Some(ctx.store.load(&name, None)?) } else { None };
-    let (workspaces, source) = match from {
-        Some(from) => {
-            let (src_name, version) = parse_ref(&from)?;
-            let src = ctx.store.load(&src_name, version)?;
-            let source = Source {
-                kind: "copy".into(),
-                cmux_state_version: None,
-                from: Some(format!("{}@{}", src.snapshot, src.version)),
-            };
-            (src.workspaces, source)
-        }
-        None => {
-            let open = ctx.backend.read_open_state()?;
-            let captured = capture(&open, &ctx.claude, only)?;
-            let workspaces = match &previous {
-                Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
-                Some(p) => carry_over(&p.workspaces, captured),
-                None => captured,
-            };
-            (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None })
-        }
-    };
-    commit(ctx, &name, previous.as_ref(), workspaces, source, message)
+    let commit = app::snapshots::save(ctx, &name, only, from.as_deref(), message)?;
+    Ok(committed(&name, commit))
 }
 
-/// Writes a new version unless nothing changed (exit 3). Shared by save and edits.
-pub(crate) fn commit(
-    ctx: &Ctx,
-    name: &str,
-    previous: Option<&Version>,
-    workspaces: Vec<Workspace>,
-    source: Source,
-    message: Option<String>,
-) -> Result<Outcome> {
-    if let Some(p) = previous
-        && p.workspaces == workspaces
-    {
-        return Ok(Outcome::ok(
-            json!({"snapshot": name, "version": p.version, "changed": false}),
-            format!("{name}: no changes since v{}", p.version),
+/// The outcome of writing a version: exit 3 when nothing changed. Shared by save and edits.
+fn committed(name: &str, commit: Commit) -> Outcome {
+    match commit {
+        Commit::Unchanged { version } => Outcome::ok(
+            json!({"snapshot": name, "version": version, "changed": false}),
+            format!("{name}: no changes since v{version}"),
         )
-        .with_exit(Exit::NothingToDo));
+        .with_exit(Exit::NothingToDo),
+        Commit::Saved { version: v, changes, warnings } => Outcome::ok(
+            json!({
+                "snapshot": name, "version": v.version, "changed": true, "message": v.message, "changes": changes,
+                "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces), "warnings": warnings,
+            }),
+            human::saved(&v, &warnings),
+        ),
     }
-    let changes = diff::diff(previous.map(|p| p.workspaces.as_slice()).unwrap_or(&[]), &workspaces);
-    let message = message
-        .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
-    let v = ctx.store.save_new(name, &message, source, workspaces)?;
-    let warnings = edit::warnings(&v.workspaces, &ctx.claude);
-    Ok(Outcome::ok(
-        json!({
-            "snapshot": name, "version": v.version, "changed": true, "message": v.message, "changes": changes,
-            "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces), "warnings": warnings,
-        }),
-        human::saved(&v, &warnings),
-    ))
 }
 
 fn open_now(ctx: &Ctx) -> Result<Outcome> {
-    let open = ctx.backend.read_open_state()?;
+    let open = app::sessions::open_now(ctx)?;
     let rows: Vec<Value> = open
         .workspaces
         .iter()
@@ -171,46 +131,41 @@ fn open_now(ctx: &Ctx) -> Result<Outcome> {
 }
 
 fn list(ctx: &Ctx) -> Result<Outcome> {
-    let mut rows = vec![];
-    for name in ctx.store.list()? {
-        let v = ctx.store.load(&name, None)?;
-        rows.push(json!({
-            "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
-            "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
-        }));
-    }
+    let rows: Vec<Value> = app::snapshots::list(ctx)?
+        .into_iter()
+        .map(|(name, v)| {
+            json!({
+                "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
+                "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
+            })
+        })
+        .collect();
     let text = human::list(&rows);
     Ok(Outcome::ok(json!({"snapshots": rows}), text))
 }
 
 fn show(ctx: &Ctx, snapshot: &str) -> Result<Outcome> {
-    let (name, version) = parse_ref(snapshot)?;
-    let v = ctx.store.load(&name, version)?;
-    let warnings = edit::warnings(&v.workspaces, &ctx.claude);
+    let (v, warnings) = app::snapshots::show(ctx, snapshot)?;
     let text = human::show(&v, &warnings);
     Ok(Outcome::ok(json!({"version": v, "warnings": warnings}), text))
 }
 
 fn history(ctx: &Ctx, name: &str) -> Result<Outcome> {
-    let mut rows = vec![];
-    for n in ctx.store.versions(name)? {
-        let v = ctx.store.load(name, Some(n))?;
-        rows.push(json!({
-            "version": v.version, "createdAt": v.created_at, "message": v.message, "source": v.source,
-            "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
-        }));
-    }
+    let rows: Vec<Value> = app::snapshots::history(ctx, name)?
+        .into_iter()
+        .map(|v| {
+            json!({
+                "version": v.version, "createdAt": v.created_at, "message": v.message, "source": v.source,
+                "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
+            })
+        })
+        .collect();
     let text = human::history(name, &rows);
     Ok(Outcome::ok(json!({"snapshot": name, "versions": rows}), text))
 }
 
 fn diff_cmd(ctx: &Ctx, a: &str, b: &str) -> Result<Outcome> {
-    let load = |r: &str| -> Result<Version> {
-        let (n, v) = parse_ref(r)?;
-        ctx.store.load(&n, v)
-    };
-    let (va, vb) = (load(a)?, load(b)?);
-    let changes = diff::diff(&va.workspaces, &vb.workspaces);
+    let (va, vb, changes) = app::snapshots::diff(ctx, a, b)?;
     Ok(Outcome::ok(
         json!({
             "from": format!("{}@{}", va.snapshot, va.version), "to": format!("{}@{}", vb.snapshot, vb.version),
@@ -221,7 +176,7 @@ fn diff_cmd(ctx: &Ctx, a: &str, b: &str) -> Result<Outcome> {
 }
 
 fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Outcome> {
-    let count = ctx.store.versions(name)?.len();
+    let count = app::snapshots::version_count(ctx, name)?;
     if count <= keep {
         return Ok(Outcome::ok(
             json!({"snapshot": name, "deleted": []}),
@@ -230,14 +185,14 @@ fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Outcome> {
         .with_exit(Exit::NothingToDo));
     }
     confirm(ctx, &format!("Delete {} old version(s) of {name}?", count - keep))?;
-    let deleted = ctx.store.prune(name, keep)?;
+    let deleted = app::snapshots::prune(ctx, name, keep)?;
     Ok(Outcome::ok(json!({"snapshot": name, "deleted": deleted}), format!("{name}: deleted versions {deleted:?}")))
 }
 
 fn delete(ctx: &Ctx, name: &str) -> Result<Outcome> {
-    let count = ctx.store.versions(name)?.len();
+    let count = app::snapshots::version_count(ctx, name)?;
     confirm(ctx, &format!("Delete snapshot {name} and its {count} version(s)?"))?;
-    ctx.store.delete(name)?;
+    app::snapshots::delete(ctx, name)?;
     Ok(Outcome::ok(json!({"snapshot": name, "deleted": true}), format!("Deleted {name}")))
 }
 
@@ -251,29 +206,19 @@ pub(crate) fn confirm(ctx: &Ctx, question: &str) -> Result<()> {
 }
 
 fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Outcome> {
-    let previous = ctx.store.load(name, None)?;
-    let mut workspaces = previous.workspaces.clone();
-    let open =
-        if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
-    edit::apply_ops(
-        &mut workspaces,
-        &ops,
-        &EditCtx { history: &ctx.claude, snapshots: &ctx.store, open: open.as_ref() },
-    )?;
-    if dry_run {
-        let changes = diff::diff(&previous.workspaces, &workspaces);
-        let warnings = edit::warnings(&workspaces, &ctx.claude);
-        let summary = if changes.is_empty() { "no changes".to_string() } else { diff::summary(&changes) };
-        return Ok(Outcome::ok(
-            json!({
-                "snapshot": name, "baseVersion": previous.version, "dryRun": true,
-                "workspaces": workspaces, "changes": changes, "warnings": warnings,
-            }),
-            format!("{name} (not saved): {summary}"),
-        ));
-    }
-    let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
-    commit(ctx, name, Some(&previous), workspaces, source, message)
+    Ok(match app::edit::edit(ctx, name, ops, message, dry_run)? {
+        Edited::DryRun { base_version, workspaces, changes, warnings } => {
+            let summary = if changes.is_empty() { "no changes".to_string() } else { diff::summary(&changes) };
+            Outcome::ok(
+                json!({
+                    "snapshot": name, "baseVersion": base_version, "dryRun": true,
+                    "workspaces": workspaces, "changes": changes, "warnings": warnings,
+                }),
+                format!("{name} (not saved): {summary}"),
+            )
+        }
+        Edited::Committed(commit) => committed(name, commit),
+    })
 }
 
 fn ws_ops(a: &WsArgs) -> Result<Vec<Op>> {
@@ -374,26 +319,13 @@ fn restore(
         None if pick_flag && ctx.interactive => pick::choose_snapshot(&ctx.store)?,
         None => return Err(failure(Exit::Error, "give a snapshot (or --pick in a terminal)")),
     };
-    let (name, version) = parse_ref(&snapshot)?;
-    let v = ctx.store.load(&name, version)?;
-    let source = PlanSource::Snapshot { snapshot: name, version: v.version, selection: Selection { workspaces, tabs } };
+    let source = app::restore::snapshot_source(ctx, &snapshot, workspaces, tabs)?;
     plan_then_apply(ctx, source, plan_only)
 }
 
 /// Makes and saves a plan; applies it with --yes or an interactive yes, else prints how to apply.
 fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Outcome> {
-    if plan_only {
-        if !ctx.backend.is_running() {
-            return Err(failure(
-                Exit::CmuxUnreachable,
-                "cmux is not running; start it first (restore without --plan starts it)",
-            ));
-        }
-    } else {
-        ctx.backend.ensure_running()?;
-    }
-    let open = ctx.backend.read_open_state()?;
-    let plan = plan::make_plan(source, &ctx.store, &ctx.claude, &open)?;
+    let plan = app::restore::prepare(ctx, source, plan_only)?;
     if plan.is_empty() {
         return Ok(Outcome::ok(
             json!({"plan": plan, "applied": false}),
@@ -401,7 +333,6 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
         )
         .with_exit(Exit::NothingToDo));
     }
-    plan::save_plan(&ctx.store, &plan)?;
     let go = !plan_only
         && (ctx.yes
             || (ctx.interactive
@@ -417,7 +348,7 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
 }
 
 fn applied(ctx: &Ctx, plan: &Plan) -> Result<Outcome> {
-    let steps = plan::apply_plan(plan, &ctx.store, &ctx.claude, ctx.backend.as_ref())?;
+    let steps = app::restore::run_plan(ctx, plan)?;
     let failed = steps.iter().filter(|s| !s.ok).count();
     let out = Outcome::ok(
         json!({"planId": plan.plan_id, "applied": true, "steps": steps, "failed": failed}),
@@ -427,32 +358,12 @@ fn applied(ctx: &Ctx, plan: &Plan) -> Result<Outcome> {
 }
 
 fn apply(ctx: &Ctx, plan_id: &str) -> Result<Outcome> {
-    let plan = plan::load_plan(&ctx.store, plan_id)?;
-    ctx.backend.ensure_running()?;
+    let plan = app::restore::load_for_apply(ctx, plan_id)?;
     applied(ctx, &plan)
 }
 
-fn window(n: u64, unit: u64, flag: &str) -> Result<Duration> {
-    n.checked_mul(unit).map(Duration::from_secs).ok_or_else(|| failure(Exit::Error, format!("{flag} is too large")))
-}
-
 fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Result<Outcome> {
-    let open = ctx.backend.read_open_state().map(|s| s.open_sessions()).unwrap_or_default();
-    let needle = search.map(str::to_lowercase);
-    let list: Vec<SessionInfo> = ctx
-        .claude
-        .scan(Some(window(days, 86_400, "--days")?))?
-        .into_iter()
-        .filter(|s| cwd.is_none_or(|c| s.cwd.as_deref().is_some_and(|sc| sc.starts_with(c))))
-        .filter(|s| {
-            needle.as_ref().is_none_or(|n| {
-                [s.title.as_deref(), s.first_prompt.as_deref(), s.cwd.as_deref(), Some(s.session_id.as_str())]
-                    .iter()
-                    .flatten()
-                    .any(|field| field.to_lowercase().contains(n.as_str()))
-            })
-        })
-        .collect();
+    let (list, open) = app::sessions::list(ctx, search, cwd, days)?;
     let rows: Vec<Value> = list.iter().map(|s| json!({"session": s, "open": open.contains(&s.session_id)})).collect();
     Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)))
 }
@@ -460,25 +371,9 @@ fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Re
 fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
     let wants_plan = restore || plan_only || (pick_flag && ctx.interactive);
     if wants_plan {
-        if plan_only {
-            if !ctx.backend.is_running() {
-                return Err(failure(
-                    Exit::CmuxUnreachable,
-                    "cmux is not running; start it first (restore without --plan starts it)",
-                ));
-            }
-        } else {
-            ctx.backend.ensure_running()?;
-        }
+        app::restore::require_terminal(ctx, plan_only)?;
     }
-    let open = ctx.backend.read_open_state()?.open_sessions();
-    let home = home_dir()?.to_string_lossy().into_owned();
-    let list: Vec<SessionInfo> = ctx
-        .claude
-        .scan(Some(window(hours, 3600, "--hours")?))?
-        .into_iter()
-        .filter(|s| is_recoverable(s, &open, &home))
-        .collect();
+    let (list, open) = app::sessions::recent(ctx, hours)?;
     if list.is_empty() {
         return Ok(Outcome::ok(
             json!({"sessions": []}),
@@ -489,13 +384,5 @@ fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool
     if !wants_plan {
         return Ok(Outcome::ok(json!({"sessions": list}), human::sessions(&list, &open)));
     }
-    let source = PlanSource::Sessions { session_ids: list.iter().map(|s| s.session_id.clone()).collect() };
-    plan_then_apply(ctx, source, plan_only)
-}
-
-/// Interactive sessions (not `claude -p`/SDK), outside ~/.claude*, not open in cmux.
-fn is_recoverable(s: &SessionInfo, open: &HashSet<String>, home: &str) -> bool {
-    let interactive = s.entrypoint.as_deref().is_none_or(|e| e == "cli");
-    let internal = s.cwd.as_deref().is_some_and(|c| c.starts_with(&format!("{home}/.claude")));
-    interactive && !internal && s.cwd.is_some() && !open.contains(&s.session_id)
+    plan_then_apply(ctx, app::restore::sessions_source(&list), plan_only)
 }

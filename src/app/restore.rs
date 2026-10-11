@@ -5,12 +5,63 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use super::Ctx;
 use crate::adapters::store::Store;
 use crate::adapters::store::fs::{read_json, write_json_atomic};
-use crate::core::model::Workspace;
-use crate::core::plan::{Action, ApplyStep, Plan, PlanSource, build_actions, recovered_workspace, select};
+use crate::core::model::{Workspace, parse_ref};
+use crate::core::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
 use crate::error::{Exit, failure};
-use crate::ports::{OpenState, SessionHistory, Terminal};
+use crate::ports::{OpenState, SessionHistory, SessionInfo, Terminal};
+
+/// Restoring a snapshot (`<name>[@v]`), limited to these workspaces and tabs (none = all).
+pub fn snapshot_source(ctx: &Ctx, snapshot: &str, workspaces: Vec<String>, tabs: Vec<String>) -> Result<PlanSource> {
+    let (name, version) = parse_ref(snapshot)?;
+    let v = ctx.store.load(&name, version)?;
+    Ok(PlanSource::Snapshot { snapshot: name, version: v.version, selection: Selection { workspaces, tabs } })
+}
+
+/// Reopening these sessions.
+pub fn sessions_source(sessions: &[SessionInfo]) -> PlanSource {
+    PlanSource::Sessions { session_ids: sessions.iter().map(|s| s.session_id.clone()).collect() }
+}
+
+/// Only planning needs the terminal running already; restoring starts it.
+pub fn require_terminal(ctx: &Ctx, plan_only: bool) -> Result<()> {
+    if plan_only {
+        if !ctx.backend.is_running() {
+            return Err(failure(
+                Exit::CmuxUnreachable,
+                "cmux is not running; start it first (restore without --plan starts it)",
+            ));
+        }
+    } else {
+        ctx.backend.ensure_running()?;
+    }
+    Ok(())
+}
+
+/// Makes a plan against what is open now and, unless it is empty, keeps it for `apply`.
+pub fn prepare(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Plan> {
+    require_terminal(ctx, plan_only)?;
+    let open = ctx.backend.read_open_state()?;
+    let plan = make_plan(source, &ctx.store, &ctx.claude, &open)?;
+    if !plan.is_empty() {
+        save_plan(&ctx.store, &plan)?;
+    }
+    Ok(plan)
+}
+
+/// A kept plan, with the terminal started to apply it.
+pub fn load_for_apply(ctx: &Ctx, plan_id: &str) -> Result<Plan> {
+    let plan = load_plan(&ctx.store, plan_id)?;
+    ctx.backend.ensure_running()?;
+    Ok(plan)
+}
+
+/// Applies `plan` to the terminal; one step per workspace created or tab added.
+pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
+    apply_plan(plan, &ctx.store, &ctx.claude, ctx.backend.as_ref())
+}
 
 /// The workspaces a plan restores: a snapshot selection, or recovered sessions in one workspace.
 pub fn source_workspaces(source: &PlanSource, store: &Store, history: &dyn SessionHistory) -> Result<Vec<Workspace>> {
@@ -108,7 +159,6 @@ mod tests {
     use super::*;
     use crate::adapters::agents::claude::Claude;
     use crate::core::model::Tab;
-    use crate::core::plan::Selection;
     use crate::error::exit_of;
     use crate::testing::{A, B, C, FakeBackend, open_ws, write_transcript};
 
