@@ -54,7 +54,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Apply { plan_id } => apply(ctx, &plan_id),
         Command::Sessions { search, cwd, days } => sessions(ctx, search.as_deref(), cwd.as_deref(), days),
         Command::Recent { hours, restore, plan, pick } => recent(ctx, hours, restore, plan, pick),
-        Command::Ui { port, idle_minutes, no_open } => crate::web::ui(ctx, port, idle_minutes, !no_open),
+        Command::Ui { port, idle_minutes, no_open } => crate::interfaces::web::ui(ctx, port, idle_minutes, !no_open),
         Command::InstallCmux { print } => install_cmux(ctx, print),
         Command::InstallSkill => {
             let path = crate::adapters::agents::claude::install_skill(&crate::adapters::agents::claude::skills_dir()?)?;

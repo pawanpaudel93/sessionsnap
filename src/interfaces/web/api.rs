@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::http::{Request, Response};
-use crate::cli::{Cli, Ctx, run_json};
+use crate::interfaces::cli::{Cli, Ctx, run_json};
 
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_JS: &str = include_str!("assets/app.js");

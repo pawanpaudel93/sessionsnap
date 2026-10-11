@@ -11,8 +11,8 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::adapters::terminal::cmux::cli::CmuxCli;
-use crate::cli::{Ctx, Outcome};
 use crate::error::{Exit, failure};
+use crate::interfaces::cli::{Ctx, Outcome};
 use crate::ports::Terminal;
 use api::{MakeCtx, Server};
 
@@ -205,7 +205,7 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
     if !open {
         eprintln!("Run `sessionsnap ui` again to show it.");
     }
-    let make_ctx = |cli: &crate::cli::Cli, input: Option<String>| -> Result<Ctx> {
+    let make_ctx = |cli: &crate::interfaces::cli::Cli, input: Option<String>| -> Result<Ctx> {
         Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes)? })
     };
     serve(listener, &server, &make_ctx, idle, open)?;
@@ -220,7 +220,7 @@ mod tests {
     use super::*;
     use crate::adapters::agents::claude::Claude;
     use crate::adapters::store::fs::Store;
-    use crate::cli::Cli;
+    use crate::interfaces::cli::Cli;
     use crate::testing::FakeBackend;
 
     #[test]
@@ -269,7 +269,10 @@ mod tests {
     fn ui_flags_parse() {
         use clap::Parser;
         let cli = Cli::try_parse_from(["sessionsnap", "ui", "--port", "5000", "--no-open"]).unwrap();
-        assert!(matches!(cli.command, crate::cli::Command::Ui { port: 5000, idle_minutes: 30, no_open: true }));
+        assert!(matches!(
+            cli.command,
+            crate::interfaces::cli::Command::Ui { port: 5000, idle_minutes: 30, no_open: true }
+        ));
     }
 
     fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + '_ {

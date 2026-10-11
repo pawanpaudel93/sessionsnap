@@ -130,7 +130,7 @@ pub enum Command {
     },
     /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock
     Ui {
-        #[arg(long, default_value_t = crate::web::DEFAULT_PORT)]
+        #[arg(long, default_value_t = crate::interfaces::web::DEFAULT_PORT)]
         port: u16,
         /// Stop after this many minutes without requests
         #[arg(long, default_value_t = 30)]
