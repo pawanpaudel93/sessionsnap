@@ -117,8 +117,9 @@ opens as a normal browser tab.
   `~/.claude/projects` (`SESSIONSNAP_CLAUDE_DIR` for another `~/.claude`) and Codex sessions under
   `~/.codex/sessions` (`SESSIONSNAP_CODEX_DIR` for another `~/.codex`)
 - Never stores environment variables from cmux's state, nor launch flags that look like credentials
-  (a name or `-c` key with api-key, token, secret, password, passwd or credential): those are
-  dropped with their values, and `save` says so
+  (a flag name or `-c` key whose last part is token, secret, password, passwd, credential(s), or
+  that contains an API key, e.g. `--api-key`, `-c github_token=…`): those are dropped with their
+  values, and `save` says so
 
 ## Verified
 

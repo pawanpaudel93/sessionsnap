@@ -84,12 +84,19 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
     }
 }
 
-/// Words in a flag or config key that suggest a credential.
-const SECRET_WORDS: &[&str] = &["api-key", "apikey", "token", "secret", "password", "passwd", "credential"];
+/// Last key segments that mark a credential.
+const SECRET_ENDINGS: &[&str] = &["token", "secret", "password", "passwd", "credential", "credentials"];
 
+/// A flag name or config key that names a credential: its last segment (split on `.`, `_`, `-`)
+/// is one of `SECRET_ENDINGS`, or it contains an API key (`api_key`, `apikey`, `api-key`).
+/// `model_auto_compact_token_limit` or `--remote-auth-token-env` are not.
 fn looks_secret(name: &str) -> bool {
-    let name = name.to_ascii_lowercase().replace('_', "-");
-    SECRET_WORDS.iter().any(|w| name.contains(w))
+    let name = name.trim_start_matches('-').to_ascii_lowercase();
+    if ["api_key", "apikey", "api-key"].iter().any(|k| name.contains(k)) {
+        return true;
+    }
+    let last = name.rsplit(['.', '_', '-']).next().unwrap_or("");
+    SECRET_ENDINGS.contains(&last)
 }
 
 /// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
@@ -273,12 +280,37 @@ mod tests {
             "--SECRET-file",
             "/s",
             "--credentials",
+            "-c",
+            "model_auto_compact_token_limit=5000",
+            "-c",
+            "github_token=x",
+            "--remote-auth-token-env",
+            "OPENAI_KEY",
+            "--token",
+            "t",
+            "-c",
+            "mcp.server.API_KEY=z",
         ]
         .map(String::from)
         .to_vec();
         let (kept, dropped) = without_credentials(&args);
         assert!(dropped);
-        assert_eq!(kept, ["-m", "o3", "-c", "model=o3", "--verbose"]);
+        assert_eq!(
+            kept,
+            [
+                "-m",
+                "o3",
+                "-c",
+                "model=o3",
+                "--verbose",
+                "--SECRET-file",
+                "/s",
+                "-c",
+                "model_auto_compact_token_limit=5000",
+                "--remote-auth-token-env",
+                "OPENAI_KEY",
+            ]
+        );
         assert_eq!(without_credentials(&["-m".into(), "o3".into()]), (vec!["-m".to_string(), "o3".to_string()], false));
         let history = agents(vec![]);
         let mut open = open_state();
