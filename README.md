@@ -38,3 +38,13 @@ format, 6 plan stale, 7 not found.
 - Snapshots: `~/.ccsnap/snapshots/<name>/<NNNN>-<time>.json` (`CCSNAP_HOME` to change)
 - Reads cmux's state file and `cmux --json tree`; reads Claude transcripts under `~/.claude/projects`
 - Never stores environment variables from cmux's state
+
+## Verified
+
+On 2026-10-11 with cmux 0.64.22 (macOS):
+
+- `save` captured 9 workspaces and 29 Claude tabs; every tab's session ID matched cmux's own record.
+- `restore` reopened a closed workspace and resumed its Claude conversation, with cmux running.
+- `install-cmux` added the palette commands to cmux's commented `cmux.json`; ⌘⇧P shows them.
+- Not yet checked: `restore` when it has to start cmux itself (after a reboot). Until then, open
+  cmux first, wait for it to reopen your workspaces, then restore.
