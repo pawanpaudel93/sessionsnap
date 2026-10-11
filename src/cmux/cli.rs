@@ -108,6 +108,19 @@ impl<R: Runner> Backend for CmuxCli<R> {
         ])?;
         Ok(())
     }
+
+    fn show_url(&self, url: &str) -> Result<&'static str> {
+        if let Some(surface) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, url)? {
+            self.cmux_ok(&["browser", surface.as_str(), "reload"])?;
+            return Ok("reloaded");
+        }
+        if self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", url])?.success {
+            return Ok("dock");
+        }
+        // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
+        self.cmux_ok(&["browser", "open", url])?;
+        Ok("tab")
+    }
 }
 
 /// `--layout` JSON for `cmux new-workspace`: one pane holding every tab.
@@ -145,6 +158,8 @@ mod tests {
     struct FakeRunner {
         calls: RefCell<Vec<Vec<String>>>,
         ping_ok: bool,
+        dock_ok: bool,
+        tree: &'static str,
     }
 
     impl Runner for FakeRunner {
@@ -155,8 +170,13 @@ mod tests {
             let ok = |s: &str| Ok(Output { success: true, stdout: s.into(), stderr: String::new() });
             match args.first().map(String::as_str) {
                 Some("ping") => Ok(Output { success: self.ping_ok, ..Default::default() }),
-                Some("--json") => ok(TEST_TREE),
+                Some("--json") => ok(self.tree),
                 Some("new-workspace") => ok("OK workspace:12\n"),
+                Some("new-surface") if !self.dock_ok && args.iter().any(|a| a == "dock") => Ok(Output {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "Error: invalid_params: Dock placement is disabled".into(),
+                }),
                 Some("new-surface") => ok("OK surface:40 pane:3 workspace:1\n"),
                 _ => ok("OK\n"),
             }
@@ -165,11 +185,42 @@ mod tests {
 
     fn backend(ping_ok: bool) -> CmuxCli<FakeRunner> {
         CmuxCli {
-            runner: FakeRunner { calls: RefCell::new(vec![]), ping_ok },
+            runner: FakeRunner { calls: RefCell::new(vec![]), ping_ok, dock_ok: true, tree: TEST_TREE },
             program: "cmux".into(),
             state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
             launch_timeout: Duration::from_millis(10),
         }
+    }
+
+    const UI: &str = "http://127.0.0.1:47317/";
+
+    #[test]
+    fn show_url_adds_a_dock_browser() {
+        let b = backend(true);
+        assert_eq!(b.show_url(UI).unwrap(), "dock");
+        let calls = b.runner.calls.borrow();
+        assert_eq!(
+            &calls.last().unwrap()[1..],
+            ["new-surface", "--type", "browser", "--placement", "dock", "--url", UI]
+        );
+    }
+
+    #[test]
+    fn show_url_falls_back_to_a_tab_without_dock() {
+        let mut b = backend(true);
+        b.runner.dock_ok = false;
+        assert_eq!(b.show_url(UI).unwrap(), "tab");
+        let calls = b.runner.calls.borrow();
+        assert_eq!(&calls.last().unwrap()[1..], ["browser", "open", UI]);
+    }
+
+    #[test]
+    fn show_url_reloads_an_open_page() {
+        let mut b = backend(true);
+        b.runner.tree = crate::cmux::tree::TEST_BROWSER_TREE;
+        assert_eq!(b.show_url(UI).unwrap(), "reloaded");
+        let calls = b.runner.calls.borrow();
+        assert_eq!(&calls.last().unwrap()[1..], ["browser", "surface:71", "reload"]);
     }
 
     #[test]

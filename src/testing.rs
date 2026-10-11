@@ -108,4 +108,9 @@ impl crate::cmux::Backend for FakeBackend {
         ws.tabs.push(open_tab(tab));
         Ok(())
     }
+
+    fn show_url(&self, url: &str) -> anyhow::Result<&'static str> {
+        self.log.borrow_mut().push(format!("show {url}"));
+        Ok("dock")
+    }
 }

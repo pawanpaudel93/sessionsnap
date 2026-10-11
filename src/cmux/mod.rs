@@ -57,6 +57,9 @@ pub trait Backend {
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[Tab]) -> Result<String>;
     /// Adds one tab to an open workspace.
     fn add_tab(&self, workspace_ref: &str, tab: &Tab) -> Result<()>;
+    /// Shows `url` in cmux: reloads a browser already on it ("reloaded"), else adds a Dock
+    /// browser tab ("dock"), else, with the Dock off, opens a browser tab ("tab").
+    fn show_url(&self, url: &str) -> Result<&'static str>;
 }
 
 /// The command a restored tab runs. Claude tabs only with a valid session ID.
