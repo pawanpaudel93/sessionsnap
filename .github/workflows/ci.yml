@@ -25,7 +25,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
-      - run: node --check src/interfaces/web/assets/app.js
+      - name: Install shellcheck
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install shellcheck; else sudo apt-get update && sudo apt-get install -y shellcheck; fi
+      # The same checks as a local run and a release.
+      - run: scripts/check.sh

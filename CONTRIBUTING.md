@@ -6,19 +6,18 @@ it explains the layers and has step-by-step recipes for adding an agent or a ter
 ## Setup
 
 - Rust 1.96 or newer (`rustup update`).
-- Node.js, only for `node --check` on the web page's script.
+- Node.js, only for `node --check` on the web page's script, and shellcheck.
 - cmux is not needed to build or test; tests use fakes and temp dirs.
 
 ## Before you open a pull request
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-node --check src/interfaces/web/assets/app.js
+scripts/check.sh
 ```
 
-CI runs the same checks on macOS and Linux.
+It runs `cargo fmt --check`, clippy, the tests, `node --check` on the web page's script, and
+`sh -n` plus shellcheck on `install.sh` and `scripts/*.sh` (`brew install shellcheck` or
+`apt install shellcheck`). CI runs the same script on macOS and Linux.
 
 ## Guidelines
 
@@ -31,7 +30,7 @@ CI runs the same checks on macOS and Linux.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org):
   `type(scope): lowercase summary`, e.g. `feat(agents): add gemini history`. Types: feat, fix,
   refactor, docs, test, chore, ci, style. Common scopes: domain, app, cli, ui, cmux, agents, claude,
-  codex, store, install, skill.
+  codex, store, install, skill, release.
 - New agents start as resume-only. Say in the pull request which agent version you tested with.
 
 ## Reporting bugs
