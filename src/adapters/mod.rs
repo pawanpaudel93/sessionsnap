@@ -23,6 +23,12 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// `s` as one shell word: as is when it has only characters that are safe unquoted, else quoted.
+pub fn shell_word(s: &str) -> String {
+    let safe = !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
+    if safe { s.to_string() } else { shell_quote(s) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,5 +36,11 @@ mod tests {
     #[test]
     fn quotes_for_the_shell() {
         assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_word("--model=o3"), "--model=o3");
+        assert_eq!(shell_word("a b"), "'a b'");
+        assert_eq!(shell_word(""), "''");
+        assert_eq!(shell_word("~/x"), "'~/x'");
+        assert_eq!(shell_word("$(id)"), "'$(id)'");
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
     }
 }

@@ -6,6 +6,7 @@
 pub mod claude;
 #[cfg(test)]
 mod contract;
+pub mod registry;
 
 use anyhow::Result;
 
