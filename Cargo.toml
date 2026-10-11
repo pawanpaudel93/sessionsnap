@@ -3,7 +3,7 @@ name = "sessionsnap"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
-description = "Named, versioned snapshots of cmux workspaces and Claude Code sessions"
+description = "Named, versioned snapshots of cmux workspaces and coding-agent sessions"
 license = "MIT"
 
 [dependencies]

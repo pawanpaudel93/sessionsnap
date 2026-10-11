@@ -23,7 +23,7 @@ pub const PALETTE_WORKSPACE: &str = "sessionsnap";
 pub const UI_WORKSPACE: &str = "sessionsnap UI";
 
 /// Palette entries. Each opens a "sessionsnap" workspace (the UI "sessionsnap UI"): a plain palette command would type
-/// into the focused tab, which is often a running Claude session.
+/// into the focused tab, which is often a running agent session.
 pub fn palette_commands(exe: &str) -> Vec<Value> {
     let entry = |name: &str, keywords: &[&str], args: &str| {
         let workspace = if args == "ui" { UI_WORKSPACE } else { PALETTE_WORKSPACE };

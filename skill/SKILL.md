@@ -1,12 +1,14 @@
 ---
 name: sessionsnap
-description: Save, edit and restore named, versioned snapshots of cmux workspaces and their Claude Code sessions with the sessionsnap CLI. Use when the user wants to snapshot what is open in cmux, bring back lost cmux tabs or Claude sessions, see what a snapshot contains or how it changed, or edit a saved snapshot.
+description: Save, edit and restore named, versioned snapshots of cmux workspaces and their agent sessions (Claude Code, Codex and other coding agents) with the sessionsnap CLI. Use when the user wants to snapshot what is open in cmux, bring back lost cmux tabs or agent sessions, see what a snapshot contains or how it changed, or edit a saved snapshot.
 ---
 
 # sessionsnap
 
-`sessionsnap` saves what is open in cmux (workspaces, tabs, and the Claude session in each tab) as
-named snapshots with versions, and reopens only what is missing.
+`sessionsnap` saves what is open in cmux (workspaces, tabs, and the agent session in each tab, with
+the flags the agent was started with) as named snapshots with versions, and reopens only what is
+missing. Claude Code and Codex are fully supported (their session histories are read); 15 more
+agents are resumed with cmux's documented commands (`sessionsnap agents --json` lists them).
 
 ## Rules
 
@@ -37,10 +39,11 @@ named snapshots with versions, and reopens only what is missing.
 | Compare | `sessionsnap diff <name>@a <name>@b --json` |
 | Restore (plan) | `sessionsnap restore <name>[@v] [-w <ws>] [--tab <ws>#<n>] --plan --json` |
 | Apply a plan | `sessionsnap apply <planId> --json` |
-| Lost sessions not open in cmux | `sessionsnap recent [--hours 24] --json`, then `sessionsnap recent --plan --json` |
-| Find a session | `sessionsnap sessions --search "<text>" --json` |
-| Edit a tab | `sessionsnap tab <name> <ws>#<n> --rename/--move <ws>/--index <n>/--remove/--cwd/--session --json` |
-| Add a session as a tab | `sessionsnap tab <name> <ws> --add-session <id> --json` |
+| Lost sessions not open in cmux | `sessionsnap recent [--hours 24] [--agent <kind>] --json`, then `sessionsnap recent --plan --json` |
+| Find a session | `sessionsnap sessions --search "<text>" [--agent <kind>] --json` |
+| Edit a tab | `sessionsnap tab <name> <ws>#<n> --rename/--move <ws>/--index <n>/--remove/--cwd/--session [--agent <kind>] --json` |
+| Add a session as a tab | `sessionsnap tab <name> <ws> --add-session <id> [--agent <kind>] --json` |
+| Known agents | `sessionsnap agents --json` |
 | Edit a workspace | `sessionsnap ws <name> <ws> --rename/--color/--index/--remove --json` |
 | Many edits as one version | `sessionsnap edit <name> --batch - --json` with a JSON array on stdin, e.g. `[{"op":"tab-move","tab":"Alpha#2","to":"Beta"}]` |
 | Workspaces and tabs open in cmux now | `sessionsnap open --json` |
@@ -49,12 +52,19 @@ named snapshots with versions, and reopens only what is missing.
 Tabs are `<workspace>#<position>` (1-based) or `<workspace>:"<part of the title>"`.
 Edit ops: `ws-rename {ws,to}`, `ws-color {ws,color}`, `ws-index {ws,index}`, `ws-remove {ws}`,
 `ws-add-live {ws}`, `ws-from {from,ws}`, `tab-remove {tab}`, `tab-rename {tab,to}`,
-`tab-index {tab,index}`, `tab-move {tab,to}`, `tab-add-session {ws,sessionId,title?}`,
-`tab-add-terminal {ws,cwd,command?,title?}`, `tab-set-cwd {tab,cwd}`, `tab-set-session {tab,sessionId}`.
+`tab-index {tab,index}`, `tab-move {tab,to}`, `tab-add-session {ws,sessionId,agent?,title?}`,
+`tab-add-terminal {ws,cwd,command?,title?}`, `tab-set-cwd {tab,cwd}`, `tab-set-session {tab,sessionId,agent?}`.
+Without `agent`, a session ID is looked up in the Claude Code and Codex histories; pass `agent`
+(a kind from `sessionsnap agents`) when it is in both, or for other agents.
+
+Saved tabs are `{"type":"terminal",title,cwd,command?}` or
+`{"type":"agent",title,cwd,agent,sessionId,args?}`. Session JSON (`sessions`, `recent`) is
+`{agent,sessionId,title,firstPrompt,cwd,modified}`. A restore plan warns when an agent's program is
+not on PATH, and when a tab will open as a plain shell (unknown agent, invalid ID, session gone).
 
 ## Exit codes
 
 `0` ok · `1` error · `2` cmux not running/reachable · `3` nothing to do · `4` refused (needs
 confirmation with `--yes`, workspace name already exists, session has no recorded folder, or
-cmux.json is not plain JSON) · `5` unknown cmux state format · `6` plan
+cmux.json is not plain JSON) · `5` unknown cmux state or snapshot format (snapshots must be format 2) · `6` plan
 stale (make a new one) · `7` not found. With `--json`, errors print `{"error": {code, exit, message}}`.
