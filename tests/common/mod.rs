@@ -21,17 +21,31 @@ impl Env {
         self.dir.path().join("claude")
     }
 
-    pub fn run(&self, args: &[&str]) -> anyhow::Result<Outcome> {
-        let cli = Cli::try_parse_from(std::iter::once("ccsnap").chain(args.iter().copied())).expect("valid arguments");
-        let ctx = Ctx {
+    /// A context like the binary's, on this test's store, Claude dir and fake cmux.
+    pub fn ctx(&self, json: bool, yes: bool, input: Option<String>) -> Ctx {
+        Ctx {
             store: Store::new(self.dir.path().join("store")),
             claude: Claude::new(self.claude_root()),
             backend: Box::new(self.fake.clone()),
-            json: cli.json,
-            yes: cli.yes,
+            json,
+            yes,
             interactive: false,
-        };
-        dispatch(&ctx, cli.command)
+            input,
+        }
+    }
+
+    pub fn run(&self, args: &[&str]) -> anyhow::Result<Outcome> {
+        self.run_with(args, None)
+    }
+
+    /// Runs with `input` as the text for `--batch -`.
+    pub fn run_with_input(&self, args: &[&str], input: &str) -> anyhow::Result<Outcome> {
+        self.run_with(args, Some(input.to_string()))
+    }
+
+    fn run_with(&self, args: &[&str], input: Option<String>) -> anyhow::Result<Outcome> {
+        let cli = Cli::try_parse_from(std::iter::once("ccsnap").chain(args.iter().copied())).expect("valid arguments");
+        dispatch(&self.ctx(cli.json, cli.yes, input), cli.command)
     }
 }
 

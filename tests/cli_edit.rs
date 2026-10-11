@@ -48,3 +48,40 @@ fn rejects_combined_positional_flags() {
     assert!(env.run(&["tab", "work", "Alpha#1", "--remove", "--rename", "x"]).is_err());
     assert!(env.run(&["ws", "work"]).is_err());
 }
+
+#[test]
+fn batch_reads_input_instead_of_stdin() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let o = env
+        .run_with_input(&["edit", "work", "--batch", "-", "-m", "tidy"], r#"[{"op":"tab-remove","tab":"Alpha#2"}]"#)
+        .unwrap();
+    assert_eq!(o.json["version"], 2);
+    assert_eq!(o.json["message"], "tidy");
+}
+
+#[test]
+fn batch_dry_run_shows_result_without_saving() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let ops = r#"[{"op":"ws-rename","ws":"Beta","to":"Review"},{"op":"tab-remove","tab":"Alpha#2"}]"#;
+    let o = env.run_with_input(&["edit", "work", "--batch", "-", "--dry-run"], ops).unwrap();
+    assert_eq!(o.json["dryRun"], true);
+    assert_eq!(o.json["baseVersion"], 1);
+    assert_eq!(o.json["workspaces"][1]["name"], "Review");
+    assert_eq!(o.json["workspaces"][0]["tabs"].as_array().unwrap().len(), 1);
+    assert!(!o.json["changes"].as_array().unwrap().is_empty());
+    assert!(o.text.contains("not saved"));
+    let history = env.run(&["history", "work"]).unwrap();
+    assert_eq!(history.json["versions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn dry_run_reports_invalid_ops() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let err = env
+        .run_with_input(&["edit", "work", "--batch", "-", "--dry-run"], r#"[{"op":"tab-remove","tab":"Nope#1"}]"#)
+        .unwrap_err();
+    assert_eq!(exit_of(&err), Exit::NotFound);
+}

@@ -26,21 +26,24 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Delete { name } => delete(ctx, &name),
         Command::Ws(args) => {
             let ops = ws_ops(&args)?;
-            edit_snapshot(ctx, &args.name, ops, args.message)
+            edit_snapshot(ctx, &args.name, ops, args.message, false)
         }
         Command::Tab(args) => {
             let ops = tab_ops(&args)?;
-            edit_snapshot(ctx, &args.name, ops, args.message)
+            edit_snapshot(ctx, &args.name, ops, args.message, false)
         }
-        Command::Edit { name, batch, message } => {
+        Command::Edit { name, batch, message, dry_run } => {
             let text = if batch == "-" {
-                std::io::read_to_string(std::io::stdin())?
+                match &ctx.input {
+                    Some(text) => text.clone(),
+                    None => std::io::read_to_string(std::io::stdin())?,
+                }
             } else {
                 std::fs::read_to_string(&batch)?
             };
             let ops: Vec<Op> =
                 serde_json::from_str(&text).map_err(|e| failure(Exit::Error, format!("invalid batch: {e}")))?;
-            edit_snapshot(ctx, &name, ops, message)
+            edit_snapshot(ctx, &name, ops, message, dry_run)
         }
         Command::Restore { snapshot, workspaces, tabs, plan, pick } => {
             restore(ctx, snapshot, workspaces, tabs, plan, pick)
@@ -225,12 +228,24 @@ pub(crate) fn confirm(ctx: &Ctx, question: &str) -> Result<()> {
     }
 }
 
-fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>) -> Result<Outcome> {
+fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Outcome> {
     let previous = ctx.store.load(name, None)?;
     let mut workspaces = previous.workspaces.clone();
     let open =
         if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) { Some(ctx.backend.read_open_state()?) } else { None };
     edit::apply_ops(&mut workspaces, &ops, &EditCtx { claude: &ctx.claude, store: &ctx.store, open: open.as_ref() })?;
+    if dry_run {
+        let changes = diff::diff(&previous.workspaces, &workspaces);
+        let warnings = edit::warnings(&workspaces, &ctx.claude);
+        let summary = if changes.is_empty() { "no changes".to_string() } else { diff::summary(&changes) };
+        return Ok(Outcome::ok(
+            json!({
+                "snapshot": name, "baseVersion": previous.version, "dryRun": true,
+                "workspaces": workspaces, "changes": changes, "warnings": warnings,
+            }),
+            format!("{name} (not saved): {summary}"),
+        ));
+    }
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
     commit(ctx, name, Some(&previous), workspaces, source, message)
 }

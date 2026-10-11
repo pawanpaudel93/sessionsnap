@@ -74,6 +74,9 @@ pub enum Command {
         batch: String,
         #[arg(long, short = 'm')]
         message: Option<String>,
+        /// Show the result without saving a version
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Reopen what a snapshot has that is not open now (plan, then apply)
     Restore {
@@ -201,6 +204,8 @@ pub struct Ctx {
     pub yes: bool,
     /// Prompts allowed (a terminal on stdin and not --json).
     pub interactive: bool,
+    /// Text for `--batch -` when the caller is not a terminal (the web UI); stdin when None.
+    pub input: Option<String>,
 }
 
 impl Ctx {
@@ -212,6 +217,7 @@ impl Ctx {
             json,
             yes,
             interactive: !json && std::io::stdin().is_terminal(),
+            input: None,
         })
     }
 }
