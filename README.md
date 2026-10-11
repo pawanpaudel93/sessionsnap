@@ -64,10 +64,11 @@ or snapshot format, 6 plan stale, 7 not found.
 - **Resume only:** sessionsnap saves and resumes the session with the command cmux documents for
   that agent; it cannot read its history. These have not been tried with sessionsnap.
 - A restored tab runs the agent's resume command with the flags it was started with (from cmux's
-  record), minus the words of its own resume command (e.g. `--session <old id>`, `rovodev run`,
-  `threads continue <old id>`). For Claude Code, flags that pick a session (`--resume`,
-  `--continue`, `--session-id`, `--print`, `--fork-session`) and an initial prompt are dropped too;
-  for Codex, the subcommand (`resume <id>`, `exec <prompt>`, wherever it is) and its arguments.
+  record, which holds only flags), kept as saved except the exact tokens that pick another session:
+  the agent's own resume words and resume flags with the old ID (e.g. `--session <id>`, `-s <id>`,
+  `rovodev run`, `threads continue <id>`), and its continue flag where `-c`/`--continue` means
+  that (Claude Code, OpenCode). For Claude Code also `--session-id <id>`, `--fork-session` and
+  `--print`/`-p`; for Codex `resume <uuid|--last>`, `fork <uuid|--last>`, and a leading `exec` run.
   A session ID never starts with `-`.
   Every word is quoted for the shell, and session IDs are checked first (UUIDs for Claude Code and
   Codex); a tab with an invalid ID or an agent sessionsnap does not know reopens as a plain shell
