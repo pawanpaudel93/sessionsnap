@@ -1,6 +1,8 @@
 //! Codex: its session history (`~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<id>.jsonl`).
 //! Archived sessions (`~/.codex/archived_sessions`) are ignored.
 
+use std::cell::OnceCell;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -19,11 +21,13 @@ pub const KIND: &str = "codex";
 /// Codex's data directory (`~/.codex`).
 pub struct Codex {
     root: PathBuf,
+    /// Session ID (lowercase) → rollout file, read once on first lookup.
+    index: OnceCell<HashMap<String, PathBuf>>,
 }
 
 impl Codex {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Codex { root: root.into() }
+        Codex { root: root.into(), index: OnceCell::new() }
     }
 
     /// `$SESSIONSNAP_CODEX_DIR`, else `~/.codex`.
@@ -49,11 +53,16 @@ impl Codex {
         out
     }
 
+    /// The rollout of a session, from an index of `sessions/` built on the first lookup (lookups
+    /// happen per tab; walking the history each time would be slow).
     fn find_rollout(&self, session_id: &str) -> Option<PathBuf> {
         if !is_session_id(session_id) {
             return None;
         }
-        self.rollouts().into_iter().find(|(_, id)| id.eq_ignore_ascii_case(session_id)).map(|(p, _)| p)
+        let index = self
+            .index
+            .get_or_init(|| self.rollouts().into_iter().map(|(p, id)| (id.to_ascii_lowercase(), p)).collect());
+        index.get(&session_id.to_ascii_lowercase()).cloned()
     }
 
     /// Reads a rollout's session_meta (ID, folder, how it was started) and its first real prompt.
@@ -301,6 +310,20 @@ mod tests {
         );
         let recoverable: Vec<bool> = ids.iter().map(|id| c.find(id).unwrap().unwrap().recoverable).collect();
         assert_eq!(recoverable, [false, false, true, false]);
+    }
+
+    #[test]
+    fn lookups_use_one_index_per_history() {
+        let d = tempfile::tempdir().unwrap();
+        write_rollout(d.path(), "/w/a", A, "one");
+        let c = Codex::new(d.path());
+        assert!(c.contains(A));
+        assert!(c.contains(&A.to_uppercase()));
+        // Built once: a session written later is not looked up again by this value…
+        write_rollout(d.path(), "/w/b", B, "two");
+        assert!(!c.contains(B));
+        // …but a fresh history (each command opens one) sees it.
+        assert!(Codex::new(d.path()).contains(B));
     }
 
     #[test]
