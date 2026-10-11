@@ -29,6 +29,11 @@ impl CmuxCli<ProcessRunner> {
 }
 
 impl<R: Runner> CmuxCli<R> {
+    /// Brings up the Dock in the right sidebar: cmux pauses pages in a hidden Dock.
+    fn show_dock(&self) -> Result<()> {
+        self.cmux_ok(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
+    }
+
     fn cmux(&self, args: &[&str]) -> Result<Output> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         self.runner.run(&self.program, &args)
@@ -112,11 +117,15 @@ impl<R: Runner> Backend for CmuxCli<R> {
     fn show_url(&self, url: &str) -> Result<&'static str> {
         // Match an open UI tab by its address without the fragment (the key).
         let base = url.split('#').next().unwrap_or(url);
-        if let Some(surface) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
+        if let Some((surface, in_dock)) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
             self.cmux_ok(&["browser", surface.as_str(), "goto", url])?;
+            if in_dock {
+                self.show_dock()?;
+            }
             return Ok("reused");
         }
         if self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", url])?.success {
+            self.show_dock()?;
             return Ok("dock");
         }
         // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
@@ -201,10 +210,10 @@ mod tests {
         let b = backend(true);
         assert_eq!(b.show_url(UI).unwrap(), "dock");
         let calls = b.runner.calls.borrow();
-        assert_eq!(
-            &calls.last().unwrap()[1..],
-            ["new-surface", "--type", "browser", "--placement", "dock", "--url", UI]
-        );
+        let n = calls.len();
+        assert_eq!(&calls[n - 2][1..], ["new-surface", "--type", "browser", "--placement", "dock", "--url", UI]);
+        // A hidden Dock pauses its pages, so the Dock is brought up too.
+        assert_eq!(&calls[n - 1][1..], ["right-sidebar", "set", "dock", "--no-focus"]);
     }
 
     #[test]
@@ -222,7 +231,19 @@ mod tests {
         b.runner.tree = crate::cmux::tree::TEST_BROWSER_TREE;
         assert_eq!(b.show_url(UI).unwrap(), "reused");
         let calls = b.runner.calls.borrow();
-        assert_eq!(&calls.last().unwrap()[1..], ["browser", "surface:71", "goto", UI]);
+        let n = calls.len();
+        assert_eq!(&calls[n - 2][1..], ["browser", "surface:71", "goto", UI]);
+        assert_eq!(&calls[n - 1][1..], ["right-sidebar", "set", "dock", "--no-focus"]);
+    }
+
+    #[test]
+    fn show_url_reuses_a_tab_outside_the_dock_without_opening_the_dock() {
+        let mut b = backend(true);
+        b.runner.tree = r#"{"windows":[{"workspaces":[{"panes":[{"surfaces":[
+            {"ref":"surface:3","type":"browser","url":"http://127.0.0.1:47317/"}]}]}]}]}"#;
+        assert_eq!(b.show_url(UI).unwrap(), "reused");
+        let calls = b.runner.calls.borrow();
+        assert_eq!(&calls.last().unwrap()[1..], ["browser", "surface:3", "goto", UI]);
     }
 
     #[test]

@@ -51,9 +51,9 @@ pub fn parse(text: &str) -> Result<Vec<TreeWorkspace>> {
     Ok(out)
 }
 
-/// The ref of a browser surface whose URL starts with `url` (Dock surfaces first), from
-/// `cmux --json tree --all`.
-pub fn find_browser(text: &str, url: &str) -> Result<Option<String>> {
+/// The ref of a browser surface whose URL starts with `url` (Dock surfaces first) and whether it
+/// is in the Dock, from `cmux --json tree --all`.
+pub fn find_browser(text: &str, url: &str) -> Result<Option<(String, bool)>> {
     let root: Value = serde_json::from_str(text)
         .map_err(|e| failure(Exit::UnknownFormat, format!("cmux tree output is not JSON: {e}")))?;
     let mut found: Option<(bool, String)> = None;
@@ -74,7 +74,7 @@ pub fn find_browser(text: &str, url: &str) -> Result<Option<String>> {
             }
         }
     }
-    Ok(found.map(|(_, reference)| reference))
+    Ok(found.map(|(in_dock, reference)| (reference, in_dock)))
 }
 
 fn str_of(v: &Value, key: &str) -> String {
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn finds_ui_browser_dock_first() {
         let url = "http://127.0.0.1:47317/";
-        assert_eq!(find_browser(TEST_BROWSER_TREE, url).unwrap().as_deref(), Some("surface:71"));
+        assert_eq!(find_browser(TEST_BROWSER_TREE, url).unwrap(), Some(("surface:71".to_string(), true)));
         assert_eq!(find_browser(TEST_BROWSER_TREE, "http://127.0.0.1:9/").unwrap(), None);
         assert_eq!(find_browser(TEST_TREE, url).unwrap(), None);
     }
