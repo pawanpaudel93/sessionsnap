@@ -1,13 +1,10 @@
 //! Restoring: making a plan from a snapshot (or recovered sessions), keeping it for
 //! `sessionsnap apply`, and applying it to the terminal.
 
-use std::time::Duration;
-
 use anyhow::Result;
 
 use super::Ctx;
 use crate::adapters::store::Store;
-use crate::adapters::store::fs::{read_json, write_json_atomic};
 use crate::domain::model::{Workspace, parse_ref};
 use crate::domain::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
 use crate::error::{Exit, failure};
@@ -46,14 +43,14 @@ pub fn prepare(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Plan> {
     let open = ctx.backend.read_open_state()?;
     let plan = make_plan(source, &ctx.store, &ctx.claude, &open)?;
     if !plan.is_empty() {
-        save_plan(&ctx.store, &plan)?;
+        ctx.store.save_plan(&plan)?;
     }
     Ok(plan)
 }
 
 /// A kept plan, with the terminal started to apply it.
 pub fn load_for_apply(ctx: &Ctx, plan_id: &str) -> Result<Plan> {
-    let plan = load_plan(&ctx.store, plan_id)?;
+    let plan = ctx.store.load_plan(plan_id)?;
     ctx.backend.ensure_running()?;
     Ok(plan)
 }
@@ -86,34 +83,6 @@ pub fn make_plan(source: PlanSource, store: &Store, history: &dyn SessionHistory
     })
 }
 
-/// Saves a plan for `sessionsnap apply`, deleting plans older than an hour.
-pub fn save_plan(store: &Store, plan: &Plan) -> Result<()> {
-    let dir = store.plans_dir();
-    std::fs::create_dir_all(&dir)?;
-    for entry in std::fs::read_dir(&dir)?.flatten() {
-        let expired = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|m| m.elapsed().unwrap_or_default() > Duration::from_secs(3600))
-            .unwrap_or(false);
-        if expired {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-    write_json_atomic(&dir.join(format!("{}.json", plan.plan_id)), plan)
-}
-
-pub fn load_plan(store: &Store, id: &str) -> Result<Plan> {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(failure(Exit::Error, format!("invalid plan id '{id}'")));
-    }
-    let path = store.plans_dir().join(format!("{id}.json"));
-    if !path.is_file() {
-        return Err(failure(Exit::NotFound, format!("plan {id} not found (plans expire after an hour)")));
-    }
-    read_json(&path)
-}
-
 /// Applies a plan if it still matches what is open; continues past failed steps.
 pub fn apply_plan(
     plan: &Plan,
@@ -143,7 +112,7 @@ pub fn apply_plan(
             }
         }
     }
-    let _ = std::fs::remove_file(store.plans_dir().join(format!("{}.json", plan.plan_id)));
+    store.remove_plan(&plan.plan_id);
     Ok(steps)
 }
 
@@ -211,8 +180,8 @@ mod tests {
         let source = PlanSource::Snapshot { snapshot: "work".into(), version: 1, selection: Selection::default() };
         let plan = make_plan(source.clone(), &store, &claude, &fake.read_open_state().unwrap()).unwrap();
         assert_eq!(plan.tab_count(), 3);
-        save_plan(&store, &plan).unwrap();
-        assert_eq!(load_plan(&store, &plan.plan_id).unwrap(), plan);
+        store.save_plan(&plan).unwrap();
+        assert_eq!(store.load_plan(&plan.plan_id).unwrap(), plan);
         let steps = apply_plan(&plan, &store, &claude, &fake).unwrap();
         assert!(steps.iter().all(|s| s.ok), "{steps:?}");
         assert_eq!(*fake.log.borrow(), ["add workspace:WA two", "create Gamma 1", "create Delta 1"]);

@@ -6,6 +6,7 @@ pub mod interfaces;
 pub mod ports;
 #[doc(hidden)]
 pub mod testing;
+pub mod util;
 
 // Earlier module paths, kept for the integration tests and other callers.
 pub use adapters::agents::claude;

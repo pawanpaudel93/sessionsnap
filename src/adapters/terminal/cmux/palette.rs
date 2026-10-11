@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-use crate::adapters::store::fs::write_json_atomic;
 use crate::adapters::{home_dir, shell_quote};
 use crate::error::{Exit, failure};
+use crate::util::json::write_json_atomic;
 
 /// `$SESSIONSNAP_CMUX_CONFIG`, else `~/.config/cmux/cmux.json`.
 pub fn cmux_config_path() -> Result<PathBuf> {

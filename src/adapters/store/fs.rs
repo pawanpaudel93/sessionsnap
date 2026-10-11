@@ -2,13 +2,15 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde::{Serialize, de::DeserializeOwned};
 
 use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name};
+use crate::domain::plan::Plan;
 use crate::error::{Exit, failure};
 use crate::ports::Snapshots;
+use crate::util::json::{read_json, write_json_atomic};
 
 /// Snapshot versions live in `<root>/snapshots/<name>/<NNNN>-<timestamp>.json`; restore plans in
 /// `<root>/plans/<id>.json`.
@@ -33,8 +35,41 @@ impl Store {
         &self.root
     }
 
-    pub fn plans_dir(&self) -> PathBuf {
+    fn plans_dir(&self) -> PathBuf {
         self.root.join("plans")
+    }
+
+    /// Keeps a plan for `sessionsnap apply`, deleting plans older than an hour.
+    pub fn save_plan(&self, plan: &Plan) -> Result<()> {
+        let dir = self.plans_dir();
+        fs::create_dir_all(&dir)?;
+        for entry in fs::read_dir(&dir)?.flatten() {
+            let expired = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|m| m.elapsed().unwrap_or_default() > Duration::from_secs(3600))
+                .unwrap_or(false);
+            if expired {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+        write_json_atomic(&dir.join(format!("{}.json", plan.plan_id)), plan)
+    }
+
+    pub fn load_plan(&self, id: &str) -> Result<Plan> {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(failure(Exit::Error, format!("invalid plan id '{id}'")));
+        }
+        let path = self.plans_dir().join(format!("{id}.json"));
+        if !path.is_file() {
+            return Err(failure(Exit::NotFound, format!("plan {id} not found (plans expire after an hour)")));
+        }
+        read_json(&path)
+    }
+
+    /// Forgets an applied plan; a plan that is already gone is fine.
+    pub fn remove_plan(&self, id: &str) {
+        let _ = fs::remove_file(self.plans_dir().join(format!("{id}.json")));
     }
 
     fn snapshots_dir(&self) -> PathBuf {
@@ -159,23 +194,6 @@ impl Snapshots for Store {
     fn load(&self, name: &str, version: Option<u32>) -> Result<Version> {
         Store::load(self, name, version)
     }
-}
-
-pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
-    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
-}
-
-/// Writes JSON to a temporary file next to `path`, then renames it into place.
-pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&tmp, serde_json::to_string_pretty(value)? + "\n")
-        .with_context(|| format!("writing {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]
