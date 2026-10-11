@@ -3,10 +3,10 @@
 use anyhow::Result;
 
 use super::Ctx;
-use crate::core::capture::{capture, carry_over, merge};
-use crate::core::diff::{self, Change};
-use crate::core::edit;
-use crate::core::model::{Source, Version, Workspace, parse_ref, validate_name};
+use crate::domain::capture::{capture, carry_over, merge};
+use crate::domain::diff::{self, Change};
+use crate::domain::edit;
+use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name};
 
 /// What writing a version did.
 #[derive(Debug)]

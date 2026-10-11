@@ -1,7 +1,7 @@
-//! Ports: the traits `core` and `app` depend on, and the data that crosses them. Adapters
+//! Ports: the traits `domain` and `app` depend on, and the data that crosses them. Adapters
 //! implement them; tests implement them with fakes (`crate::testing`).
 //!
-//! Layer rule: ports may use `crate::core` types and `crate::error`, nothing else in the crate.
+//! Layer rule: ports may use `crate::domain` types and `crate::error`, nothing else in the crate.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::core::model::{Tab, Version};
+use crate::domain::model::{Tab, Version};
 
 /// What is open in the terminal.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -93,7 +93,7 @@ impl SessionInfo {
     }
 }
 
-/// What core needs from an agent's session history. One implementation today:
+/// What the domain needs from an agent's session history. One implementation today:
 /// `adapters::agents::claude::Claude`.
 pub trait SessionHistory {
     /// True when the history has session `session_id` (in any folder).

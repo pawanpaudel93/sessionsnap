@@ -8,10 +8,10 @@ use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
 use crate::app;
 use crate::app::edit::Edited;
 use crate::app::snapshots::Commit;
-use crate::core::diff;
-use crate::core::edit::Op;
-use crate::core::model::tab_count;
-use crate::core::plan::{Plan, PlanSource};
+use crate::domain::diff;
+use crate::domain::edit::Op;
+use crate::domain::model::tab_count;
+use crate::domain::plan::{Plan, PlanSource};
 use crate::error::{Exit, failure};
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {

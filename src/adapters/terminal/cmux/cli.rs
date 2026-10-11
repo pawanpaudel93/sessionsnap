@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::runner::{Output, ProcessRunner, Runner};
 use super::{state_file, tree};
 use crate::adapters::agents::claude::tab_command;
-use crate::core::model::Tab;
+use crate::domain::model::Tab;
 use crate::error::{Exit, failure};
 use crate::ports::{OpenState, Terminal};
 

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::core::capture;
-use crate::core::model::{Tab, Workspace, find_by_name, is_session_id, parse_ref};
+use crate::domain::capture;
+use crate::domain::model::{Tab, Workspace, find_by_name, is_session_id, parse_ref};
 use crate::error::{Exit, failure};
 use crate::ports::{OpenState, SessionHistory, Snapshots};
 
@@ -305,7 +305,7 @@ pub fn warnings(workspaces: &[Workspace], history: &dyn SessionHistory) -> Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::Version;
+    use crate::domain::model::Version;
     use crate::error::exit_of;
     use crate::testing::{A, B, C, FakeHistory, FakeSnapshots, open_ws};
 
@@ -413,7 +413,7 @@ mod tests {
     fn workspace_copies_and_live_adds() {
         let (mut snapshots, history, mut ws) = setup();
         snapshots.versions.push(Version {
-            sessionsnap: crate::core::model::FORMAT,
+            sessionsnap: crate::domain::model::FORMAT,
             snapshot: "other".into(),
             version: 1,
             created_at: String::new(),

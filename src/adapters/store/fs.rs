@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::core::model::{FORMAT, Source, Version, Workspace, validate_name};
+use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name};
 use crate::error::{Exit, failure};
 use crate::ports::Snapshots;
 
@@ -181,7 +181,7 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::Tab;
+    use crate::domain::model::Tab;
     use crate::error::exit_of;
 
     fn ws(name: &str) -> Workspace {

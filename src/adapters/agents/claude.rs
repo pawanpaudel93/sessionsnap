@@ -10,7 +10,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::adapters::home_dir;
-use crate::core::model::{Tab, is_session_id};
+use crate::domain::model::{Tab, is_session_id};
 use crate::ports::{SessionHistory, SessionInfo};
 
 /// Claude Code's data directory (`~/.claude`); transcripts are `projects/<project>/<id>.jsonl`.

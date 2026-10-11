@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::clean_title;
 use crate::adapters::home_dir;
-use crate::core::model::is_session_id;
+use crate::domain::model::is_session_id;
 use crate::error::{Exit, failure};
 
 /// cmux state-file versions sessionsnap understands.

@@ -1,8 +1,8 @@
 //! Pure domain logic: snapshots, diffs, edits, restore plans and capture.
 //!
 //! Layer rule: nothing here touches files, processes, the environment, cmux or an agent's data
-//! directory. Core may depend on `crate::ports` (and `crate::error`), never on `adapters`, `app`
-//! or `interfaces`. What core needs from the outside world comes in through a port trait.
+//! directory. The domain may depend on `crate::ports` (and `crate::error`), never on `adapters`, `app`
+//! or `interfaces`. What the domain needs from the outside world comes in through a port trait.
 
 pub mod capture;
 pub mod diff;

@@ -2,7 +2,7 @@
 //! and of how its result is shown. Functions take the context and typed inputs and return typed
 //! results; `interfaces` turns those into output.
 //!
-//! Layer rule: app may use `core`, `ports` and `adapters`; it never depends on `interfaces`, and
+//! Layer rule: app may use `domain`, `ports` and `adapters`; it never depends on `interfaces`, and
 //! never prints or prompts.
 
 pub mod edit;

@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::core::model::{Tab, Workspace, find_by_name};
+use crate::domain::model::{Tab, Workspace, find_by_name};
 use crate::ports::{OpenState, OpenTab, OpenWorkspace, SessionHistory};
 
 /// Turns open workspaces (all, or those named in `only`) into snapshot workspaces. Claude tabs

@@ -64,7 +64,7 @@ impl Default for FakeBackend {
     }
 }
 
-fn open_tab(t: &crate::core::model::Tab) -> crate::ports::OpenTab {
+fn open_tab(t: &crate::domain::model::Tab) -> crate::ports::OpenTab {
     crate::ports::OpenTab {
         reference: None,
         title: t.title().to_string(),
@@ -87,7 +87,7 @@ impl crate::ports::Terminal for FakeBackend {
         Ok(self.state.borrow().clone())
     }
 
-    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::core::model::Tab]) -> anyhow::Result<String> {
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::domain::model::Tab]) -> anyhow::Result<String> {
         self.log.borrow_mut().push(format!("create {name} {}", tabs.len()));
         let mut state = self.state.borrow_mut();
         let id = format!("NEW{}", state.workspaces.len());
@@ -97,7 +97,7 @@ impl crate::ports::Terminal for FakeBackend {
         Ok(format!("workspace:{id}"))
     }
 
-    fn add_tab(&self, workspace_ref: &str, tab: &crate::core::model::Tab) -> anyhow::Result<()> {
+    fn add_tab(&self, workspace_ref: &str, tab: &crate::domain::model::Tab) -> anyhow::Result<()> {
         self.log.borrow_mut().push(format!("add {workspace_ref} {}", tab.title()));
         let mut state = self.state.borrow_mut();
         let ws = state
@@ -164,11 +164,11 @@ impl crate::ports::SessionHistory for FakeHistory {
 /// In-memory saved snapshots for tests.
 #[derive(Default)]
 pub struct FakeSnapshots {
-    pub versions: Vec<crate::core::model::Version>,
+    pub versions: Vec<crate::domain::model::Version>,
 }
 
 impl crate::ports::Snapshots for FakeSnapshots {
-    fn load(&self, name: &str, version: Option<u32>) -> anyhow::Result<crate::core::model::Version> {
+    fn load(&self, name: &str, version: Option<u32>) -> anyhow::Result<crate::domain::model::Version> {
         self.versions
             .iter()
             .filter(|v| v.snapshot == name && version.is_none_or(|n| v.version == n))

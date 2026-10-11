@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::core::edit::{find_ws, locate, parse_tab_ref};
-use crate::core::model::{Tab, Workspace, is_session_id};
+use crate::domain::edit::{find_ws, locate, parse_tab_ref};
+use crate::domain::model::{Tab, Workspace, is_session_id};
 use crate::error::{Exit, failure};
 use crate::ports::{OpenState, OpenWorkspace, SessionHistory};
 

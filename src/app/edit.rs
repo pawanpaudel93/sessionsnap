@@ -4,9 +4,9 @@ use anyhow::Result;
 
 use super::Ctx;
 use super::snapshots::{Commit, commit};
-use crate::core::diff::{self, Change};
-use crate::core::edit::{self, EditCtx, Op};
-use crate::core::model::{Source, Workspace};
+use crate::domain::diff::{self, Change};
+use crate::domain::edit::{self, EditCtx, Op};
+use crate::domain::model::{Source, Workspace};
 
 /// What an edit did.
 #[derive(Debug)]

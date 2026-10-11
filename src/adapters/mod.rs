@@ -1,7 +1,7 @@
 //! Adapters: the outside world behind the ports — the snapshot store on disk, terminals (cmux)
 //! and coding agents (Claude Code).
 //!
-//! Layer rule: adapters implement `crate::ports` traits and may use `crate::core` types; they never
+//! Layer rule: adapters implement `crate::ports` traits and may use `crate::domain` types; they never
 //! depend on `app` or `interfaces`.
 
 use std::path::PathBuf;

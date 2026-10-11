@@ -2,8 +2,8 @@
 
 use serde_json::Value;
 
-use crate::core::diff::Change;
-use crate::core::model::{Version, tab_count};
+use crate::domain::diff::Change;
+use crate::domain::model::{Version, tab_count};
 
 pub fn saved(v: &Version, warnings: &[String]) -> String {
     let mut s = format!(
@@ -88,8 +88,8 @@ pub fn changes(changes: &[Change]) -> String {
         .join("\n")
 }
 
-pub fn plan(p: &crate::core::plan::Plan) -> String {
-    use crate::core::plan::Action;
+pub fn plan(p: &crate::domain::plan::Plan) -> String {
+    use crate::domain::plan::Action;
     let mut s = String::new();
     for action in &p.actions {
         match action {
@@ -116,7 +116,7 @@ pub fn plan(p: &crate::core::plan::Plan) -> String {
     s.trim_end().to_string()
 }
 
-pub fn steps(steps: &[crate::core::plan::ApplyStep]) -> String {
+pub fn steps(steps: &[crate::domain::plan::ApplyStep]) -> String {
     steps
         .iter()
         .map(|s| {

@@ -8,8 +8,8 @@ use anyhow::Result;
 use super::Ctx;
 use crate::adapters::store::Store;
 use crate::adapters::store::fs::{read_json, write_json_atomic};
-use crate::core::model::{Workspace, parse_ref};
-use crate::core::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
+use crate::domain::model::{Workspace, parse_ref};
+use crate::domain::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
 use crate::error::{Exit, failure};
 use crate::ports::{OpenState, SessionHistory, SessionInfo, Terminal};
 
@@ -158,7 +158,7 @@ fn step(description: String, result: Result<()>) -> ApplyStep {
 mod tests {
     use super::*;
     use crate::adapters::agents::claude::Claude;
-    use crate::core::model::Tab;
+    use crate::domain::model::Tab;
     use crate::error::exit_of;
     use crate::testing::{A, B, C, FakeBackend, open_ws, write_transcript};
 

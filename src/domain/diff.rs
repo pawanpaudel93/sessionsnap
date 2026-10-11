@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::core::model::Workspace;
+use crate::domain::model::Workspace;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "kebab-case", rename_all_fields = "camelCase")]
@@ -95,7 +95,7 @@ pub fn summary(changes: &[Change]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::Tab;
+    use crate::domain::model::Tab;
     use crate::testing::{A, B, C};
 
     fn claude(title: &str, id: &str) -> Tab {
