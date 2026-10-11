@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::claude::Claude;
-use crate::cmux::OpenState;
+use crate::adapters::agents::claude::Claude;
+use crate::adapters::store::fs::{Store, parse_ref};
+use crate::adapters::terminal::cmux::OpenState;
 use crate::core::capture;
 use crate::core::model::{Tab, Workspace, find_by_name, is_session_id};
 use crate::error::{Exit, failure};
-use crate::store::{Store, parse_ref};
 
 /// One change to a saved snapshot. Positions (`index`) are 1-based.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

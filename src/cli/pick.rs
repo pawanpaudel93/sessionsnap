@@ -4,8 +4,8 @@ use std::io::{self, BufRead, Write};
 
 use anyhow::Result;
 
+use crate::adapters::store::fs::Store;
 use crate::error::{Exit, failure};
-use crate::store::Store;
 
 fn read_line() -> Result<String> {
     let mut s = String::new();

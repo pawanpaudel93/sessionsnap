@@ -1,3 +1,6 @@
+//! Claude Code: its session history (`~/.claude/projects`), how a saved tab resumes a session,
+//! and the sessionsnap skill installed for it.
+
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -7,8 +10,8 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::core::model::is_session_id;
-use crate::store::home_dir;
+use crate::adapters::home_dir;
+use crate::core::model::{Tab, is_session_id};
 
 /// Claude Code's data directory (`~/.claude`); transcripts are `projects/<project>/<id>.jsonl`.
 pub struct Claude {
@@ -164,6 +167,32 @@ impl Claude {
     }
 }
 
+/// The command a restored tab runs. Claude tabs only with a valid session ID.
+pub fn tab_command(tab: &Tab) -> Option<String> {
+    match tab {
+        Tab::Claude { session_id, .. } if is_session_id(session_id) => Some(format!("claude --resume {session_id}")),
+        Tab::Claude { .. } => None,
+        Tab::Terminal { command, .. } => command.clone(),
+    }
+}
+
+pub const SKILL: &str = include_str!("../../../skill/SKILL.md");
+
+/// `$SESSIONSNAP_SKILLS_DIR`, else `~/.claude/skills`.
+pub fn skills_dir() -> Result<PathBuf> {
+    if let Some(p) = std::env::var_os("SESSIONSNAP_SKILLS_DIR") {
+        return Ok(p.into());
+    }
+    Ok(home_dir()?.join(".claude/skills"))
+}
+
+pub fn install_skill(dir: &Path) -> Result<PathBuf> {
+    let path = dir.join("sessionsnap").join("SKILL.md");
+    std::fs::create_dir_all(dir.join("sessionsnap"))?;
+    std::fs::write(&path, SKILL)?;
+    Ok(path)
+}
+
 fn str_field(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -269,5 +298,22 @@ mod tests {
         let all = c.scan(None).unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].session_id, B);
+    }
+
+    #[test]
+    fn tab_command_only_for_valid_sessions() {
+        let ok = Tab::Claude { title: "t".into(), cwd: "/w".into(), session_id: A.into() };
+        assert_eq!(tab_command(&ok).unwrap(), format!("claude --resume {A}"));
+        let bad = Tab::Claude { title: "t".into(), cwd: "/w".into(), session_id: "x; rm -rf ~".into() };
+        assert_eq!(tab_command(&bad), None);
+        let term = Tab::Terminal { title: "t".into(), cwd: "/w".into(), command: Some("npm run dev".into()) };
+        assert_eq!(tab_command(&term).as_deref(), Some("npm run dev"));
+    }
+
+    #[test]
+    fn installs_skill() {
+        let d = tempfile::tempdir().unwrap();
+        let p = install_skill(d.path()).unwrap();
+        assert!(std::fs::read_to_string(p).unwrap().contains("name: sessionsnap"));
     }
 }

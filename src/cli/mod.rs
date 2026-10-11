@@ -8,11 +8,11 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use serde_json::{Value, json};
 
-use crate::claude::Claude;
-use crate::cmux::Backend;
-use crate::cmux::cli::CmuxCli;
+use crate::adapters::agents::claude::Claude;
+use crate::adapters::store::fs::Store;
+use crate::adapters::terminal::cmux::Backend;
+use crate::adapters::terminal::cmux::cli::CmuxCli;
 use crate::error::{Exit, exit_of};
-use crate::store::Store;
 
 #[derive(Parser, Debug)]
 #[command(

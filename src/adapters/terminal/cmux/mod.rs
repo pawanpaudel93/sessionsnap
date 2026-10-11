@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod palette;
 pub mod runner;
 pub mod state_file;
 pub mod tree;
@@ -7,7 +8,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 
-use crate::core::model::{Tab, is_session_id};
+use crate::core::model::Tab;
 
 /// What is open in cmux.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -63,15 +64,6 @@ pub trait Backend {
     fn show_url(&self, url: &str) -> Result<&'static str>;
 }
 
-/// The command a restored tab runs. Claude tabs only with a valid session ID.
-pub fn tab_command(tab: &Tab) -> Option<String> {
-    match tab {
-        Tab::Claude { session_id, .. } if is_session_id(session_id) => Some(format!("claude --resume {session_id}")),
-        Tab::Claude { .. } => None,
-        Tab::Terminal { command, .. } => command.clone(),
-    }
-}
-
 /// Strips status glyphs cmux and Claude put before titles ("✳ fix login" → "fix login").
 pub fn clean_title(s: &str) -> String {
     let t = s.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
@@ -81,17 +73,6 @@ pub fn clean_title(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::A;
-
-    #[test]
-    fn tab_command_only_for_valid_sessions() {
-        let ok = Tab::Claude { title: "t".into(), cwd: "/w".into(), session_id: A.into() };
-        assert_eq!(tab_command(&ok).unwrap(), format!("claude --resume {A}"));
-        let bad = Tab::Claude { title: "t".into(), cwd: "/w".into(), session_id: "x; rm -rf ~".into() };
-        assert_eq!(tab_command(&bad), None);
-        let term = Tab::Terminal { title: "t".into(), cwd: "/w".into(), command: Some("npm run dev".into()) };
-        assert_eq!(tab_command(&term).as_deref(), Some("npm run dev"));
-    }
 
     #[test]
     fn clean_title_strips_status_glyphs() {

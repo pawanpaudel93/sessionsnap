@@ -5,7 +5,9 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
-use crate::claude::SessionInfo;
+use crate::adapters::agents::claude::SessionInfo;
+use crate::adapters::home_dir;
+use crate::adapters::store::fs::{parse_ref, validate_name};
 use crate::core::capture::{capture, carry_over, merge};
 use crate::core::diff;
 use crate::core::edit;
@@ -13,7 +15,6 @@ use crate::core::edit::{EditCtx, Op};
 use crate::core::model::{Source, Version, Workspace, tab_count};
 use crate::core::plan::{self, Plan, PlanSource, Selection};
 use crate::error::{Exit, failure};
-use crate::store::{home_dir, parse_ref, validate_name};
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
@@ -55,7 +56,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Ui { port, idle_minutes, no_open } => crate::web::ui(ctx, port, idle_minutes, !no_open),
         Command::InstallCmux { print } => install_cmux(ctx, print),
         Command::InstallSkill => {
-            let path = crate::install::install_skill(&crate::install::skills_dir()?)?;
+            let path = crate::adapters::agents::claude::install_skill(&crate::adapters::agents::claude::skills_dir()?)?;
             Ok(Outcome::ok(
                 json!({"installed": path}),
                 format!("Installed the sessionsnap skill at {}", path.display()),
@@ -67,13 +68,13 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
 fn install_cmux(ctx: &Ctx, print: bool) -> Result<Outcome> {
     let exe = std::env::current_exe()?.to_string_lossy().into_owned();
     if print {
-        let commands = crate::install::palette_commands(&exe);
+        let commands = crate::adapters::terminal::cmux::palette::palette_commands(&exe);
         let text = serde_json::to_string_pretty(&commands)?;
         return Ok(Outcome::ok(json!({"commands": commands}), text));
     }
-    let config = crate::install::cmux_config_path()?;
+    let config = crate::adapters::terminal::cmux::palette::cmux_config_path()?;
     confirm(ctx, &format!("Add sessionsnap commands to {}?", config.display()))?;
-    let backup = crate::install::install_cmux(&config, &exe)?;
+    let backup = crate::adapters::terminal::cmux::palette::install_cmux(&config, &exe)?;
     let note = backup.as_ref().map(|b| format!(" (backup: {})", b.display())).unwrap_or_default();
     Ok(Outcome::ok(
         json!({"config": config, "backup": backup}),

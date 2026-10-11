@@ -4,12 +4,12 @@ use std::time::Duration;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::claude::Claude;
-use crate::cmux::{Backend, OpenState, OpenWorkspace};
+use crate::adapters::agents::claude::Claude;
+use crate::adapters::store::fs::{Store, read_json, write_json_atomic};
+use crate::adapters::terminal::cmux::{Backend, OpenState, OpenWorkspace};
 use crate::core::edit::{find_ws, locate, parse_tab_ref};
 use crate::core::model::{Tab, Workspace, is_session_id};
 use crate::error::{Exit, failure};
-use crate::store::{Store, read_json, write_json_atomic};
 
 /// Which workspaces (whole) and tabs (`<ws>#<n>` / `<ws>:"title"`) to restore; empty = all.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

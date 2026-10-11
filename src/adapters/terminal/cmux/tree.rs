@@ -163,10 +163,10 @@ pub const TEST_BROWSER_TREE: &str = r#"{"windows":[{"ref":"window:1","workspaces
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmux::state_file;
+    use crate::adapters::terminal::cmux::state_file;
     use crate::testing::{A, B};
 
-    const FIXTURE: &str = include_str!("../../tests/fixtures/cmux-state.json");
+    const FIXTURE: &str = include_str!("../../../../tests/fixtures/cmux-state.json");
 
     #[test]
     fn finds_ui_browser_dock_first() {

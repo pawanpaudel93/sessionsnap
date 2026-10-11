@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde_json::json;
 
+use crate::adapters::terminal::cmux::Backend;
+use crate::adapters::terminal::cmux::cli::CmuxCli;
 use crate::cli::{Ctx, Outcome};
-use crate::cmux::Backend;
-use crate::cmux::cli::CmuxCli;
 use crate::error::{Exit, failure};
 use api::{MakeCtx, Server};
 
@@ -218,9 +218,9 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude::Claude;
+    use crate::adapters::agents::claude::Claude;
+    use crate::adapters::store::fs::Store;
     use crate::cli::Cli;
-    use crate::store::Store;
     use crate::testing::FakeBackend;
 
     #[test]

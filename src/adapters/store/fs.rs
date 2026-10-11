@@ -1,3 +1,5 @@
+//! Snapshot versions and restore plans as JSON files under `~/.sessionsnap`.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -23,7 +25,7 @@ impl Store {
         if let Some(p) = std::env::var_os("SESSIONSNAP_HOME") {
             return Ok(Store::new(p));
         }
-        Ok(Store::new(home_dir()?.join(".sessionsnap")))
+        Ok(Store::new(crate::adapters::home_dir()?.join(".sessionsnap")))
     }
 
     pub fn root(&self) -> &Path {
@@ -176,10 +178,6 @@ fn parse_version_file(fname: &str) -> Option<u32> {
     let stem = fname.strip_suffix(".json")?;
     let (num, _) = stem.split_once('-')?;
     num.parse().ok()
-}
-
-pub fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| failure(Exit::Error, "HOME is not set"))
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {

@@ -1,12 +1,13 @@
+//! The sessionsnap commands in the cmux command palette (`~/.config/cmux/cmux.json`).
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
+use crate::adapters::store::fs::write_json_atomic;
+use crate::adapters::{home_dir, shell_quote};
 use crate::error::{Exit, failure};
-use crate::store::{home_dir, write_json_atomic};
-
-pub const SKILL: &str = include_str!("../skill/SKILL.md");
 
 /// `$SESSIONSNAP_CMUX_CONFIG`, else `~/.config/cmux/cmux.json`.
 pub fn cmux_config_path() -> Result<PathBuf> {
@@ -14,18 +15,6 @@ pub fn cmux_config_path() -> Result<PathBuf> {
         return Ok(p.into());
     }
     Ok(home_dir()?.join(".config/cmux/cmux.json"))
-}
-
-/// `$SESSIONSNAP_SKILLS_DIR`, else `~/.claude/skills`.
-pub fn skills_dir() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("SESSIONSNAP_SKILLS_DIR") {
-        return Ok(p.into());
-    }
-    Ok(home_dir()?.join(".claude/skills"))
-}
-
-pub fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// Name of the workspace the palette commands open.
@@ -227,13 +216,6 @@ fn top_level_array(plain: &str, key: &str) -> Option<(usize, usize)> {
     None
 }
 
-pub fn install_skill(dir: &Path) -> Result<PathBuf> {
-    let path = dir.join("sessionsnap").join("SKILL.md");
-    std::fs::create_dir_all(dir.join("sessionsnap"))?;
-    std::fs::write(&path, SKILL)?;
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,13 +341,5 @@ mod tests {
         install_cmux(&cfg, "sessionsnap").unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
         assert_eq!(v["commands"].as_array().unwrap().len(), 5);
-    }
-
-    #[test]
-    fn installs_skill_and_quotes() {
-        let d = tempfile::tempdir().unwrap();
-        let p = install_skill(d.path()).unwrap();
-        assert!(std::fs::read_to_string(p).unwrap().contains("name: sessionsnap"));
-        assert_eq!(shell_quote("it's"), r"'it'\''s'");
     }
 }

@@ -5,9 +5,9 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use super::clean_title;
+use crate::adapters::home_dir;
 use crate::core::model::is_session_id;
 use crate::error::{Exit, failure};
-use crate::store::home_dir;
 
 /// cmux state-file versions sessionsnap understands.
 pub const KNOWN_VERSIONS: &[u64] = &[1];
@@ -152,7 +152,7 @@ mod tests {
     use crate::error::exit_of;
     use crate::testing::{A, B};
 
-    const FIXTURE: &str = include_str!("../../tests/fixtures/cmux-state.json");
+    const FIXTURE: &str = include_str!("../../../../tests/fixtures/cmux-state.json");
 
     #[test]
     fn parses_fixture_in_tab_order() {

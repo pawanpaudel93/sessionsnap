@@ -5,7 +5,8 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::runner::{Output, ProcessRunner, Runner};
-use super::{Backend, OpenState, state_file, tab_command, tree};
+use super::{Backend, OpenState, state_file, tree};
+use crate::adapters::agents::claude::tab_command;
 use crate::core::model::Tab;
 use crate::error::{Exit, failure};
 
@@ -160,7 +161,7 @@ pub fn find_ref(text: &str, kind: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmux::tree::TEST_TREE;
+    use crate::adapters::terminal::cmux::tree::TEST_TREE;
     use crate::error::exit_of;
     use crate::testing::A;
     use serde_json::json;
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn show_url_reuses_an_open_page() {
         let mut b = backend(true);
-        b.runner.tree = crate::cmux::tree::TEST_BROWSER_TREE;
+        b.runner.tree = crate::adapters::terminal::cmux::tree::TEST_BROWSER_TREE;
         assert_eq!(b.show_url(UI).unwrap(), "reused");
         let calls = b.runner.calls.borrow();
         let n = calls.len();

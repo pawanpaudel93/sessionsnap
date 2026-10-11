@@ -142,8 +142,8 @@ fn same(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude::Claude;
-    use crate::store::Store;
+    use crate::adapters::agents::claude::Claude;
+    use crate::adapters::store::fs::Store;
     use crate::testing::FakeBackend;
     use serde_json::json;
 

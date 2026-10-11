@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::claude::Claude;
-use crate::cmux::{OpenState, OpenTab, OpenWorkspace};
+use crate::adapters::agents::claude::Claude;
+use crate::adapters::terminal::cmux::{OpenState, OpenTab, OpenWorkspace};
 use crate::core::model::{Tab, Workspace, find_by_name};
 
 /// Turns open workspaces (all, or those named in `only`) into snapshot workspaces. Claude tabs

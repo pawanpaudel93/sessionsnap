@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::claude::Claude;
+use crate::adapters::agents::claude::Claude;
 
 pub const A: &str = "11111111-1111-4111-8111-111111111111";
 pub const B: &str = "22222222-2222-4222-8222-222222222222";
@@ -23,8 +23,13 @@ pub fn write_transcript(claude_root: &Path, cwd: &str, id: &str, title: &str) ->
 }
 
 /// An open workspace with ref "workspace:<id>"; tabs are (title, cwd, session).
-pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str>)]) -> crate::cmux::OpenWorkspace {
-    crate::cmux::OpenWorkspace {
+pub fn open_ws(
+    id: &str,
+    name: &str,
+    cwd: &str,
+    tabs: &[(&str, &str, Option<&str>)],
+) -> crate::adapters::terminal::cmux::OpenWorkspace {
+    crate::adapters::terminal::cmux::OpenWorkspace {
         id: id.to_string(),
         reference: Some(format!("workspace:{id}")),
         name: name.to_string(),
@@ -33,7 +38,7 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
         tabs: tabs
             .iter()
             .enumerate()
-            .map(|(i, (title, cwd, session))| crate::cmux::OpenTab {
+            .map(|(i, (title, cwd, session))| crate::adapters::terminal::cmux::OpenTab {
                 reference: Some(format!("surface:{id}-{i}")),
                 title: title.to_string(),
                 cwd: cwd.to_string(),
@@ -46,7 +51,7 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
 /// In-memory cmux for tests. Clones share state, so a test can inspect it after handing one over.
 #[derive(Clone)]
 pub struct FakeBackend {
-    pub state: std::rc::Rc<std::cell::RefCell<crate::cmux::OpenState>>,
+    pub state: std::rc::Rc<std::cell::RefCell<crate::adapters::terminal::cmux::OpenState>>,
     pub log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub running: std::rc::Rc<std::cell::Cell<bool>>,
 }
@@ -54,7 +59,7 @@ pub struct FakeBackend {
 impl Default for FakeBackend {
     fn default() -> Self {
         FakeBackend {
-            state: std::rc::Rc::new(std::cell::RefCell::new(crate::cmux::OpenState {
+            state: std::rc::Rc::new(std::cell::RefCell::new(crate::adapters::terminal::cmux::OpenState {
                 live: true,
                 ..Default::default()
             })),
@@ -64,8 +69,8 @@ impl Default for FakeBackend {
     }
 }
 
-fn open_tab(t: &crate::core::model::Tab) -> crate::cmux::OpenTab {
-    crate::cmux::OpenTab {
+fn open_tab(t: &crate::core::model::Tab) -> crate::adapters::terminal::cmux::OpenTab {
+    crate::adapters::terminal::cmux::OpenTab {
         reference: None,
         title: t.title().to_string(),
         cwd: t.cwd().to_string(),
@@ -73,7 +78,7 @@ fn open_tab(t: &crate::core::model::Tab) -> crate::cmux::OpenTab {
     }
 }
 
-impl crate::cmux::Backend for FakeBackend {
+impl crate::adapters::terminal::cmux::Backend for FakeBackend {
     fn is_running(&self) -> bool {
         self.running.get()
     }
@@ -83,7 +88,7 @@ impl crate::cmux::Backend for FakeBackend {
         Ok(())
     }
 
-    fn read_open_state(&self) -> anyhow::Result<crate::cmux::OpenState> {
+    fn read_open_state(&self) -> anyhow::Result<crate::adapters::terminal::cmux::OpenState> {
         Ok(self.state.borrow().clone())
     }
 
