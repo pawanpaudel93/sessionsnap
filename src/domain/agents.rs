@@ -81,9 +81,10 @@ pub fn find_session(
     }
     let histories: Vec<_> = agents.histories().into_iter().filter(|h| agents.valid_id(h.agent(), session_id)).collect();
     if histories.is_empty() {
+        let names: Vec<String> = agents.histories().iter().map(|h| agents.display_name(h.agent())).collect();
         return Err(failure(
             Exit::Error,
-            format!("'{session_id}' is not a session ID (a UUID); give --agent for other agents"),
+            format!("'{session_id}' is not a {} session ID; give --agent for other agents", names.join(" or ")),
         ));
     }
     let mut hits = vec![];

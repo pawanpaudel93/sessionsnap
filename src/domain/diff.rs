@@ -118,5 +118,11 @@ mod tests {
         assert!(c.contains(&Change::TabAdded { workspace: "Beta".into(), title: "three".into() }));
         assert_eq!(summary(&c), "+1 workspace, -1 workspace, +1 tab, 1 tab moved, 1 tab renamed");
         assert_eq!(summary(&diff(&a, &a)), "no changes");
+        // Changed launch flags show as a changed tab.
+        let mut flagged = a.clone();
+        if let Tab::Agent { args, .. } = &mut flagged[0].tabs[0] {
+            args.push("--model".into());
+        }
+        assert_eq!(summary(&diff(&a, &flagged)), "+1 tab, -1 tab");
     }
 }

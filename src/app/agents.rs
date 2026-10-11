@@ -3,7 +3,8 @@
 use serde::Serialize;
 
 use super::Ctx;
-use crate::adapters::agents::registry::{AGENTS, Support};
+use crate::adapters::agents::registry::AGENTS;
+pub use crate::adapters::agents::registry::Support;
 
 /// One registry entry as `sessionsnap agents` shows it.
 #[derive(Debug, Clone, Serialize)]

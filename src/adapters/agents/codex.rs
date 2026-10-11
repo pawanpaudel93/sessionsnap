@@ -97,7 +97,7 @@ impl Codex {
             }
         }
         let internal = match (home_dir(), &cwd) {
-            (Ok(home), Some(c)) => c.starts_with(&format!("{}/.codex", home.to_string_lossy())),
+            (Ok(home), Some(c)) => Path::new(c).starts_with(home.join(".codex")),
             _ => false,
         };
         let modified =
@@ -310,6 +310,15 @@ mod tests {
         );
         let recoverable: Vec<bool> = ids.iter().map(|id| c.find(id).unwrap().unwrap().recoverable).collect();
         assert_eq!(recoverable, [false, false, true, false]);
+        // A sibling folder that only starts like ~/.codex is not Codex's own.
+        let sibling = "11111111-1111-4111-8111-11111111111e";
+        let cwd = format!("{home}/.codexfoo/x");
+        write(
+            d.path(),
+            sibling,
+            &[json!({"type": "session_meta", "payload": {"id": sibling, "cwd": cwd, "source": "cli"}}), user("x")],
+        );
+        assert!(Codex::new(d.path()).find(sibling).unwrap().unwrap().recoverable);
     }
 
     #[test]

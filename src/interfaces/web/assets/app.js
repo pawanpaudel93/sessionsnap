@@ -213,9 +213,13 @@ async function loadAgents() {
 function agentName(kind) { return (agentInfo && agentInfo[kind] && agentInfo[kind].name) || kind; }
 // Claude Code and Codex have their own icons; every other agent shares one.
 function agentIcon(kind) { return kind === "claude" || kind === "codex" ? kind : "agent"; }
+// A word as the shell would need it, like the resume command quotes it.
+function shellWord(w) {
+  return /^[A-Za-z0-9_./:@%+,=-]+$/.test(w) && !/^[=~]/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`;
+}
 function kindOf(t) {
   if (t.type === "agent") {
-    const flags = t.args && t.args.length ? ` · flags: ${t.args.join(" ")}` : "";
+    const flags = t.args && t.args.length ? ` · flags: ${t.args.map(shellWord).join(" ")}` : "";
     return `${agentName(t.agent)} session${flags}`;
   }
   return t.command ? `Runs: ${t.command}` : "Shell";

@@ -130,10 +130,11 @@ impl Tab {
         fields.into_iter().find(|(_, v)| has_control(v)).map(|(name, _)| name)
     }
 
-    /// Identity used by diffs: the session for agent tabs, folder + command for terminals.
+    /// Identity used by diffs: the session and its flags for agent tabs (so a change of flags shows
+    /// as a changed tab), folder + command for terminals.
     pub fn key(&self) -> String {
         match self {
-            Tab::Agent { agent, session_id, .. } => format!("agent:{agent}:{session_id}"),
+            Tab::Agent { agent, session_id, args, .. } => format!("agent:{agent}:{session_id}|{}", args.join("\u{1f}")),
             Tab::Terminal { cwd, command, .. } => format!("terminal:{cwd}|{}", command.as_deref().unwrap_or("")),
         }
     }

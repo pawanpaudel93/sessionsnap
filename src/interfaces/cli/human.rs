@@ -2,8 +2,7 @@
 
 use serde_json::Value;
 
-use crate::adapters::agents::registry::Support;
-use crate::app::agents::AgentStatus;
+use crate::app::agents::{AgentStatus, Support};
 use crate::domain::diff::Change;
 use crate::domain::model::{SessionRef, Tab, Version, tab_count};
 use crate::ports::SessionInfo;

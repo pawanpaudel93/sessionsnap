@@ -454,6 +454,8 @@ mod tests {
         };
         apply_ops(&mut ws, &[add(B, None)], &ctx).unwrap();
         assert_eq!(ws[1].tabs.last().unwrap(), &agent_tab("codex", "codex two", "/w/b", B));
+        let err = apply_ops(&mut ws, &[add("nope", None)], &ctx).unwrap_err();
+        assert!(err.to_string().contains("is not a Claude Code or Codex session ID; give --agent"), "{err}");
         // In both histories: ambiguous without --agent.
         let err = apply_ops(&mut ws, &[add(C, None)], &ctx).unwrap_err();
         assert!(err.to_string().contains("claude, codex"), "{err}");
