@@ -243,6 +243,33 @@ impl Outcome {
     }
 }
 
+/// The JSON printed for an error under `--json`.
+pub fn error_json(e: &anyhow::Error) -> Value {
+    let exit = exit_of(e);
+    json!({"error": {"code": exit.name(), "exit": exit.code(), "message": format!("{e:#}")}})
+}
+
+/// Runs `ccsnap <args> --json` in-process: the exit and the JSON the binary would print.
+/// `make_ctx` builds the context from the parsed flags (the web UI passes its own).
+pub fn run_json(args: &[String], make_ctx: impl FnOnce(&Cli) -> anyhow::Result<Ctx>) -> (Exit, Value) {
+    let mut argv = vec!["ccsnap".to_string()];
+    argv.extend(args.iter().cloned());
+    if !args.iter().any(|a| a == "--json") {
+        argv.push("--json".to_string());
+    }
+    let cli = match Cli::try_parse_from(argv) {
+        Ok(cli) => cli,
+        Err(e) => {
+            let exit = Exit::Error;
+            return (exit, json!({"error": {"code": exit.name(), "exit": exit.code(), "message": e.to_string()}}));
+        }
+    };
+    match make_ctx(&cli).and_then(|ctx| run::dispatch(&ctx, cli.command)) {
+        Ok(o) => (o.exit, o.json),
+        Err(e) => (exit_of(&e), error_json(&e)),
+    }
+}
+
 pub fn main_entry() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -267,10 +294,7 @@ pub fn main_entry() -> ExitCode {
         Err(e) => {
             let exit = exit_of(&e);
             if json {
-                println!(
-                    "{}",
-                    json!({"error": {"code": exit.name(), "exit": exit.code(), "message": format!("{e:#}")}})
-                );
+                println!("{}", error_json(&e));
             } else {
                 eprintln!("ccsnap: {e:#}");
             }
