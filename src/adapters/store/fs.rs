@@ -172,6 +172,9 @@ impl Store {
     /// Writes the next version of `name` and returns it.
     pub fn save_new(&self, name: &str, message: &str, source: Source, workspaces: Vec<Workspace>) -> Result<Version> {
         validate_name(name)?;
+        // Names ignore case, as macOS folders do: "Main" adds to an existing "main".
+        let existing = self.list()?.into_iter().find(|n| n.eq_ignore_ascii_case(name));
+        let name = existing.as_deref().unwrap_or(name);
         make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -244,6 +247,16 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = Store::new(d.path());
         (d, s)
+    }
+
+    /// macOS folders ignore case, so "Main" would land in "main"'s folder: keep the existing name.
+    #[test]
+    fn saving_under_another_case_keeps_the_existing_name() {
+        let (_d, s) = store();
+        s.save_new("main", "m", Source::default(), vec![ws("A")]).unwrap();
+        let v = s.save_new("Main", "m", Source::default(), vec![ws("A")]).unwrap();
+        assert_eq!((v.snapshot.as_str(), v.version), ("main", 2));
+        assert_eq!(s.list().unwrap(), vec!["main".to_string()]);
     }
 
     /// Snapshots hold launch flags and session IDs: only the owner may read them.
