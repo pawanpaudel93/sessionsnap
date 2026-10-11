@@ -17,18 +17,20 @@ const UNREACHABLE: [i32; 5] = [5, 6, 7, 28, 35];
 pub struct GitHubReleases {
     /// "owner/name".
     pub repo: String,
+    /// The curl program (tests point it at a fake).
+    pub curl: String,
 }
 
 impl GitHubReleases {
     pub fn new(repo: &str) -> Self {
-        GitHubReleases { repo: repo.to_string() }
+        GitHubReleases { repo: repo.to_string(), curl: "curl".to_string() }
     }
 }
 
 impl Releases for GitHubReleases {
     fn latest_tag(&self) -> Result<Option<String>> {
         let api = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
-        let (code, body) = curl(&[
+        let (code, body) = self.curl(&[
             "-fsSL",
             "--connect-timeout",
             "15",
@@ -45,7 +47,7 @@ impl Releases for GitHubReleases {
         }
         // API rate-limited or blocked: GitHub's releases/latest page redirects to the tag.
         let page = format!("https://github.com/{}/releases/latest", self.repo);
-        let (code, url) = curl(&[
+        let (code, url) = self.curl(&[
             "-fsSLI",
             "--connect-timeout",
             "15",
@@ -65,7 +67,7 @@ impl Releases for GitHubReleases {
 
     fn download(&self, url: &str, dest: &Path) -> Result<()> {
         let dest = dest.to_string_lossy();
-        let (code, _) = curl(&["-fsSL", "--retry", "3", "--connect-timeout", "15", "-o", &dest, url])?;
+        let (code, _) = self.curl(&["-fsSL", "--retry", "3", "--connect-timeout", "15", "-o", &dest, url])?;
         if code != 0 {
             bail!("download failed (curl exit {code}): {url}");
         }
@@ -102,10 +104,12 @@ impl Releases for GitHubReleases {
     }
 }
 
-/// Runs curl; its exit code (-1 when killed) and stdout.
-fn curl(args: &[&str]) -> Result<(i32, String)> {
-    let out = Command::new("curl").args(args).output().context("run curl")?;
-    Ok((out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned()))
+impl GitHubReleases {
+    /// Runs curl; its exit code (-1 when killed) and stdout.
+    fn curl(&self, args: &[&str]) -> Result<(i32, String)> {
+        let out = Command::new(&self.curl).args(args).output().context("run curl")?;
+        Ok((out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned()))
+    }
 }
 
 /// `tag_name` from the GitHub API's release JSON.
@@ -155,5 +159,43 @@ mod checksum_tests {
         std::fs::write(&f, "abc").unwrap();
         let got = GitHubReleases::new("o/r").sha256(&f).unwrap();
         assert_eq!(got, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+
+    /// A fake curl: the API call prints `api_out` and exits `api_code`; the redirect check prints
+    /// `page_out` and exits `page_code`.
+    fn fake(dir: &Path, api: (&str, i32), page: (&str, i32)) -> GitHubReleases {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("curl");
+        let body = format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *api.github.com*) printf '%s' '{}'; exit {} ;;\n  *) printf '%s' '{}'; exit {} ;;\nesac\n",
+            api.0, api.1, page.0, page.1
+        );
+        std::fs::write(&script, body).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        GitHubReleases { repo: "o/r".into(), curl: script.display().to_string() }
+    }
+
+    #[test]
+    fn latest_tag_from_the_api_then_the_redirect() {
+        let d = tempfile::tempdir().unwrap();
+        let tag = |api, page| fake(d.path(), api, page).latest_tag().map_err(|e| e.to_string());
+        let page = "https://github.com/o/r/releases/tag/v0.3.0";
+        assert_eq!(tag((r#"{"tag_name":"v0.2.0"}"#, 0), ("", 0)), Ok(Some("v0.2.0".into())));
+        // Rate-limited or blocked API: the redirect decides.
+        assert_eq!(tag(("", 22), (page, 0)), Ok(Some("v0.3.0".into())));
+        assert_eq!(tag((r#"{"message":"rate limit"}"#, 0), (page, 0)), Ok(Some("v0.3.0".into())));
+        // No release yet, or a private repo (404): none.
+        assert_eq!(tag(("", 22), ("https://github.com/o/r/releases", 0)), Ok(None));
+        assert_eq!(tag(("", 22), ("", 22)), Ok(None));
+        // No network.
+        let err = tag(("", 6), ("", 6)).unwrap_err();
+        assert!(err.contains("can't reach GitHub"), "{err}");
+    }
+
+    #[test]
+    fn download_failure_names_the_url() {
+        let d = tempfile::tempdir().unwrap();
+        let err = fake(d.path(), ("", 22), ("", 22)).download("https://x/y.tar.gz", &d.path().join("y")).unwrap_err();
+        assert!(err.to_string().contains("https://x/y.tar.gz"), "{err}");
     }
 }
