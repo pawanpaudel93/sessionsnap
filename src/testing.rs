@@ -99,7 +99,7 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
                 cwd: cwd.to_string(),
                 agent: session.map(|s| {
                     let (kind, sid) = s.split_once(':').unwrap_or(("claude", s));
-                    AgentRef { kind: kind.into(), session_id: sid.into(), args: vec![] }
+                    AgentRef { kind: kind.into(), session_id: sid.into(), args: vec![], alt_session_id: None }
                 }),
             })
             .collect(),
@@ -135,7 +135,12 @@ pub fn resumed_session(command: &str) -> Option<AgentRef> {
     if words.len() < n + 2 || words[1..=n] != *spec.resume {
         return None;
     }
-    Some(AgentRef { kind: spec.kind.into(), session_id: words[n + 1].clone(), args: words[n + 2..].to_vec() })
+    Some(AgentRef {
+        kind: spec.kind.into(),
+        session_id: words[n + 1].clone(),
+        args: words[n + 2..].to_vec(),
+        alt_session_id: None,
+    })
 }
 
 /// Splits a command line made of plain words, single-quoted parts and `\'`.

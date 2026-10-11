@@ -157,6 +157,7 @@ mod tests {
                 kind: kind.into(),
                 session_id: id.into(),
                 args: args.iter().map(|a| a.to_string()).collect(),
+                alt_session_id: None,
             }),
         };
         open.workspaces[1].tabs = vec![tab("codex", B, &["-a", "on-request"]), tab("aider", C, &["--x"])];
@@ -191,7 +192,12 @@ mod tests {
             reference: None,
             title: "bad".into(),
             cwd: "/w/b".into(),
-            agent: Some(AgentRef { kind: "codex".into(), session_id: A.into(), args: vec!["\u{3}x\r".into()] }),
+            agent: Some(AgentRef {
+                kind: "codex".into(),
+                session_id: A.into(),
+                args: vec!["\u{3}x\r".into()],
+                alt_session_id: None,
+            }),
         }];
         let (ws, notes) = capture(&open, &history, &[]).unwrap();
         assert_eq!(ws[1].tabs, [Tab::Terminal { title: "bad".into(), cwd: "/w/b".into(), command: None }]);

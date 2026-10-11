@@ -134,23 +134,24 @@ fn parse_panel(p: &Value) -> Option<FilePanel> {
     }
     let term = p.get("terminal");
     let agent = term.and_then(|t| t.get("agent")).filter(|a| s(a, "kind").is_some() && s(a, "sessionId").is_some());
-    let from_agent = agent.map(|a| AgentRef {
-        kind: s(a, "kind").unwrap_or_default(),
-        session_id: s(a, "sessionId").unwrap_or_default(),
-        args: a
-            .pointer("/launchCommand/arguments")
-            .and_then(Value::as_array)
-            .map(|args| args.iter().skip(1).filter_map(Value::as_str).map(str::to_string).collect())
-            .unwrap_or_default(),
-    });
-    let from_binding = || {
-        let b = term.and_then(|t| t.get("resumeBinding"))?;
+    let binding = term.and_then(|t| t.get("resumeBinding")).and_then(|b| {
         Some(AgentRef {
             kind: s(b, "kind")?,
             session_id: s(b, "checkpointId").or_else(|| s(b, "sessionId"))?,
             args: vec![],
+            alt_session_id: None,
         })
-    };
+    });
+    let from_agent = agent.map(|a| {
+        let kind = s(a, "kind").unwrap_or_default();
+        let session_id = s(a, "sessionId").unwrap_or_default();
+        // The binding's ID for the same agent, in case the agent record's ID turns out invalid.
+        let alt_session_id = binding
+            .as_ref()
+            .filter(|b| b.kind.eq_ignore_ascii_case(&kind) && b.session_id != session_id)
+            .map(|b| b.session_id.clone());
+        AgentRef { kind, session_id, args: launch_args(a), alt_session_id }
+    });
     let cwd = agent
         .and_then(|a| s(a, "workingDirectory"))
         .or_else(|| s(p, "directory"))
@@ -160,8 +161,16 @@ fn parse_panel(p: &Value) -> Option<FilePanel> {
         tty: s(p, "ttyName"),
         title: s(p, "title").unwrap_or_default(),
         cwd,
-        agent: from_agent.or_else(from_binding),
+        agent: from_agent.or(binding),
     })
+}
+
+/// `launchCommand.arguments` after the program; none at all when one of them is not a string
+/// (dropping just that one would shift flags and their values).
+fn launch_args(agent: &Value) -> Vec<String> {
+    let Some(args) = agent.pointer("/launchCommand/arguments").and_then(Value::as_array) else { return vec![] };
+    let strings: Option<Vec<String>> = args.iter().skip(1).map(|a| a.as_str().map(str::to_string)).collect();
+    strings.unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -190,7 +199,10 @@ mod tests {
         assert_eq!(alpha.panels[0].agent, None);
         // resumeBinding fallback, even with autoResume false (cmux #13021)
         let beta = &ws[1].panels;
-        assert_eq!(beta[0].agent, Some(AgentRef { kind: "claude".into(), session_id: B.into(), args: vec![] }));
+        assert_eq!(
+            beta[0].agent,
+            Some(AgentRef { kind: "claude".into(), session_id: B.into(), args: vec![], alt_session_id: None })
+        );
         // Any agent kind, with its launch flags (the program is left out).
         assert_eq!(
             beta[1].agent,
@@ -198,6 +210,7 @@ mod tests {
                 kind: "codex".into(),
                 session_id: CODEX.into(),
                 args: ["-a", "on-request", "-s", "workspace-write"].map(String::from).to_vec(),
+                alt_session_id: None,
             })
         );
         assert_eq!(beta[1].cwd, "/w/beta/api");
@@ -205,6 +218,25 @@ mod tests {
         assert_eq!(beta[2].agent.as_ref().map(|a| (a.kind.as_str(), a.session_id.as_str())), Some(("aider", "chat-7")));
         // An agent record without a session ID is no agent.
         assert_eq!(beta[3].agent, None);
+    }
+
+    #[test]
+    fn keeps_the_binding_id_and_ignores_odd_arguments() {
+        let text = r#"{"version": 1, "windows": [{"tabManager": {"workspaces": [{"workspaceId": "W", "panels": [
+            {"id": "P1", "type": "terminal", "terminal": {
+              "agent": {"kind": "claude", "sessionId": "not-a-uuid", "launchCommand": {"arguments": ["claude", "--model", 5, "opus"]}},
+              "resumeBinding": {"kind": "claude", "checkpointId": "11111111-1111-4111-8111-111111111111"}}},
+            {"id": "P2", "type": "terminal", "terminal": {
+              "resumeBinding": {"kind": "opencode", "sessionId": "ses_1", "source": "agent-hook"}}}
+        ]}]}}]}"#;
+        let (_, ws) = parse(text).unwrap();
+        let a = ws[0].panels[0].agent.clone().unwrap();
+        assert_eq!(a.session_id, "not-a-uuid");
+        assert_eq!(a.alt_session_id.as_deref(), Some(A));
+        assert!(a.args.is_empty(), "a non-string argument drops them all: {:?}", a.args);
+        // A binding alone (any kind) is an agent too.
+        let b = ws[0].panels[1].agent.clone().unwrap();
+        assert_eq!((b.kind.as_str(), b.session_id.as_str()), ("opencode", "ses_1"));
     }
 
     #[test]

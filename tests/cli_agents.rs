@@ -16,6 +16,7 @@ fn codex_tab(title: &str, id: &str, args: &[&str]) -> OpenTab {
             kind: "codex".into(),
             session_id: id.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
+            alt_session_id: None,
         }),
     }
 }

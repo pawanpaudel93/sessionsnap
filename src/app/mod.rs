@@ -68,7 +68,8 @@ pub fn load_normalized(
 }
 
 /// What is open in the terminal, with each agent named by its registry kind (cmux may report an
-/// alias or program name), so tabs match saved sessions by (agent, ID).
+/// alias or program name), so tabs match saved sessions by (agent, ID); an invalid ID is replaced by
+/// the terminal's other record of it when that one is valid.
 pub fn read_open(terminal: &dyn Terminal) -> anyhow::Result<OpenState> {
     let mut open = terminal.read_open_state()?;
     for tab in open.workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
@@ -76,7 +77,37 @@ pub fn read_open(terminal: &dyn Terminal) -> anyhow::Result<OpenState> {
             && let Some(spec) = Agents::spec(&a.kind)
         {
             a.kind = spec.kind.to_string();
+            // The terminal's other record of the session, when its first one is no valid ID.
+            if !spec.valid_id(&a.session_id)
+                && let Some(alt) = a.alt_session_id.take().filter(|alt| spec.valid_id(alt))
+            {
+                a.session_id = alt;
+            }
         }
     }
     Ok(open)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::AgentRef;
+    use crate::testing::{A, FakeTerminal, open_ws};
+
+    #[test]
+    fn open_tabs_get_registry_kinds_and_valid_ids() {
+        let fake = FakeTerminal::default();
+        let mut ws = open_ws("W", "W", "/w", &[("a", "/w", Some("agy:c1")), ("b", "/w", Some("claude:bad"))]);
+        ws.tabs[1].agent = Some(AgentRef {
+            kind: "Claude".into(),
+            session_id: "bad".into(),
+            args: vec![],
+            alt_session_id: Some(A.into()),
+        });
+        fake.state.borrow_mut().workspaces = vec![ws];
+        let open = read_open(&fake).unwrap();
+        let agents: Vec<_> = open.workspaces[0].tabs.iter().map(|t| t.agent.clone().unwrap()).collect();
+        assert_eq!((agents[0].kind.as_str(), agents[0].session_id.as_str()), ("antigravity", "c1"));
+        assert_eq!((agents[1].kind.as_str(), agents[1].session_id.as_str()), ("claude", A));
+    }
 }

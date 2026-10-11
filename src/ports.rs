@@ -49,6 +49,9 @@ pub struct AgentRef {
     pub session_id: String,
     /// The flags the agent was started with (without the program).
     pub args: Vec<String>,
+    /// Another ID the terminal recorded for this session (cmux's resume binding), used when
+    /// `session_id` is not a valid ID of the agent.
+    pub alt_session_id: Option<String>,
 }
 
 impl OpenTab {
