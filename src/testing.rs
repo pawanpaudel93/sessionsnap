@@ -81,12 +81,13 @@ impl Default for FakeTerminal {
     }
 }
 
-fn open_tab(t: &crate::domain::model::Tab) -> crate::ports::OpenTab {
+/// The tab a terminal shows after running `t`; a resume command opens its session.
+fn open_tab(t: &crate::ports::LaunchTab) -> crate::ports::OpenTab {
     crate::ports::OpenTab {
         reference: None,
-        title: t.title().to_string(),
-        cwd: t.cwd().to_string(),
-        session_id: t.session_id().map(str::to_string),
+        title: t.title.clone(),
+        cwd: t.cwd.clone(),
+        session_id: t.command.as_deref().and_then(|c| c.strip_prefix("claude --resume ")).map(str::to_string),
     }
 }
 
@@ -104,7 +105,7 @@ impl crate::ports::Terminal for FakeTerminal {
         Ok(self.state.borrow().clone())
     }
 
-    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::domain::model::Tab]) -> anyhow::Result<String> {
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::ports::LaunchTab]) -> anyhow::Result<String> {
         self.log.borrow_mut().push(format!("create {name} {}", tabs.len()));
         let mut state = self.state.borrow_mut();
         let id = format!("NEW{}", state.workspaces.len());
@@ -114,8 +115,8 @@ impl crate::ports::Terminal for FakeTerminal {
         Ok(format!("workspace:{id}"))
     }
 
-    fn add_tab(&self, workspace_ref: &str, tab: &crate::domain::model::Tab) -> anyhow::Result<()> {
-        self.log.borrow_mut().push(format!("add {workspace_ref} {}", tab.title()));
+    fn add_tab(&self, workspace_ref: &str, tab: &crate::ports::LaunchTab) -> anyhow::Result<()> {
+        self.log.borrow_mut().push(format!("add {workspace_ref} {}", tab.title));
         let mut state = self.state.borrow_mut();
         let ws = state
             .workspaces

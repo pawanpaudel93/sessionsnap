@@ -4,11 +4,13 @@
 use anyhow::Result;
 
 use super::Ctx;
+use crate::adapters::agents::claude::tab_command;
 use crate::adapters::store::Store;
+use crate::domain::model::Tab;
 use crate::domain::model::{Workspace, parse_ref};
 use crate::domain::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
 use crate::error::{Exit, failure};
-use crate::ports::{OpenState, SessionHistory, SessionInfo, Terminal};
+use crate::ports::{LaunchTab, OpenState, SessionHistory, SessionInfo, Terminal};
 
 /// Restoring a snapshot (`<name>[@v]`), limited to these workspaces and tabs (none = all).
 pub fn snapshot_source(ctx: &Ctx, snapshot: &str, workspaces: Vec<String>, tabs: Vec<String>) -> Result<PlanSource> {
@@ -100,13 +102,13 @@ pub fn apply_plan(
         match action {
             Action::CreateWorkspace { name, cwd, tabs } => steps.push(step(
                 format!("create workspace {name} with {} tab(s)", tabs.len()),
-                terminal.create_workspace(name, cwd, tabs).map(|_| ()),
+                terminal.create_workspace(name, cwd, &tabs.iter().map(launch_tab).collect::<Vec<_>>()).map(|_| ()),
             )),
             Action::AddTabs { workspace_ref, workspace_name, tabs } => {
                 for tab in tabs {
                     steps.push(step(
                         format!("add {} to {workspace_name}", tab.title()),
-                        terminal.add_tab(workspace_ref, tab),
+                        terminal.add_tab(workspace_ref, &launch_tab(tab)),
                     ));
                 }
             }
@@ -114,6 +116,11 @@ pub fn apply_plan(
     }
     store.remove_plan(&plan.plan_id);
     Ok(steps)
+}
+
+/// What the terminal opens for a saved tab: the agent's resume command, or the terminal's command.
+pub fn launch_tab(tab: &Tab) -> LaunchTab {
+    LaunchTab { title: tab.title().to_string(), cwd: tab.cwd().to_string(), command: tab_command(tab) }
 }
 
 fn step(description: String, result: Result<()>) -> ApplyStep {

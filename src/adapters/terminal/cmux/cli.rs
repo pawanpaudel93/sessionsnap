@@ -6,10 +6,8 @@ use serde_json::{Value, json};
 
 use super::runner::{Output, ProcessRunner, Runner};
 use super::{state_file, tree};
-use crate::adapters::agents::claude::tab_command;
-use crate::domain::model::Tab;
 use crate::error::{Exit, failure};
-use crate::ports::{OpenState, Terminal};
+use crate::ports::{LaunchTab, OpenState, Terminal};
 
 /// The cmux terminal: reads state from the `cmux` CLI and the state file, opens tabs via the CLI.
 pub struct CmuxCli<R: Runner> {
@@ -88,18 +86,19 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         Ok(OpenState { live: true, state_version: Some(version), workspaces: tree::join(tree, &file) })
     }
 
-    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[Tab]) -> Result<String> {
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {
         let layout = layout_json(tabs);
         let out = self.cmux_ok(&["new-workspace", "--name", name, "--cwd", cwd, "--layout", layout.as_str()])?;
         find_ref(&out, "workspace")
             .ok_or_else(|| failure(Exit::Error, format!("cmux new-workspace printed no workspace ref: {}", out.trim())))
     }
 
-    fn add_tab(&self, workspace_ref: &str, tab: &Tab) -> Result<()> {
-        let out = self.cmux_ok(&["new-surface", "--workspace", workspace_ref, "--working-directory", tab.cwd()])?;
+    fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()> {
+        let out =
+            self.cmux_ok(&["new-surface", "--workspace", workspace_ref, "--working-directory", tab.cwd.as_str()])?;
         let surface = find_ref(&out, "surface")
             .ok_or_else(|| failure(Exit::Error, format!("cmux new-surface printed no surface ref: {}", out.trim())))?;
-        if let Some(command) = tab_command(tab) {
+        if let Some(command) = &tab.command {
             // `cmux send` turns the two characters \n into Enter.
             let text = format!("{command}\\n");
             self.cmux_ok(&["send", "--workspace", workspace_ref, "--surface", surface.as_str(), "--", text.as_str()])?;
@@ -111,7 +110,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             "--surface",
             surface.as_str(),
             "--title",
-            tab.title(),
+            tab.title.as_str(),
         ])?;
         Ok(())
     }
@@ -137,12 +136,12 @@ impl<R: Runner> Terminal for CmuxCli<R> {
 }
 
 /// `--layout` JSON for `cmux new-workspace`: one pane holding every tab.
-pub fn layout_json(tabs: &[Tab]) -> String {
+pub fn layout_json(tabs: &[LaunchTab]) -> String {
     let surfaces: Vec<Value> = tabs
         .iter()
         .map(|t| {
-            let mut s = json!({"type": "terminal", "name": t.title(), "cwd": t.cwd()});
-            if let Some(command) = tab_command(t) {
+            let mut s = json!({"type": "terminal", "name": t.title, "cwd": t.cwd});
+            if let Some(command) = &t.command {
                 s["command"] = json!(command);
             }
             s
@@ -203,6 +202,10 @@ mod tests {
             state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
             launch_timeout: Duration::from_millis(10),
         }
+    }
+
+    fn launch(title: &str, cwd: &str, command: Option<&str>) -> LaunchTab {
+        LaunchTab { title: title.into(), cwd: cwd.into(), command: command.map(str::to_string) }
     }
 
     const UI: &str = "http://127.0.0.1:47317/#t=abc";
@@ -267,8 +270,8 @@ mod tests {
     fn create_workspace_sends_layout_and_returns_ref() {
         let b = backend(true);
         let tabs = vec![
-            Tab::Claude { title: "fix login".into(), cwd: "/w/alpha/sub".into(), session_id: A.into() },
-            Tab::Terminal { title: "zsh".into(), cwd: "/w/alpha".into(), command: None },
+            launch("fix login", "/w/alpha/sub", Some(&format!("claude --resume {A}"))),
+            launch("zsh", "/w/alpha", None),
         ];
         assert_eq!(b.create_workspace("Alpha", "/w/alpha", &tabs).unwrap(), "workspace:12");
         let calls = b.runner.calls.borrow();
@@ -286,8 +289,7 @@ mod tests {
     #[test]
     fn add_tab_creates_surface_then_sends_and_renames() {
         let b = backend(true);
-        let tab = Tab::Claude { title: "fix login".into(), cwd: "/w/alpha/sub".into(), session_id: A.into() };
-        b.add_tab("workspace:1", &tab).unwrap();
+        b.add_tab("workspace:1", &launch("fix login", "/w/alpha/sub", Some(&format!("claude --resume {A}")))).unwrap();
         let calls = b.runner.calls.borrow();
         let send = format!("claude --resume {A}\\n");
         assert_eq!(

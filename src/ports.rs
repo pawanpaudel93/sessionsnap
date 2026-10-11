@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::domain::model::{Tab, Version};
+use crate::domain::model::Version;
 
 /// What is open in the terminal.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -48,6 +48,15 @@ impl OpenState {
     }
 }
 
+/// A tab for the terminal to open. `command` is a complete command line, already quoted for the
+/// shell; the terminal runs it as is and never builds one itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaunchTab {
+    pub title: String,
+    pub cwd: String,
+    pub command: Option<String>,
+}
+
 /// What sessionsnap needs from a terminal. One implementation today:
 /// `adapters::terminal::cmux::cli::CmuxCli`.
 pub trait Terminal {
@@ -58,9 +67,9 @@ pub trait Terminal {
     /// Open workspaces and tabs: live when cmux runs, else from its state file only.
     fn read_open_state(&self) -> Result<OpenState>;
     /// Creates a workspace with these tabs; returns its ref (e.g. "workspace:12").
-    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[Tab]) -> Result<String>;
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String>;
     /// Adds one tab to an open workspace.
-    fn add_tab(&self, workspace_ref: &str, tab: &Tab) -> Result<()>;
+    fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()>;
     /// Shows `url` in cmux: points a browser already on its address (ignoring the `#` part)
     /// at it ("reused"), else adds a Dock browser tab ("dock"), else, with the Dock off, opens a
     /// browser tab ("tab").
