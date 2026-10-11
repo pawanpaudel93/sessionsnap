@@ -103,8 +103,20 @@ fn is_ours(command: &Value) -> bool {
 
 /// Backs `config` up next to itself, then replaces it with `text`; returns the backup's path.
 fn write_with_backup(config: &Path, text: &str) -> Result<PathBuf> {
-    let backup = config.with_file_name(format!("cmux.json.bak-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
-    std::fs::copy(config, &backup).with_context(|| format!("backing up {}", config.display()))?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    // A second edit within the same second gets its own name instead of overwriting the first.
+    let mut n = 1;
+    let (backup, mut out) = loop {
+        let name = if n == 1 { format!("cmux.json.bak-{stamp}") } else { format!("cmux.json.bak-{stamp}-{n}") };
+        let path = config.with_file_name(name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => break (path, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 100 => n += 1,
+            Err(e) => return Err(anyhow::Error::new(e).context(format!("backing up {}", config.display()))),
+        }
+    };
+    std::io::copy(&mut std::fs::File::open(config)?, &mut out)
+        .with_context(|| format!("backing up {}", config.display()))?;
     let tmp = config.with_extension("json.tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, config)?;
@@ -398,6 +410,18 @@ mod tests {
         assert!(!text.contains("sessionsnap:"), "{text}");
         let root: Value = serde_json::from_str(&strip_jsonc(&text)).unwrap();
         assert_eq!(root["commands"], json!([{"name": "Mine", "command": "ls"}]));
+    }
+
+    #[test]
+    fn backups_in_the_same_second_get_their_own_names() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("cmux.json");
+        std::fs::write(&cfg, "{}").unwrap();
+        let first = write_with_backup(&cfg, "{\"a\": 1}").unwrap();
+        let second = write_with_backup(&cfg, "{\"a\": 2}").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "{}");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "{\"a\": 1}");
     }
 
     #[test]
