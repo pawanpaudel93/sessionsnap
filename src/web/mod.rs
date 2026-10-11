@@ -3,7 +3,7 @@
 pub mod api;
 pub mod http;
 
-use std::io::{BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
@@ -38,11 +38,35 @@ pub fn serve(listener: TcpListener, server: &Server, make_ctx: &MakeCtx<'_>, idl
     }
 }
 
+/// Longest wait for one read; a client that sends nothing is dropped after this.
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
+/// Longest wait for one write; a client that stops reading is dropped after this.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Total time allowed to receive one request, however slowly the bytes arrive.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
+
+/// A stream whose reads fail with `TimedOut` once `until` has passed.
+struct Deadline<'a> {
+    stream: &'a TcpStream,
+    until: Instant,
+}
+
+impl Read for Deadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if Instant::now() >= self.until {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        self.stream.read(buf)
+    }
+}
+
 fn handle_connection(stream: &TcpStream, server: &Server, make_ctx: &MakeCtx<'_>) {
     // Accepted sockets inherit non-blocking mode on macOS.
     let _ = stream.set_nonblocking(false);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let response = match http::read_request(&mut BufReader::new(stream)) {
+    let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+    let reader = Deadline { stream, until: Instant::now() + REQUEST_DEADLINE };
+    let response = match http::read_request(&mut BufReader::new(reader)) {
         Ok(req) => server.handle(&req, make_ctx),
         Err(resp) => resp,
     };
@@ -166,5 +190,73 @@ mod tests {
         use clap::Parser;
         let cli = Cli::try_parse_from(["ccsnap", "ui", "--port", "5000", "--no-open"]).unwrap();
         assert!(matches!(cli.command, crate::cli::Command::Ui { port: 5000, idle_minutes: 30, no_open: true }));
+    }
+
+    fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + '_ {
+        move |cli, input| {
+            Ok(Ctx {
+                store: Store::new(dir.join("store")),
+                claude: Claude::new(dir.join("claude")),
+                backend: Box::new(FakeBackend::default()),
+                json: cli.json,
+                yes: cli.yes,
+                interactive: false,
+                input,
+            })
+        }
+    }
+
+    #[test]
+    fn a_silent_client_does_not_block_others() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server { port, token: "t".into() };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let silent = std::thread::spawn(move || {
+            let _s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            tx.send(()).unwrap();
+            let _ = done_rx.recv();
+        });
+        rx.recv().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(s, "GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
+            let mut out = String::new();
+            s.read_to_string(&mut out).unwrap();
+            out
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        let started = Instant::now();
+        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        let out = client.join().unwrap();
+        done_tx.send(()).unwrap();
+        silent.join().unwrap();
+        assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_slow_drip_client_is_cut_off_at_the_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server { port, token: "t".into() };
+        let drip = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            for _ in 0..14 {
+                if s.write_all(b"G").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        let started = Instant::now();
+        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        let took = started.elapsed();
+        drip.join().unwrap();
+        assert!(took < Duration::from_secs(8), "{took:?}");
     }
 }
