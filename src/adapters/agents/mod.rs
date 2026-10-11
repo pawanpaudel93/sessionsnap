@@ -4,6 +4,8 @@
 //! `interfaces`.
 
 pub mod claude;
+#[cfg(test)]
+mod contract;
 
 use anyhow::Result;
 

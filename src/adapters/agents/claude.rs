@@ -308,6 +308,23 @@ mod tests {
     }
 
     #[test]
+    fn meets_the_session_history_contract() {
+        let d = tempfile::tempdir().unwrap();
+        write_transcript(d.path(), "/w/a", A, "login fix");
+        let old = write_transcript(d.path(), "/w/b", B, "review");
+        crate::adapters::agents::contract::age(&old, Duration::from_secs(48 * 3600));
+        let fixture = crate::adapters::agents::contract::Fixture {
+            agent: "claude",
+            recent: A,
+            old: B,
+            unknown: "44444444-4444-4444-8444-444444444444",
+            cwd: "/w/a",
+            title: "login fix",
+        };
+        crate::adapters::agents::contract::check(&Claude::new(d.path()), &fixture);
+    }
+
+    #[test]
     fn installs_skill() {
         let d = tempfile::tempdir().unwrap();
         let p = install_skill(d.path()).unwrap();
