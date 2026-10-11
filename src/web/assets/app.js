@@ -26,15 +26,20 @@ const state = { view: "list", snapshot: null, tab: "edit", version: null, hours:
 const pending = new Map(); // snapshot name → unsaved edit ops, as `ccsnap edit --batch` takes them
 let dragged = null; // the tab being dragged: { ws, pos }
 
+// `reconnect`: the page has no usable key; render() then offers the Reconnect button.
 class CommandError extends Error {
-  constructor(message, exit) {
+  constructor(message, exit, reconnect = false) {
     super(message);
     this.exit = exit;
+    this.reconnect = reconnect;
   }
 }
 
+const START_HINT = "Start it with the palette command \"ccsnap: Open UI\" or `ccsnap ui`.";
+
 // Runs `ccsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
 async function ccsnap(args, input) {
+  if (!TOKEN) throw new CommandError("This page has no key yet.", 1, true);
   let r;
   try {
     r = await fetch("/api/run", {
@@ -43,10 +48,10 @@ async function ccsnap(args, input) {
       body: JSON.stringify(input === undefined ? { args } : { args, input }),
     });
   } catch {
-    throw new CommandError("The ccsnap UI server is not running. Start it with the palette command \"ccsnap: Open UI\" or `ccsnap ui`.", 1);
+    throw new CommandError(`The ccsnap UI server is not running. ${START_HINT}`, 1);
   }
   if (r.status === 401) {
-    throw new CommandError("The ccsnap UI was restarted. Run the palette command \"ccsnap: Open UI\" to reconnect this page.", 1);
+    throw new CommandError("The ccsnap UI was restarted, so this page's key is old.", 1, true);
   }
   if (!r.ok) throw new CommandError(await r.text(), 1);
   const body = await r.json();
@@ -108,8 +113,36 @@ async function render() {
   try {
     main.replaceChildren(await view());
   } catch (e) {
-    main.replaceChildren(h("p", { class: "error" }, e.message));
+    main.replaceChildren(e.reconnect ? reconnectView(e.message) : h("p", { class: "error" }, e.message));
   }
+}
+
+// Asks the running server to show this page with its key (POST /api/show needs none). The server
+// points this tab, or a Dock tab, at the keyed link; the hashchange handler then re-renders.
+function reconnectView(message) {
+  const status = h("p", { class: "muted" });
+  const button = h("button", { class: "primary", onclick: async () => {
+    button.disabled = true;
+    status.className = "muted";
+    status.textContent = "Asking the ccsnap UI to show this page…";
+    try {
+      let r;
+      try {
+        r = await fetch("/api/show", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      } catch {
+        throw new Error("The ccsnap UI server is not running.");
+      }
+      if (!r.ok) throw new Error(await r.text());
+      const { shown } = await r.json();
+      status.textContent = shown === "reused" ? "Reconnecting…" : `Opened the ccsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
+    } catch (e) {
+      status.className = "error";
+      status.textContent = `${e.message} ${START_HINT}`;
+    } finally {
+      button.disabled = false;
+    }
+  } }, "Reconnect");
+  return h("section", {}, h("p", { class: "error" }, message), h("div", { class: "row" }, button), status);
 }
 
 // ---- Snapshots ----
@@ -505,7 +538,7 @@ async function viewRecent() {
 }
 
 for (const b of document.querySelectorAll("nav button")) b.addEventListener("click", () => go(b.dataset.view));
-// "ccsnap: Open UI" points an open tab at the new key by changing only the fragment.
+// `ccsnap ui` and Reconnect point an open tab at the key by changing only the fragment.
 window.addEventListener("hashchange", () => {
   TOKEN = takeToken();
   render();

@@ -18,7 +18,7 @@ use api::{MakeCtx, Server};
 pub const DEFAULT_PORT: u16 = 47317;
 
 /// Answers requests one at a time until none has come for `idle`.
-pub fn serve(listener: TcpListener, server: &Server, make_ctx: &MakeCtx<'_>, idle: Duration) -> Result<()> {
+pub fn serve(listener: TcpListener, server: &Server<'_>, make_ctx: &MakeCtx<'_>, idle: Duration) -> Result<()> {
     listener.set_nonblocking(true)?;
     let mut last = Instant::now();
     loop {
@@ -60,7 +60,7 @@ impl Read for Deadline<'_> {
     }
 }
 
-fn handle_connection(stream: &TcpStream, server: &Server, make_ctx: &MakeCtx<'_>) {
+fn handle_connection(stream: &TcpStream, server: &Server<'_>, make_ctx: &MakeCtx<'_>) {
     // Accepted sockets inherit non-blocking mode on macOS.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
@@ -74,15 +74,37 @@ fn handle_connection(stream: &TcpStream, server: &Server, make_ctx: &MakeCtx<'_>
     let _ = http::write_response(&mut out, &response);
 }
 
+/// Sends one raw request to the server on `port` and returns the whole response.
+fn request(port: u16, request: &str, wait: Duration) -> io::Result<String> {
+    let mut s = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(500))?;
+    s.set_read_timeout(Some(wait))?;
+    s.set_write_timeout(Some(wait))?;
+    s.write_all(request.as_bytes())?;
+    let mut out = String::new();
+    s.read_to_string(&mut out)?;
+    Ok(out)
+}
+
 /// True when a ccsnap UI answers on `port`.
 pub fn is_running(port: u16) -> bool {
-    let Ok(mut s) = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(500)) else {
-        return false;
-    };
-    let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
-    let request = format!("GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-    let mut out = String::new();
-    s.write_all(request.as_bytes()).is_ok() && s.read_to_string(&mut out).is_ok() && out.contains(r#""app":"ccsnap""#)
+    let req = format!("GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    request(port, &req, Duration::from_secs(2)).is_ok_and(|out| out.contains(r#""app":"ccsnap""#))
+}
+
+/// Asks the UI server on `port` to show its page (with its key) in cmux; returns where.
+pub fn ask_to_show(port: u16) -> Result<String> {
+    let req = format!(
+        "POST /api/show HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+         Content-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    );
+    // Showing runs cmux, which can take a few seconds.
+    let out = request(port, &req, Duration::from_secs(15)).context("asking the running ccsnap UI to show itself")?;
+    let (head, body) = out.split_once("\r\n\r\n").unwrap_or((out.as_str(), ""));
+    if !head.starts_with("HTTP/1.1 200 ") {
+        anyhow::bail!("the running ccsnap UI could not show itself: {}", body.trim());
+    }
+    let v: serde_json::Value = serde_json::from_str(body).context("reading the running ccsnap UI's answer")?;
+    v["shown"].as_str().map(str::to_string).context("the running ccsnap UI gave no `shown`")
 }
 
 /// 32 hex characters from the system's random source.
@@ -102,6 +124,30 @@ fn show(ctx: &Ctx, url: &str, open: bool) -> &'static str {
     })
 }
 
+/// A UI already answers on `port`: its key is only in that server's memory, so ask it to show
+/// its own page.
+fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
+    if !open {
+        return Ok(Outcome::ok(
+            json!({"url": url, "started": false}),
+            format!("The ccsnap UI is already running at {url}."),
+        ));
+    }
+    match ask_to_show(port) {
+        Ok(shown) => Ok(Outcome::ok(
+            json!({"url": url, "started": false, "shown": shown}),
+            format!("The ccsnap UI is already running at {url}; showed it ({shown})."),
+        )),
+        Err(e) => Err(failure(
+            Exit::Error,
+            format!(
+                "The ccsnap UI is already running at {url} but could not be shown: {e:#}. To stop it: Ctrl-C in \
+                 the terminal running `ccsnap ui`, or close the \"ccsnap UI\" workspace."
+            ),
+        )),
+    }
+}
+
 /// `ccsnap ui`: serves the page on 127.0.0.1 and shows it in cmux; returns once idle.
 pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
     let url = format!("http://127.0.0.1:{port}/");
@@ -111,23 +157,18 @@ pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome
         .ok_or_else(|| failure(Exit::Error, "--idle-minutes is too large"))?;
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
-        Err(_) if is_running(port) => {
-            // Its key is only in that server's memory; a fresh key needs a fresh start.
-            return Ok(Outcome::ok(
-                json!({"url": url, "started": false}),
-                format!(
-                    "The ccsnap UI is already running at {url}. Use its tab, or stop it and run `ccsnap ui` again."
-                ),
-            ));
-        }
+        Err(_) if is_running(port) => return already_running(port, &url, open),
         Err(e) => {
             return Err(failure(Exit::Error, format!("cannot listen on 127.0.0.1:{port} ({e}); pick another --port")));
         }
     };
-    let server = Server { port, token: new_token()? };
+    let server = Server { port, token: new_token()?, show: Box::new(|u| ctx.backend.show_url(u)) };
     // The key travels in the fragment, which the browser keeps to itself.
     let shown = show(ctx, &format!("{url}#t={}", server.token), open);
     eprintln!("ccsnap UI at {url} ({shown}). It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
+    if shown == "not shown" {
+        eprintln!("Run `ccsnap ui` again to show it.");
+    }
     let make_ctx = |cli: &crate::cli::Cli, input: Option<String>| -> Result<Ctx> {
         Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes)? })
     };
@@ -147,7 +188,7 @@ mod tests {
     fn serves_requests_until_idle() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into() };
+        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok("dock")) };
         let client = std::thread::spawn(move || {
             let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
             write!(s, "GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
@@ -210,7 +251,7 @@ mod tests {
     fn a_silent_client_does_not_block_others() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into() };
+        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok("dock")) };
         let (tx, rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let silent = std::thread::spawn(move || {
@@ -241,7 +282,7 @@ mod tests {
     fn a_slow_drip_client_is_cut_off_at_the_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into() };
+        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok("dock")) };
         let drip = std::thread::spawn(move || {
             let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
             for _ in 0..14 {
@@ -258,5 +299,39 @@ mod tests {
         let took = started.elapsed();
         drip.join().unwrap();
         assert!(took < Duration::from_secs(8), "{took:?}");
+    }
+
+    #[test]
+    fn a_second_ui_asks_the_running_server_to_show_itself() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = std::cell::RefCell::new(vec![]);
+        let server = Server {
+            port,
+            token: "k3y".into(),
+            show: Box::new(|u: &str| {
+                seen.borrow_mut().push(u.to_string());
+                Ok("reused")
+            }),
+        };
+        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        assert_eq!(client.join().unwrap(), Ok("reused".to_string()));
+        assert_eq!(*seen.borrow(), vec![format!("http://127.0.0.1:{port}/#t=k3y")]);
+    }
+
+    #[test]
+    fn asking_a_server_that_cannot_show_is_an_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server { port, token: "k3y".into(), show: Box::new(|_| anyhow::bail!("no cmux")) };
+        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(300)).unwrap();
+        let err = client.join().unwrap().unwrap_err();
+        assert!(err.contains("no cmux"), "{err}");
     }
 }

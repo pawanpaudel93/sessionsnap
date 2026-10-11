@@ -20,10 +20,15 @@ pub const ALLOWED: &[&str] = &[
 /// Builds the context for one API call; the `Option<String>` is the call's `input`.
 pub type MakeCtx<'a> = dyn Fn(&Cli, Option<String>) -> Result<Ctx> + 'a;
 
-pub struct Server {
+/// Shows a URL in cmux; returns where ("reused", "dock" or "tab").
+pub type ShowFn<'a> = dyn Fn(&str) -> Result<&'static str> + 'a;
+
+pub struct Server<'a> {
     pub port: u16,
     /// Random per start; the page gets it in a meta tag and sends it as X-Ccsnap-Token.
     pub token: String,
+    /// Called by `POST /api/show` with the keyed link; `ccsnap ui` passes the cmux backend's.
+    pub show: Box<ShowFn<'a>>,
 }
 
 #[derive(Deserialize)]
@@ -33,7 +38,7 @@ struct RunBody {
     input: Option<String>,
 }
 
-impl Server {
+impl Server<'_> {
     pub fn handle(&self, req: &Request, make_ctx: &MakeCtx<'_>) -> Response {
         // A page on another site that resolves its name to 127.0.0.1 still sends its own Host.
         if !self.own_host(req.header("host")) {
@@ -51,7 +56,10 @@ impl Server {
                 Response::json(200, &json!({"app": "ccsnap", "version": env!("CARGO_PKG_VERSION")}))
             }
             ("POST", "/api/run") => self.run(req, make_ctx),
-            (_, "/" | "/app.js" | "/app.css" | "/api/hello" | "/api/run") => Response::text(405, "method not allowed"),
+            ("POST", "/api/show") => self.show(req),
+            (_, "/" | "/app.js" | "/app.css" | "/api/hello" | "/api/run" | "/api/show") => {
+                Response::text(405, "method not allowed")
+            }
             _ => Response::text(404, "not found"),
         }
     }
@@ -60,20 +68,43 @@ impl Server {
         host.is_some_and(|h| h == format!("127.0.0.1:{}", self.port) || h == format!("localhost:{}", self.port))
     }
 
+    /// A present Origin must be this server's own.
+    fn foreign_origin(&self, req: &Request) -> bool {
+        req.header("origin").is_some_and(|o| !self.own_host(o.strip_prefix("http://")))
+    }
+
+    /// JSON forces a CORS preflight, which this server never answers, for any other origin.
+    fn is_json(req: &Request) -> bool {
+        req.header("content-type").is_some_and(|c| c.starts_with("application/json"))
+    }
+
+    /// Shows this server's page, with its key, in cmux. Needs no key: it is how a page without
+    /// one (or a second `ccsnap ui`) gets one, and the key only ever goes to cmux.
+    fn show(&self, req: &Request) -> Response {
+        if self.foreign_origin(req) {
+            return Response::text(403, "wrong origin");
+        }
+        if !Self::is_json(req) {
+            return Response::text(415, "send JSON");
+        }
+        match (self.show)(&format!("http://127.0.0.1:{}/#t={}", self.port, self.token)) {
+            Ok(shown) => Response::json(200, &json!({"shown": shown})),
+            // cmux's message could quote the link; the key stays out of the answer.
+            Err(e) => Response::text(502, &format!("could not show the UI in cmux: {e:#}").replace(&self.token, "…")),
+        }
+    }
+
     fn run(&self, req: &Request, make_ctx: &MakeCtx<'_>) -> Response {
-        if let Some(origin) = req.header("origin")
-            && !self.own_host(origin.strip_prefix("http://"))
-        {
+        if self.foreign_origin(req) {
             return Response::text(403, "wrong origin");
         }
         if !req.header("x-ccsnap-token").is_some_and(|t| same(t, &self.token)) {
             return Response::json(
                 401,
-                &json!({"error": {"code": "stale-token", "message": "The ccsnap UI was restarted. Run the palette command \"ccsnap: Open UI\" to reconnect this page."}}),
+                &json!({"error": {"code": "stale-token", "message": "The ccsnap UI was restarted, so this page's key is old. Click Reconnect, or run `ccsnap ui`."}}),
             );
         }
-        // JSON forces a CORS preflight, which this server never answers, for any other origin.
-        if !req.header("content-type").is_some_and(|c| c.starts_with("application/json")) {
+        if !Self::is_json(req) {
             return Response::text(415, "send JSON");
         }
         let body: RunBody = match serde_json::from_slice(&req.body) {
@@ -113,8 +144,8 @@ mod tests {
 
     const PORT: u16 = 47317;
 
-    fn server() -> Server {
-        Server { port: PORT, token: "t0k".into() }
+    fn server() -> Server<'static> {
+        Server { port: PORT, token: "t0k".into(), show: Box::new(|_| Ok("dock")) }
     }
 
     fn req(method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Request {
@@ -236,6 +267,64 @@ mod tests {
                 assert_eq!(s.handle(&api(bad), mk).status, 403, "{bad}");
             }
             assert_eq!(s.handle(&api("not json"), mk).status, 400);
+        });
+    }
+
+    fn show_req(headers: &[(&str, &str)]) -> Request {
+        req("POST", "/api/show", headers, "{}")
+    }
+
+    #[test]
+    fn show_needs_no_token_and_shows_the_keyed_link() {
+        with_store(|mk| {
+            let seen = std::cell::RefCell::new(vec![]);
+            let s = Server {
+                port: PORT,
+                token: "t0k".into(),
+                show: Box::new(|u: &str| {
+                    seen.borrow_mut().push(u.to_string());
+                    Ok("reused")
+                }),
+            };
+            let origin = format!("http://127.0.0.1:{PORT}");
+            let r = s.handle(&show_req(&[("content-type", "application/json"), ("origin", origin.as_str())]), mk);
+            assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+            assert_eq!(body(&r), json!({"shown": "reused"}));
+            assert!(!String::from_utf8_lossy(&r.body).contains("t0k"), "never returns the key");
+            assert_eq!(*seen.borrow(), vec![format!("http://127.0.0.1:{PORT}/#t=t0k")]);
+            // Without an Origin (a local program such as `ccsnap ui`) it works too.
+            assert_eq!(s.handle(&show_req(&[("content-type", "application/json")]), mk).status, 200);
+            assert_eq!(s.handle(&req("GET", "/api/show", &[], ""), mk).status, 405);
+        });
+    }
+
+    #[test]
+    fn show_refuses_foreign_or_non_json_calls() {
+        with_store(|mk| {
+            let s = server();
+            assert_eq!(s.handle(&show_req(&[("content-type", "text/plain")]), mk).status, 415);
+            assert_eq!(s.handle(&show_req(&[]), mk).status, 415);
+            let r = show_req(&[("content-type", "application/json"), ("origin", "http://evil.example")]);
+            assert_eq!(s.handle(&r, mk).status, 403, "wrong origin");
+            let mut r = show_req(&[("content-type", "application/json")]);
+            r.headers[0].1 = "evil.example:47317".into();
+            assert_eq!(s.handle(&r, mk).status, 403, "wrong host");
+        });
+    }
+
+    #[test]
+    fn show_reports_a_failed_show() {
+        with_store(|mk| {
+            let s = Server {
+                port: PORT,
+                token: "t0k".into(),
+                show: Box::new(|u| anyhow::bail!("cmux is not running ({u})")),
+            };
+            let r = s.handle(&show_req(&[("content-type", "application/json")]), mk);
+            assert_eq!(r.status, 502);
+            let text = String::from_utf8(r.body).unwrap();
+            assert!(text.contains("cmux is not running"), "{text}");
+            assert!(!text.contains("t0k"));
         });
     }
 }
