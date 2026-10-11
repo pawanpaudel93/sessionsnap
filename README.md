@@ -127,6 +127,10 @@ On 2026-10-11 with cmux 0.64.22 (macOS):
 
 - `save` captured 9 workspaces and 29 Claude tabs; every tab's session ID matched cmux's own record.
 - `restore` reopened a closed workspace and resumed its Claude conversation, with cmux running.
+- On 2026-10-12, Claude Code 2.1.296 and Codex 0.160.0: `save` stored one tab of each as agent
+  tabs (Codex with its `-a on-request -s workspace-write` flags, no prompt text); after closing
+  both workspaces, `restore` reopened them with `claude --resume <id>` and
+  `codex resume <id> -a on-request -s workspace-write`, and both conversations came back.
 - `install-cmux` added the palette commands to cmux's commented `cmux.json`; ⌘⇧P shows them.
 - "sessionsnap: Open UI" showed the UI in the Dock and switched the right sidebar to it (cmux
   pauses pages in a hidden Dock); running it again pointed the open page at the new key.
