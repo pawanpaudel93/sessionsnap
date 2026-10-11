@@ -70,7 +70,7 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
                 .and_then(|h| h.title_for(&t.cwd, &a.session_id))
                 .unwrap_or_else(|| t.title.clone()),
             cwd: t.cwd.clone(),
-            agent: a.kind.clone(),
+            agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
             session_id: a.session_id.clone(),
             args: a.args.clone(),
         },

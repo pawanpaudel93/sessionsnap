@@ -23,7 +23,7 @@ pub enum Edited {
 
 /// Applies `ops` to the latest version of `name` and saves the result (unless `dry_run`).
 pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Edited> {
-    let previous = ctx.store.load(name, None)?;
+    let previous = super::load_version(ctx, name, None)?;
     let mut workspaces = previous.workspaces.clone();
     let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
         Some(super::read_open(ctx.terminal.as_ref())?)

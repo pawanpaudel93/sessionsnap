@@ -260,7 +260,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             let old = &ws[w].tabs[t];
             // The launch flags still fit when the agent stays the same.
             let args = match old {
-                Tab::Agent { agent, args, .. } if *agent == kind => args.clone(),
+                Tab::Agent { agent, args, .. } if ctx.agents.kind_of(agent) == Some(kind.as_str()) => args.clone(),
                 _ => vec![],
             };
             let (title, cwd) = (old.title().to_string(), old.cwd().to_string());

@@ -12,12 +12,12 @@ use crate::adapters::store::Store;
 use crate::domain::model::{SessionRef, Tab, Workspace, has_control, parse_ref};
 use crate::domain::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
 use crate::error::{Exit, failure};
-use crate::ports::{AgentCatalog, LaunchTab, OpenState, SessionInfo, Terminal};
+use crate::ports::{LaunchTab, OpenState, SessionInfo, Terminal};
 
 /// Restoring a snapshot (`<name>[@v]`), limited to these workspaces and tabs (none = all).
 pub fn snapshot_source(ctx: &Ctx, snapshot: &str, workspaces: Vec<String>, tabs: Vec<String>) -> Result<PlanSource> {
     let (name, version) = parse_ref(snapshot)?;
-    let v = ctx.store.load(&name, version)?;
+    let v = super::load_version(ctx, &name, version)?;
     Ok(PlanSource::Snapshot { snapshot: name, version: v.version, selection: Selection { workspaces, tabs } })
 }
 
@@ -88,16 +88,16 @@ pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
 }
 
 /// The workspaces a plan restores: a snapshot selection, or recovered sessions in one workspace.
-pub fn source_workspaces(source: &PlanSource, store: &Store, agents: &dyn AgentCatalog) -> Result<Vec<Workspace>> {
+pub fn source_workspaces(source: &PlanSource, store: &Store, agents: &Agents) -> Result<Vec<Workspace>> {
     match source {
         PlanSource::Snapshot { snapshot, version, selection } => {
-            select(store.load(snapshot, Some(*version))?.workspaces, selection)
+            select(super::load_normalized(store, agents, snapshot, Some(*version))?.workspaces, selection)
         }
         PlanSource::Sessions { sessions } => recovered_workspace(sessions, agents),
     }
 }
 
-pub fn make_plan(source: PlanSource, store: &Store, agents: &dyn AgentCatalog, open: &OpenState) -> Result<Plan> {
+pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &OpenState) -> Result<Plan> {
     let built = build_actions(&source_workspaces(&source, store, agents)?, open, agents);
     let now = chrono::Local::now();
     Ok(Plan {

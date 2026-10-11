@@ -51,6 +51,22 @@ impl Ctx {
     }
 }
 
+/// Version `version` (latest when None) of snapshot `name`, with agent tabs named by registry kind.
+pub fn load_version(ctx: &Ctx, name: &str, version: Option<u32>) -> anyhow::Result<crate::domain::model::Version> {
+    load_normalized(&ctx.store, &ctx.agents, name, version)
+}
+
+pub fn load_normalized(
+    store: &Store,
+    agents: &Agents,
+    name: &str,
+    version: Option<u32>,
+) -> anyhow::Result<crate::domain::model::Version> {
+    let mut v = store.load(name, version)?;
+    crate::domain::agents::normalize_kinds(&mut v.workspaces, agents);
+    Ok(v)
+}
+
 /// What is open in the terminal, with each agent named by its registry kind (cmux may report an
 /// alias or program name), so tabs match saved sessions by (agent, ID).
 pub fn read_open(terminal: &dyn Terminal) -> anyhow::Result<OpenState> {

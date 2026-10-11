@@ -21,11 +21,11 @@ pub enum Commit {
 /// version of `name`.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
-    let previous = if ctx.store.exists(name) { Some(ctx.store.load(name, None)?) } else { None };
+    let previous = if ctx.store.exists(name) { Some(super::load_version(ctx, name, None)?) } else { None };
     let (workspaces, source, notes) = match from {
         Some(from) => {
             let (src_name, version) = parse_ref(from)?;
-            let src = ctx.store.load(&src_name, version)?;
+            let src = super::load_version(ctx, &src_name, version)?;
             let source = Source {
                 kind: "copy".into(),
                 cmux_state_version: None,
@@ -59,6 +59,8 @@ pub fn commit(
     message: Option<String>,
     notes: Vec<String>,
 ) -> Result<Commit> {
+    let mut workspaces = workspaces;
+    crate::domain::agents::normalize_kinds(&mut workspaces, &ctx.agents);
     if let Some(p) = previous
         && p.workspaces == workspaces
     {
@@ -94,7 +96,7 @@ pub fn list(ctx: &Ctx) -> Result<Vec<(String, Listed)>> {
 /// A version (`<name>[@v]`) and the problems worth showing with it.
 pub fn show(ctx: &Ctx, snapshot: &str) -> Result<(Version, Vec<String>)> {
     let (name, version) = parse_ref(snapshot)?;
-    let v = ctx.store.load(&name, version)?;
+    let v = super::load_version(ctx, &name, version)?;
     let warnings = edit::warnings(&v.workspaces, &ctx.agents);
     Ok((v, warnings))
 }
@@ -112,7 +114,7 @@ pub fn history(ctx: &Ctx, name: &str) -> Result<Vec<Listed>> {
 pub fn diff(ctx: &Ctx, a: &str, b: &str) -> Result<(Version, Version, Vec<Change>)> {
     let load = |r: &str| -> Result<Version> {
         let (n, v) = parse_ref(r)?;
-        ctx.store.load(&n, v)
+        super::load_version(ctx, &n, v)
     };
     let (va, vb) = (load(a)?, load(b)?);
     let changes = diff::diff(&va.workspaces, &vb.workspaces);

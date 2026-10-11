@@ -233,3 +233,23 @@ fn control_characters_never_reach_the_terminal() {
     }
     assert_eq!(launched[2].cwd, "/w/e");
 }
+
+#[test]
+fn agent_names_are_normalized_on_load() {
+    let env = setup();
+    write_rollout(&env.codex_root(), "/w/a", X, "port the parser");
+    env.fake.state.borrow_mut().workspaces[0].tabs.push(codex_tab("codex", X, &[]));
+    env.run(&["save", "work"]).unwrap();
+    // Hand-edited to another spelling of the same agent.
+    let dir = env.dir.path().join("store/snapshots/work");
+    let file = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let text = std::fs::read_to_string(&file).unwrap().replace("\"agent\": \"codex\"", "\"agent\": \"Codex\"");
+    assert!(text.contains("\"Codex\""));
+    std::fs::write(&file, text).unwrap();
+    // Still the open session: nothing to restore, and the shown tab says "codex".
+    assert_eq!(env.run(&["restore", "work", "--plan"]).unwrap().exit, Exit::NothingToDo);
+    let shown = env.run(&["show", "work", "--json"]).unwrap();
+    assert_eq!(shown.json["version"]["workspaces"][0]["tabs"][2]["agent"], "codex");
+    // A save of the same state writes nothing new.
+    assert_eq!(env.run(&["save", "work"]).unwrap().exit, Exit::NothingToDo);
+}

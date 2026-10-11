@@ -3,9 +3,22 @@
 
 use anyhow::Result;
 
-use crate::domain::model::SessionRef;
+use crate::domain::model::{SessionRef, Tab, Workspace};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, SessionInfo};
+
+/// Names every agent tab's agent by its registry kind ("Codex", "agy" → "codex", "antigravity"),
+/// so sessions compare equal however the tab was written. Unknown agents are left as they are.
+pub fn normalize_kinds(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
+    for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
+        if let Tab::Agent { agent, .. } = tab
+            && let Some(kind) = agents.kind_of(agent)
+            && kind != agent
+        {
+            *agent = kind.to_string();
+        }
+    }
+}
 
 /// Whether a saved agent session can be resumed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
