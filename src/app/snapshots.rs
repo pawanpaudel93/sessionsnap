@@ -77,12 +77,16 @@ pub fn names(ctx: &Ctx) -> Result<Vec<String>> {
     ctx.store.list()
 }
 
-/// Every snapshot's name with its latest version.
-pub fn list(ctx: &Ctx) -> Result<Vec<(String, Version)>> {
+/// A version as listed: its number, and its contents or why its file cannot be read.
+pub type Listed = (u32, std::result::Result<Version, String>);
+
+/// Every snapshot's name with its latest version. A version that cannot be read (another format,
+/// broken JSON) is listed with the reason instead of failing the whole list.
+pub fn list(ctx: &Ctx) -> Result<Vec<(String, Listed)>> {
     let mut out = vec![];
     for name in ctx.store.list()? {
-        let v = ctx.store.load(&name, None)?;
-        out.push((name, v));
+        let Some(&n) = ctx.store.versions(&name)?.last() else { continue };
+        out.push((name.clone(), (n, ctx.store.read_version(&name, n)?)));
     }
     Ok(out)
 }
@@ -95,11 +99,11 @@ pub fn show(ctx: &Ctx, snapshot: &str) -> Result<(Version, Vec<String>)> {
     Ok((v, warnings))
 }
 
-/// All versions of `name`, oldest first.
-pub fn history(ctx: &Ctx, name: &str) -> Result<Vec<Version>> {
+/// All versions of `name`, oldest first; unreadable ones with the reason.
+pub fn history(ctx: &Ctx, name: &str) -> Result<Vec<Listed>> {
     let mut out = vec![];
     for n in ctx.store.versions(name)? {
-        out.push(ctx.store.load(name, Some(n))?);
+        out.push((n, ctx.store.read_version(name, n)?));
     }
     Ok(out)
 }

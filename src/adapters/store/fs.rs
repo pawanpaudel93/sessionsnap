@@ -140,20 +140,32 @@ impl Store {
                 *versions.last().ok_or_else(|| failure(Exit::NotFound, format!("snapshot '{name}' has no versions")))?
             }
         };
+        match self.read_version(name, v)? {
+            Ok(version) => Ok(version),
+            Err(why) => {
+                let path = self.version_path(name, v)?;
+                let exit = if why.starts_with("format") { Exit::UnknownFormat } else { Exit::Error };
+                Err(failure(exit, format!("snapshot '{name}' v{v} is unreadable: {why} ({})", path.display())))
+            }
+        }
+    }
+
+    /// Reads version `v` of `name`. The inner error says why a file that is there cannot be read as
+    /// a version of this format ("format 1, expected 2", "not valid JSON: …"); the outer one is for
+    /// a missing snapshot or version, or a file that cannot be opened.
+    pub fn read_version(&self, name: &str, v: u32) -> Result<std::result::Result<Version, String>> {
         let path = self.version_path(name, v)?;
-        let raw: serde_json::Value = read_json(&path)?;
+        let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let raw: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(raw) => raw,
+            Err(e) => return Ok(Err(format!("not valid JSON: {e}"))),
+        };
         let format = raw.get("sessionsnap").and_then(serde_json::Value::as_u64);
         if format != Some(u64::from(FORMAT)) {
             let found = format.map_or("an unknown format".to_string(), |f| format!("format {f}"));
-            return Err(failure(
-                Exit::UnknownFormat,
-                format!(
-                    "snapshot '{name}' v{v} is in sessionsnap {found}; this sessionsnap reads format {FORMAT} only ({})",
-                    path.display()
-                ),
-            ));
+            return Ok(Err(format!("{found}, expected {FORMAT}")));
         }
-        serde_json::from_value(raw).with_context(|| format!("parsing {}", path.display()))
+        Ok(serde_json::from_value(raw).map_err(|e| format!("not a sessionsnap version: {e}")))
     }
 
     /// Writes the next version of `name` and returns it.
@@ -274,7 +286,11 @@ mod tests {
         fs::write(&path, v1).unwrap();
         let err = s.load("work", None).unwrap_err();
         assert_eq!(exit_of(&err), Exit::UnknownFormat);
-        assert!(err.to_string().contains("format 1") && err.to_string().contains("format 2"), "{err}");
+        assert!(err.to_string().contains("unreadable: format 1, expected 2"), "{err}");
+        assert_eq!(s.read_version("work", 1).unwrap(), Err("format 1, expected 2".to_string()));
+        fs::write(&path, "{").unwrap();
+        assert!(s.read_version("work", 1).unwrap().unwrap_err().starts_with("not valid JSON"));
+        assert_eq!(exit_of(&s.load("work", Some(1)).unwrap_err()), Exit::Error);
     }
 
     #[test]

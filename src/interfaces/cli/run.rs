@@ -150,11 +150,12 @@ fn open_now(ctx: &Ctx) -> Result<Outcome> {
 fn list(ctx: &Ctx) -> Result<Outcome> {
     let rows: Vec<Value> = app::snapshots::list(ctx)?
         .into_iter()
-        .map(|(name, v)| {
-            json!({
+        .map(|(name, (n, v))| match v {
+            Ok(v) => json!({
                 "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
                 "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
-            })
+            }),
+            Err(why) => json!({"name": name, "latestVersion": n, "error": format!("unreadable: {why}")}),
         })
         .collect();
     let text = human::list(&rows);
@@ -170,11 +171,12 @@ fn show(ctx: &Ctx, snapshot: &str) -> Result<Outcome> {
 fn history(ctx: &Ctx, name: &str) -> Result<Outcome> {
     let rows: Vec<Value> = app::snapshots::history(ctx, name)?
         .into_iter()
-        .map(|v| {
-            json!({
+        .map(|(n, v)| match v {
+            Ok(v) => json!({
                 "version": v.version, "createdAt": v.created_at, "message": v.message, "source": v.source,
                 "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
-            })
+            }),
+            Err(why) => json!({"version": n, "error": format!("unreadable: {why}")}),
         })
         .collect();
     let text = human::history(name, &rows);

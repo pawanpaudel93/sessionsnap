@@ -29,6 +29,10 @@ pub fn list(rows: &[Value]) -> String {
     }
     rows.iter()
         .map(|r| {
+            if let Some(why) = r["error"].as_str() {
+                let (name, v) = (r["name"].as_str().unwrap_or(""), r["latestVersion"].as_u64().unwrap_or(0));
+                return format!("{name:<20} v{v:<4} {why}");
+            }
             format!(
                 "{:<20} v{:<4} {:>3} ws {:>4} tabs  {}  {}",
                 r["name"].as_str().unwrap_or(""),
@@ -70,6 +74,10 @@ pub fn show(v: &Version, warnings: &[String]) -> String {
 pub fn history(name: &str, rows: &[Value]) -> String {
     let mut s = format!("{name}\n");
     for r in rows {
+        if let Some(why) = r["error"].as_str() {
+            s.push_str(&format!("  v{:<4} {why}\n", r["version"].as_u64().unwrap_or(0)));
+            continue;
+        }
         s.push_str(&format!(
             "  v{:<4} {}  {} ws {} tabs  {}\n",
             r["version"].as_u64().unwrap_or(0),

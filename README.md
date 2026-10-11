@@ -77,6 +77,8 @@ or snapshot format, 6 plan stale, 7 not found.
   `\n` into Enter); that step fails with a message instead.
 - cmux records which agent runs in a tab. For agents other than Claude Code it does so only after
   `cmux hooks setup <agent>`.
+- Snapshots saved by pre-release builds (format 1) must be converted, every version file under
+  `~/.sessionsnap/snapshots/*/`; until then `list` and `history` mark them "unreadable".
 - Snapshot files are format 2 (`"sessionsnap": 2`). Format 1 files (with `"type": "claude"` tabs)
   are not read; convert them by hand: each `{"type": "claude", …, "sessionId": "<id>"}` tab becomes
   `{"type": "agent", …, "agent": "claude", "sessionId": "<id>"}` and `"sessionsnap": 1` becomes `2`.

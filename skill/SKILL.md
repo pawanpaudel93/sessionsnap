@@ -26,6 +26,8 @@ agents are resumed with cmux's documented commands (`sessionsnap agents --json` 
 - Do not start `sessionsnap ui` unless the user asks for the UI; it is for people.
 - `sessionsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
 - `save` only reads cmux. If nothing changed it writes nothing and exits 3.
+- A `list` row or `history` version with `"error"` (e.g. "unreadable: format 1, expected 2") is a
+  file sessionsnap cannot read; tell the user, do not try to restore it.
 
 ## Commands
 

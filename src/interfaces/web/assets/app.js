@@ -319,9 +319,12 @@ async function viewList() {
             h("strong", { class: "ellipsis" }, s.name),
             h("span", { class: "pill" }, `v${s.latestVersion}`),
             pend ? h("span", { class: "pill accent" }, `${pend} unsaved`) : null,
+            s.error ? h("span", { class: "pill warn" }, "unreadable") : null,
             h("span", { class: "grow" }),
-            h("span", { class: "muted small" }, time(s.createdAt))),
-          h("div", { class: "muted small" }, `${plural(s.workspaces, "workspace")} · ${plural(s.tabs, "tab")}`),
+            s.error ? null : h("span", { class: "muted small" }, time(s.createdAt))),
+          s.error
+            ? h("div", { class: "error small" }, s.error)
+            : h("div", { class: "muted small" }, `${plural(s.workspaces, "workspace")} · ${plural(s.tabs, "tab")}`),
           s.message ? h("div", { class: "faint small ellipsis" }, s.message) : null),
         icon("chevron", "chev"));
         return li;
@@ -754,9 +757,16 @@ async function renderHistory(name) {
       li.classList.toggle("picked", box.checked);
     }
   };
-  // Pre-pick the two newest, the comparison people want most.
-  if (versions.length >= 2) picked.push(versions[1].version, versions[0].version);
+  // Pre-pick the two newest readable ones, the comparison people want most.
+  const readable = versions.filter((v) => !v.error);
+  if (readable.length >= 2) picked.push(readable[1].version, readable[0].version);
   const list = h("ul", { class: "list versions" }, versions.map((v, i) => {
+    // A version whose file cannot be read (another format) is shown with the reason only.
+    if (v.error) {
+      return h("li", { class: "item" }, h("div", { class: "grow" },
+        h("div", { class: "meta" }, h("strong", {}, `v${v.version}`), h("span", { class: "pill warn" }, "unreadable")),
+        h("div", { class: "error small" }, v.error)));
+    }
     const box = h("input", { type: "checkbox", "aria-label": `Compare v${v.version}` });
     box.addEventListener("change", () => {
       const at = picked.indexOf(v.version);

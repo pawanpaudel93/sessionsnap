@@ -179,7 +179,18 @@ fn format_1_snapshots_are_refused() {
     std::fs::write(&file, text).unwrap();
     let err = env.run(&["show", "work"]).unwrap_err();
     assert_eq!(exit_of(&err), Exit::UnknownFormat);
-    assert!(err.to_string().contains("sessionsnap format 1"), "{err}");
+    assert!(err.to_string().contains("unreadable: format 1, expected 2"), "{err}");
+    // list and history mark it instead of failing.
+    env.run(&["save", "other"]).unwrap();
+    let o = env.run(&["list"]).unwrap();
+    assert_eq!(
+        o.json["snapshots"][1],
+        serde_json::json!({"name": "work", "latestVersion": 1, "error": "unreadable: format 1, expected 2"})
+    );
+    assert_eq!(o.json["snapshots"][0]["name"], "other");
+    assert!(o.text.contains("unreadable: format 1, expected 2"), "{}", o.text);
+    let h = env.run(&["history", "work"]).unwrap();
+    assert_eq!(h.json["versions"][0], serde_json::json!({"version": 1, "error": "unreadable: format 1, expected 2"}));
 }
 
 #[test]
