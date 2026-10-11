@@ -9,13 +9,15 @@
 </head>
 <body>
 <header>
-  <strong>ccsnap</strong>
-  <nav>
+  <span class="brand">ccsnap</span>
+  <nav class="seg" aria-label="Views">
     <button data-view="list">Snapshots</button>
     <button data-view="recent">Recent</button>
   </nav>
+  <span class="spacer"></span>
+  <button id="refresh" class="icon" title="Refresh" aria-label="Refresh"></button>
 </header>
-<main id="main"></main>
+<main id="main" aria-live="polite"></main>
 <div id="toast" class="toast hidden" role="status"></div>
 </body>
 </html>
