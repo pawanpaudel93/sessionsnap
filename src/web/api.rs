@@ -25,7 +25,7 @@ pub type ShowFn<'a> = dyn Fn(&str) -> Result<&'static str> + 'a;
 
 pub struct Server<'a> {
     pub port: u16,
-    /// Random per start; the page gets it in a meta tag and sends it as X-Ccsnap-Token.
+    /// Random per start; the page gets it from the link fragment `#t=…` and sends it as X-Ccsnap-Token.
     pub token: String,
     /// Called by `POST /api/show` with the keyed link; `ccsnap ui` passes the cmux backend's.
     pub show: Box<ShowFn<'a>>,

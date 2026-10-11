@@ -37,7 +37,15 @@ format, 6 plan stale, 7 not found.
 
 `ccsnap ui` serves a small page on `http://127.0.0.1:47317/` and shows it in the cmux Dock (the
 right sidebar). It runs while its terminal is open and stops after 30 minutes without use; nothing
-starts at login. From the palette: "ccsnap: Open UI".
+starts at login. From the palette: "ccsnap: Open UI" (it runs in its own "ccsnap UI" workspace).
+
+- The link it opens carries a one-time key after `#` (`…/#t=<key>`). Browsers never send that
+  part to a server; the page keeps the key for its own calls. A new start makes a new key.
+- Flags: `--port <n>` (default 47317), `--idle-minutes <n>` (default 30), `--no-open` (serve
+  without showing the page).
+- If the page has no key or an old one, click **Reconnect**, or run `ccsnap ui` again: either asks
+  the running server to show its page again with its key.
+- To stop it: Ctrl-C in the terminal running `ccsnap ui`, or close the "ccsnap UI" workspace.
 
 - **Snapshots:** save what is open, update a snapshot from what is open, delete one.
 - **Workspaces:** rename (double-click), reorder, remove, drag tabs to reorder or move them, add a

@@ -22,6 +22,7 @@ named snapshots with versions, and reopens only what is missing.
 - Never pass `--yes` to `delete`, `prune` or `install-cmux` unless the user asked for that exact action.
 - Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
 - Do not start `ccsnap ui` unless the user asks for the UI; it is for people.
+- `ccsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
 - `save` only reads cmux. If nothing changed it writes nothing and exits 3.
 
 ## Commands
