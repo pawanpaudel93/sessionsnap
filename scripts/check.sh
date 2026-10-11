@@ -23,6 +23,8 @@ for f in install.sh scripts/*.sh; do
 done
 say "shellcheck"
 shellcheck -S warning install.sh scripts/*.sh
+say "install.sh against fake releases (offline)"
+sh scripts/test-install.sh
 
 if [ -f scripts/test-site.py ]; then
   say "static site"
