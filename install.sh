@@ -3,8 +3,8 @@
 #
 # Environment:
 #   SESSIONSNAP_VERSION      version to install, e.g. 0.1.0 (default: latest release)
-#   SESSIONSNAP_INSTALL_DIR  where the binary goes (default: $HOME/.local/bin)
-#   SESSIONSNAP_NO_CMUX=1    don't offer to add the sessionsnap commands to the cmux palette
+#   SESSIONSNAP_INSTALL_DIR  where the binary goes (default: $HOME/.local/bin); an absolute path
+#   SESSIONSNAP_NO_CMUX=1    don't offer to add the sessionsnap commands to the cmux palette (macOS)
 #
 # Runs on macOS (Apple Silicon or Intel) and Linux (x86_64 or arm64). Re-running upgrades in place.
 set -eu
@@ -19,6 +19,22 @@ die() {
   exit 1
 }
 has() { command -v "$1" >/dev/null 2>&1; }
+
+# The folder ends up in a PATH line in the user's shell startup file, so it must be a plain
+# absolute path: a quoted "~/bin" is expanded, and quotes, $, `, \ or control characters refused.
+case "$INSTALL_DIR" in
+  \~) INSTALL_DIR="$HOME" ;;
+  \~/*) INSTALL_DIR="$HOME/${INSTALL_DIR#??}" ;; # drop the literal ~/
+esac
+case "$INSTALL_DIR" in
+  /*) ;;
+  *) die "SESSIONSNAP_INSTALL_DIR must be an absolute path (got: $INSTALL_DIR)." ;;
+esac
+case "$INSTALL_DIR" in
+  *[\"\'\$\`\\]*) die "SESSIONSNAP_INSTALL_DIR may not contain quotes, \$, \` or backslashes." ;;
+esac
+[ "$(printf '%s' "$INSTALL_DIR" | tr -d '\001-\037\177')" = "$INSTALL_DIR" ] ||
+  die "SESSIONSNAP_INSTALL_DIR may not contain control characters or newlines."
 
 # --- platform --------------------------------------------------------------
 OS=$(uname -s)
@@ -89,6 +105,7 @@ SRC="$TMP/sessionsnap"
 
 # --- install ---------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
+[ ! -d "$INSTALL_DIR/sessionsnap" ] || die "$INSTALL_DIR/sessionsnap is a folder; move it away first."
 # Copy then rename, so a running sessionsnap (e.g. an open UI) keeps its old file.
 # A temp name of its own, so two installers at once can't write into each other's copy.
 NEW=$(mktemp "$INSTALL_DIR/.sessionsnap.XXXXXX")
@@ -97,6 +114,7 @@ chmod 755 "$NEW"
 mv -f "$NEW" "$INSTALL_DIR/sessionsnap"
 NEW=""
 BIN="$INSTALL_DIR/sessionsnap"
+VER=$("$BIN" --version 2>/dev/null) || die "the installed binary does not run: $BIN"
 say "Installed $BIN"
 
 # --- PATH ------------------------------------------------------------------
@@ -132,23 +150,33 @@ case ":$PATH:" in
     ;;
 esac
 
-# --- cmux palette ----------------------------------------------------------
+# --- cmux palette (macOS) --------------------------------------------------
+# The palette commands are for cmux on macOS; cmux on Linux is a different app.
 # install-cmux asks before it changes cmux.json, so it needs the terminal even under curl | sh.
-if [ "${SESSIONSNAP_NO_CMUX:-0}" != "1" ] && has cmux && (: </dev/tty) 2>/dev/null; then
-  say "Adding sessionsnap to the cmux command palette"
-  "$BIN" install-cmux </dev/tty || warn "sessionsnap install-cmux did not finish; run it again later."
+if [ "$OS" = "Darwin" ]; then
+  if [ "${SESSIONSNAP_NO_CMUX:-0}" != "1" ] && has cmux && (: </dev/tty) 2>/dev/null; then
+    say "Adding sessionsnap to the cmux command palette"
+    "$BIN" install-cmux </dev/tty || warn "sessionsnap install-cmux did not finish; run it again later."
+  else
+    say "To add sessionsnap to the cmux command palette later, run: sessionsnap install-cmux"
+  fi
+fi
+
+if [ "$OS" = "Darwin" ]; then
+  NEXT="  sessionsnap save work      # snapshot the cmux workspaces and agent sessions open now
+  sessionsnap ui             # the web UI in the cmux Dock
+  sessionsnap install-skill  # teach Claude Code to use sessionsnap (optional)"
 else
-  say "To add sessionsnap to the cmux command palette later, run: sessionsnap install-cmux"
+  NEXT="  Saving and restoring cmux sessions works on macOS only for now; on Linux, sessionsnap
+  installs, updates (sessionsnap update) and uninstalls."
 fi
 
 cat <<EOF
 
-$("$BIN" --version) is installed.
+$VER is installed.
 
 Next steps:
-  sessionsnap save work      # snapshot the cmux workspaces and agent sessions open now
-  sessionsnap ui             # the web UI in the cmux Dock
-  sessionsnap install-skill  # teach Claude Code to use sessionsnap (optional)
+$NEXT
 
 Update with: sessionsnap update      Remove with: sessionsnap uninstall
 Docs: https://sessionsnap.pawanpaudel.com.np
