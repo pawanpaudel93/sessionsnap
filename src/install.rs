@@ -38,10 +38,10 @@ pub fn palette_commands(exe: &str) -> Vec<Value> {
         json!({
             "name": name,
             "keywords": keywords,
+            "restart": "recreate",
             "workspace": {
                 "name": PALETTE_WORKSPACE,
                 "cwd": "~",
-                "restart": "recreate",
                 "layout": {"pane": {"surfaces": [
                     {"type": "terminal", "name": "ccsnap", "command": format!("{} {args}", shell_quote(exe))}
                 ]}}
@@ -259,6 +259,9 @@ mod tests {
             ]
         );
         assert_eq!(v["other"], 1);
+        // cmux reads `restart` from the command, not from its workspace definition.
+        assert_eq!(v["commands"][1]["restart"], "recreate");
+        assert!(v["commands"][1]["workspace"].get("restart").is_none());
         assert_eq!(
             v["commands"][1]["workspace"]["layout"]["pane"]["surfaces"][0]["command"],
             "'/usr/local/bin/ccsnap' save --pick"
