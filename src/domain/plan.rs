@@ -106,7 +106,7 @@ pub fn recovered_workspace(session_ids: &[String], history: &dyn SessionHistory)
     let mut tabs = vec![];
     for id in session_ids {
         if !is_session_id(id) {
-            return Err(failure(Exit::Error, format!("'{id}' is not a Claude session ID")));
+            return Err(failure(Exit::Error, format!("'{id}' is not a session ID (a UUID)")));
         }
         let info =
             history.find(id)?.ok_or_else(|| failure(Exit::NotFound, format!("no transcript for session {id}")))?;

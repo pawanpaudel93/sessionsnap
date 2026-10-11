@@ -255,11 +255,7 @@ fn add_workspace(workspaces: &mut Vec<Workspace>, ws: Workspace) -> Result<()> {
 }
 
 fn check_session_id(id: &str) -> Result<()> {
-    if is_session_id(id) {
-        Ok(())
-    } else {
-        Err(failure(Exit::Error, format!("'{id}' is not a Claude session ID (a UUID)")))
-    }
+    if is_session_id(id) { Ok(()) } else { Err(failure(Exit::Error, format!("'{id}' is not a session ID (a UUID)"))) }
 }
 
 /// The session, from any folder; `claude --resume <id>` finds it from any folder.

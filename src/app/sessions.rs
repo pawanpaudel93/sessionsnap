@@ -6,7 +6,6 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::Ctx;
-use crate::adapters::home_dir;
 use crate::error::{Exit, failure};
 use crate::ports::{OpenState, SessionInfo};
 
@@ -47,24 +46,16 @@ pub fn list(
     Ok((list, open))
 }
 
-/// Interactive sessions active in the last `hours` hours that are not open now, and the sessions
-/// open now.
+/// Sessions active in the last `hours` hours that their history judges recoverable, that have a
+/// folder and are not open now; and the sessions open now.
 pub fn recent(ctx: &Ctx, hours: u64) -> Result<(Vec<SessionInfo>, HashSet<String>)> {
     let open = ctx.terminal.read_open_state()?.open_sessions();
-    let home = home_dir()?.to_string_lossy().into_owned();
     let list: Vec<SessionInfo> = ctx
         .agents
         .history()
         .scan(Some(window(hours, 3600, "--hours")?))?
         .into_iter()
-        .filter(|s| is_recoverable(s, &open, &home))
+        .filter(|s| s.recoverable && s.cwd.is_some() && !open.contains(&s.session_id))
         .collect();
     Ok((list, open))
-}
-
-/// Interactive sessions (not `claude -p`/SDK), outside ~/.claude*, not open in cmux.
-fn is_recoverable(s: &SessionInfo, open: &HashSet<String>, home: &str) -> bool {
-    let interactive = s.entrypoint.as_deref().is_none_or(|e| e == "cli");
-    let internal = s.cwd.as_deref().is_some_and(|c| c.starts_with(&format!("{home}/.claude")));
-    interactive && !internal && s.cwd.is_some() && !open.contains(&s.session_id)
 }

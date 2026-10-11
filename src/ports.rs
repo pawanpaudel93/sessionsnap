@@ -4,18 +4,16 @@
 //! Layer rule: ports may use `crate::domain` types and `crate::error`, nothing else in the crate.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use anyhow::Result;
-use serde::Serialize;
-
 use crate::domain::model::Version;
+use anyhow::Result;
 
 /// What is open in the terminal.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OpenState {
-    /// False when read from the state file only (cmux not running): refs are then None.
+    /// False when the terminal is not running and this was read from what it last saved: refs are
+    /// then None.
     pub live: bool,
     pub state_version: Option<u64>,
     pub workspaces: Vec<OpenWorkspace>,
@@ -23,7 +21,7 @@ pub struct OpenState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenWorkspace {
-    /// cmux's workspace UUID (`workspaceId` in the state file, `id` in the tree).
+    /// The terminal's stable ID for the workspace.
     pub id: String,
     /// Live ref such as "workspace:3".
     pub reference: Option<String>,
@@ -57,42 +55,44 @@ pub struct LaunchTab {
     pub command: Option<String>,
 }
 
-/// What sessionsnap needs from a terminal. One implementation today:
+/// What sessionsnap needs from a terminal: read what is open, open workspaces and tabs. One
+/// implementation today:
 /// `adapters::terminal::cmux::cli::CmuxCli`.
 pub trait Terminal {
-    /// True when cmux answers on its socket.
+    /// True when the terminal is running and answers.
     fn is_running(&self) -> bool;
-    /// Starts cmux if needed and waits until it answers.
+    /// Starts the terminal if needed and waits until it answers.
     fn ensure_running(&self) -> Result<()>;
-    /// Open workspaces and tabs: live when cmux runs, else from its state file only.
+    /// Open workspaces and tabs: live when the terminal runs, else from what it last saved.
     fn read_open_state(&self) -> Result<OpenState>;
     /// Creates a workspace with these tabs; returns its ref (e.g. "workspace:12").
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String>;
     /// Adds one tab to an open workspace.
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()>;
-    /// Shows `url` in cmux: points a browser already on its address (ignoring the `#` part)
+    /// Shows `url` in the terminal: points a browser already on its address (ignoring the `#` part)
     /// at it ("reused"), else adds a Dock browser tab ("dock"), else, with the Dock off, opens a
     /// browser tab ("tab").
     fn show_url(&self, url: &str) -> Result<&'static str>;
 }
 
-/// One agent session as its history records it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// One agent session as its history records it. The same fields for every agent.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SessionInfo {
+    /// The agent's kind, e.g. "claude".
+    pub agent: String,
     pub session_id: String,
+    /// The folder the session ran in.
     pub cwd: Option<String>,
-    /// The session's name (`/rename`, `claude --name`), else Claude's automatic title.
+    /// The session's name or title, when the agent records one.
     pub title: Option<String>,
+    /// The first prompt a person typed.
     pub first_prompt: Option<String>,
-    /// "cli" for interactive sessions; other values for `claude -p` and SDK runs.
-    pub entrypoint: Option<String>,
     /// Last change, RFC 3339 local time.
     pub modified: String,
-    #[serde(skip)]
     pub modified_at: SystemTime,
-    #[serde(skip)]
-    pub path: PathBuf,
+    /// A session a person ran and may want back, as the agent's history judges it; false for
+    /// one-shot and scripted runs and the agent's own internal sessions.
+    pub recoverable: bool,
 }
 
 impl SessionInfo {
@@ -102,11 +102,13 @@ impl SessionInfo {
     }
 }
 
-/// What the domain needs from an agent's session history. One implementation today:
-/// `adapters::agents::claude::Claude`.
+/// What the domain needs from one agent's session history. Implementations live in
+/// `adapters::agents`.
 pub trait SessionHistory {
     /// True when the history has session `session_id` (in any folder).
-    fn contains(&self, session_id: &str) -> bool;
+    fn contains(&self, session_id: &str) -> bool {
+        self.find(session_id).ok().flatten().is_some()
+    }
     /// The session's details; `Ok(None)` when the history does not have it.
     fn find(&self, session_id: &str) -> Result<Option<SessionInfo>>;
     /// The title for a session last seen in `cwd`: its name, else its first prompt.

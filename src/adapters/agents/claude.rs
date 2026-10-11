@@ -13,6 +13,9 @@ use crate::adapters::home_dir;
 use crate::domain::model::{Tab, is_session_id};
 use crate::ports::{SessionHistory, SessionInfo};
 
+/// The registry kind of Claude Code.
+pub const KIND: &str = "claude";
+
 /// Claude Code's data directory (`~/.claude`); transcripts are `projects/<project>/<id>.jsonl`.
 pub struct Claude {
     root: PathBuf,
@@ -50,7 +53,8 @@ impl Claude {
         fs::read_dir(self.projects()).ok()?.flatten().map(|e| e.path().join(&name)).find(|p| p.is_file())
     }
 
-    /// Reads a transcript's folder, name, first real prompt and entrypoint.
+    /// Reads a transcript's folder, name and first real prompt, and whether it is a session a person
+    /// ran: interactive (entrypoint "cli", not `claude -p` or an SDK run) and outside `~/.claude*`.
     pub fn info(&self, path: &Path) -> Result<SessionInfo> {
         let session_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
         let modified_at = fs::metadata(path)?.modified()?;
@@ -90,15 +94,20 @@ impl Claude {
         }
         let modified =
             chrono::DateTime::<chrono::Local>::from(modified_at).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+        let interactive = entrypoint.as_deref().is_none_or(|e| e == "cli");
+        let internal = match (home_dir(), &cwd) {
+            (Ok(home), Some(c)) => c.starts_with(&format!("{}/.claude", home.to_string_lossy())),
+            _ => false,
+        };
         Ok(SessionInfo {
+            agent: KIND.to_string(),
             session_id,
             cwd,
             title: custom.or(ai),
             first_prompt: first,
-            entrypoint,
             modified,
             modified_at,
-            path: path.to_path_buf(),
+            recoverable: interactive && !internal,
         })
     }
 }
@@ -235,7 +244,7 @@ mod tests {
         assert_eq!(i.cwd.as_deref(), Some("/w/a"));
         assert_eq!(i.title.as_deref(), Some("login fix"));
         assert_eq!(i.first_prompt.as_deref(), Some("fix the login bug please"));
-        assert_eq!(i.entrypoint.as_deref(), Some("cli"));
+        assert!(i.recoverable);
         assert_eq!(c.find_transcript(A), Some(p));
         assert_eq!(c.find_transcript(B), None);
         assert_eq!(c.title_for("/w/a", A).as_deref(), Some("login fix"));

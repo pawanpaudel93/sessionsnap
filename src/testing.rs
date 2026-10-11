@@ -136,14 +136,14 @@ impl crate::ports::Terminal for FakeTerminal {
 /// What `write_transcript` records, as a history entry: named `title`, first prompt "start <title>".
 pub fn session_info(id: &str, cwd: &str, title: &str) -> crate::ports::SessionInfo {
     crate::ports::SessionInfo {
+        agent: "claude".into(),
         session_id: id.to_string(),
         cwd: Some(cwd.to_string()),
         title: Some(title.to_string()),
         first_prompt: Some(format!("start {title}")),
-        entrypoint: Some("cli".into()),
         modified: String::new(),
         modified_at: std::time::SystemTime::UNIX_EPOCH,
-        path: PathBuf::new(),
+        recoverable: true,
     }
 }
 

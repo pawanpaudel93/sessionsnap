@@ -13,6 +13,7 @@ use crate::domain::edit::Op;
 use crate::domain::model::tab_count;
 use crate::domain::plan::{Plan, PlanSource};
 use crate::error::{Exit, failure};
+use crate::ports::SessionInfo;
 
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
@@ -364,8 +365,17 @@ fn apply(ctx: &Ctx, plan_id: &str) -> Result<Outcome> {
 
 fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64) -> Result<Outcome> {
     let (list, open) = app::sessions::list(ctx, search, cwd, days)?;
-    let rows: Vec<Value> = list.iter().map(|s| json!({"session": s, "open": open.contains(&s.session_id)})).collect();
+    let rows: Vec<Value> =
+        list.iter().map(|s| json!({"session": session_json(s), "open": open.contains(&s.session_id)})).collect();
     Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)))
+}
+
+/// A session as `sessions` and `recent` print it.
+fn session_json(s: &SessionInfo) -> Value {
+    json!({
+        "agent": s.agent, "sessionId": s.session_id, "title": s.title, "firstPrompt": s.first_prompt,
+        "cwd": s.cwd, "modified": s.modified,
+    })
 }
 
 fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool) -> Result<Outcome> {
@@ -382,7 +392,8 @@ fn recent(ctx: &Ctx, hours: u64, restore: bool, plan_only: bool, pick_flag: bool
         .with_exit(Exit::NothingToDo));
     }
     if !wants_plan {
-        return Ok(Outcome::ok(json!({"sessions": list}), human::sessions(&list, &open)));
+        let rows: Vec<Value> = list.iter().map(session_json).collect();
+        return Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)));
     }
     plan_then_apply(ctx, app::restore::sessions_source(&list), plan_only)
 }
