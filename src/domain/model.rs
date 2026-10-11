@@ -114,6 +114,22 @@ impl Tab {
         }
     }
 
+    /// The first of this tab's values that holds a control character (a char below 0x20, or
+    /// 0x7f), by name. Such a tab is never run: those characters would act on the terminal when
+    /// the command is typed into it. The title is not checked (it is never typed).
+    pub fn control_field(&self) -> Option<&'static str> {
+        let fields: Vec<(&'static str, &str)> = match self {
+            Tab::Terminal { cwd, command, .. } => vec![("folder", cwd), ("command", command.as_deref().unwrap_or(""))],
+            Tab::Agent { cwd, agent, session_id, args, .. } => {
+                let mut f =
+                    vec![("agent", agent.as_str()), ("session ID", session_id.as_str()), ("folder", cwd.as_str())];
+                f.extend(args.iter().map(|a| ("flags", a.as_str())));
+                f
+            }
+        };
+        fields.into_iter().find(|(_, v)| has_control(v)).map(|(name, _)| name)
+    }
+
     /// Identity used by diffs: the session for agent tabs, folder + command for terminals.
     pub fn key(&self) -> String {
         match self {
@@ -121,6 +137,11 @@ impl Tab {
             Tab::Terminal { cwd, command, .. } => format!("terminal:{cwd}|{}", command.as_deref().unwrap_or("")),
         }
     }
+}
+
+/// True when `s` holds a control character: below 0x20 (newline, CR, tab, ^C, ESC …) or 0x7f.
+pub fn has_control(s: &str) -> bool {
+    s.chars().any(|c| (c as u32) < 0x20 || c == '\u{7f}')
 }
 
 /// True for UUIDs, the session IDs of Claude Code and Codex.

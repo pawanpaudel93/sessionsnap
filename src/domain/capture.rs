@@ -1,11 +1,12 @@
 use anyhow::Result;
 
-use crate::domain::model::{Tab, Workspace, find_by_name};
+use crate::domain::model::{Tab, Workspace, find_by_name, has_control};
 use crate::ports::{AgentCatalog, OpenState, OpenTab, OpenWorkspace};
 
-/// Turns open workspaces (all, or those named in `only`) into snapshot workspaces. Agent tabs
-/// take their title from the agent's session history when it has one, else the tab's title.
-pub fn capture(open: &OpenState, agents: &dyn AgentCatalog, only: &[String]) -> Result<Vec<Workspace>> {
+/// Turns open workspaces (all, or those named in `only`) into snapshot workspaces, with notes on
+/// what was left out. Agent tabs take their title from the agent's session history when it has
+/// one, else the tab's title.
+pub fn capture(open: &OpenState, agents: &dyn AgentCatalog, only: &[String]) -> Result<(Vec<Workspace>, Vec<String>)> {
     let chosen: Vec<&OpenWorkspace> = if only.is_empty() {
         open.workspaces.iter().collect()
     } else {
@@ -15,17 +16,27 @@ pub fn capture(open: &OpenState, agents: &dyn AgentCatalog, only: &[String]) -> 
             .collect::<Result<_>>()?
     };
     let mut used: Vec<String> = vec![];
-    Ok(chosen
+    let mut notes = vec![];
+    let workspaces = chosen
         .into_iter()
-        .map(|w| Workspace {
-            name: unique_name(&w.name, &mut used),
-            color: None,
-            cwd: w.cwd.clone(),
-            git_branch: w.git_branch.clone(),
-            cmux_workspace_id: Some(w.id.clone()),
-            tabs: w.tabs.iter().map(|t| to_tab(t, agents)).collect(),
+        .map(|w| {
+            let name = unique_name(&w.name, &mut used);
+            let tabs = w
+                .tabs
+                .iter()
+                .map(|t| to_tab(t, agents, &mut |n| notes.push(format!("{name} › {}: {n}", t.title))))
+                .collect();
+            Workspace {
+                name,
+                color: None,
+                cwd: w.cwd.clone(),
+                git_branch: w.git_branch.clone(),
+                cmux_workspace_id: Some(w.id.clone()),
+                tabs,
+            }
         })
-        .collect())
+        .collect();
+    Ok((workspaces, notes))
 }
 
 /// Non-empty and unique (case-insensitive) within one capture: "workspace", "Alpha", "Alpha (2)", …
@@ -41,9 +52,18 @@ fn unique_name(name: &str, used: &mut Vec<String>) -> String {
     candidate
 }
 
-/// An agent the catalog does not know is kept as it is, so a later sessionsnap can resume it.
-fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog) -> Tab {
-    match &t.agent {
+/// An agent the catalog does not know is kept as it is, so a later sessionsnap can resume it. An
+/// agent record with a control character in its kind, ID or flags is left out (`note` says so):
+/// the tab is saved as a plain terminal.
+fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) -> Tab {
+    let agent = t.agent.as_ref().filter(|a| {
+        let bad = has_control(&a.kind) || has_control(&a.session_id) || a.args.iter().any(|x| has_control(x));
+        if bad {
+            note("left out its agent session (control characters in its kind, ID or flags)");
+        }
+        !bad
+    });
+    match agent {
         Some(a) => Tab::Agent {
             title: agents
                 .history(&a.kind)
@@ -118,7 +138,7 @@ mod tests {
     #[test]
     fn captures_tabs_with_transcript_titles() {
         let history = agents(vec![FakeHistory::with(&[(A, "/w/a", "login fix")])]);
-        let ws = capture(&open_state(), &history, &[]).unwrap();
+        let ws = capture(&open_state(), &history, &[]).unwrap().0;
         assert_eq!(ws.len(), 2);
         assert_eq!(ws[0].cmux_workspace_id.as_deref(), Some("WA"));
         assert_eq!(ws[0].tabs[0], agent_tab("claude", "login fix", "/w/a", A));
@@ -129,7 +149,7 @@ mod tests {
     fn captures_any_agent_with_its_flags() {
         let history = agents(vec![FakeHistory::codex(&[(B, "/w/a", "codex title")])]);
         let mut open = open_state();
-        let tab = |kind: &str, id: &str, args: &[&str]| crate::ports::OpenTab {
+        let tab = |kind: &str, id: &str, args: &[&str]| OpenTab {
             reference: None,
             title: format!("{kind} tab"),
             cwd: "/w/a".into(),
@@ -140,7 +160,7 @@ mod tests {
             }),
         };
         open.workspaces[1].tabs = vec![tab("codex", B, &["-a", "on-request"]), tab("aider", C, &["--x"])];
-        let ws = capture(&open, &history, &["Beta".into()]).unwrap();
+        let ws = capture(&open, &history, &["Beta".into()]).unwrap().0;
         assert_eq!(
             ws[0].tabs,
             [
@@ -164,6 +184,22 @@ mod tests {
     }
 
     #[test]
+    fn leaves_out_agent_records_with_control_characters() {
+        let history = agents(vec![]);
+        let mut open = open_state();
+        open.workspaces[1].tabs = vec![OpenTab {
+            reference: None,
+            title: "bad".into(),
+            cwd: "/w/b".into(),
+            agent: Some(AgentRef { kind: "codex".into(), session_id: A.into(), args: vec!["\u{3}x\r".into()] }),
+        }];
+        let (ws, notes) = capture(&open, &history, &[]).unwrap();
+        assert_eq!(ws[1].tabs, [Tab::Terminal { title: "bad".into(), cwd: "/w/b".into(), command: None }]);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].starts_with("Beta › bad: left out its agent session"), "{notes:?}");
+    }
+
+    #[test]
     fn workspace_named_sessionsnap_is_captured() {
         let history = agents(vec![]);
         let open = OpenState {
@@ -171,7 +207,7 @@ mod tests {
             state_version: Some(1),
             workspaces: vec![open_ws("W1", "Alpha", "/w/a", &[]), open_ws("W2", "sessionsnap", "~", &[])],
         };
-        let all = capture(&open, &history, &[]).unwrap();
+        let all = capture(&open, &history, &[]).unwrap().0;
         assert_eq!(all.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "sessionsnap"]);
     }
 
@@ -187,7 +223,7 @@ mod tests {
                 open_ws("W3", "", "/w/c", &[]),
             ],
         };
-        let ws = capture(&open, &history, &[]).unwrap();
+        let ws = capture(&open, &history, &[]).unwrap().0;
         let names: Vec<&str> = ws.iter().map(|w| w.name.as_str()).collect();
         assert_eq!(names, ["Alpha", "Alpha (2)", "workspace"]);
     }
@@ -195,10 +231,10 @@ mod tests {
     #[test]
     fn carry_over_keeps_color_and_terminal_commands() {
         let history = agents(vec![]);
-        let mut prev = capture(&open_state(), &history, &[]).unwrap();
+        let mut prev = capture(&open_state(), &history, &[]).unwrap().0;
         prev[0].color = Some("blue".into());
         prev[0].tabs[1] = Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) };
-        let fresh = capture(&open_state(), &history, &[]).unwrap();
+        let fresh = capture(&open_state(), &history, &[]).unwrap().0;
         let out = carry_over(&prev, fresh);
         assert_eq!(out[0].color.as_deref(), Some("blue"));
         assert_eq!(
@@ -211,9 +247,9 @@ mod tests {
     #[test]
     fn capture_filters_and_merge_replaces_by_name() {
         let history = agents(vec![]);
-        let only_beta = capture(&open_state(), &history, &["beta".to_string()]).unwrap();
+        let only_beta = capture(&open_state(), &history, &["beta".to_string()]).unwrap().0;
         assert_eq!(only_beta.len(), 1);
-        let mut base = capture(&open_state(), &history, &[]).unwrap();
+        let mut base = capture(&open_state(), &history, &[]).unwrap().0;
         base[1].color = Some("blue".into());
         let mut changed = only_beta;
         changed[0].cwd = "/w/b2".into();

@@ -68,7 +68,10 @@ or snapshot format, 6 plan stale, 7 not found.
   `--print`, `--fork-session`) are dropped; for Codex, a leading subcommand such as `resume <id>`.
   Every word is quoted for the shell, and session IDs are checked first (UUIDs for Claude Code and
   Codex); a tab with an invalid ID or an agent sessionsnap does not know reopens as a plain shell
-  in its folder, with a warning.
+  in its folder, with a warning. A tab whose flags, ID, folder or command hold a control character
+  (newline, ^C, ESC …) is never run either, and an agent record with one is not saved. A resume
+  command with a backslash is not typed into an already open workspace (`cmux send` would turn
+  `\n` into Enter); that step fails with a message instead.
 - cmux records which agent runs in a tab. For agents other than Claude Code it does so only after
   `cmux hooks setup <agent>`.
 - Snapshot files are format 2 (`"sessionsnap": 2`). Format 1 files (with `"type": "claude"` tabs)

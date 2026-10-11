@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::adapters::shell_word;
-use crate::domain::model::is_session_id;
+use crate::domain::model::{has_control, is_session_id};
 
 /// How much sessionsnap supports an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -142,9 +142,10 @@ impl AgentSpec {
         }
     }
 
-    /// `[program, resume…, id, kept flags…]`, or None when `id` is not a valid ID for this agent.
+    /// `[program, resume…, id, kept flags…]`, or None when `id` is not a valid ID for this agent or a
+    /// flag has a control character (it would act on the terminal the command is typed into).
     pub fn resume_argv(&self, id: &str, args: &[String]) -> Option<Vec<String>> {
-        if !self.valid_id(id) {
+        if !self.valid_id(id) || args.iter().any(|a| has_control(a)) {
             return None;
         }
         let mut argv: Vec<String> =
@@ -260,6 +261,19 @@ mod tests {
             assert_eq!(amp.resume_command(bad, &[]), None, "{bad:?}");
         }
         assert!(amp.valid_id(&"x".repeat(200)));
+    }
+
+    #[test]
+    fn flags_with_control_characters_get_no_command() {
+        let codex = find("codex").unwrap();
+        for bad in ["\u{3}touch /tmp/pwned\r", "a\nb", "x\u{1b}[200~", "\u{7f}", "tab\there"] {
+            assert_eq!(codex.resume_command(A, &strings(&["-m", bad])), None, "{bad:?}");
+        }
+        // A backslash is no control character: quoted like any other word.
+        assert_eq!(
+            codex.resume_command(A, &strings(&["-c", r"k=a\nb"])).unwrap(),
+            format!(r"codex resume {A} -c 'k=a\nb'")
+        );
     }
 
     #[test]

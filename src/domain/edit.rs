@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::agents::{Resume, find_session, problem, resume_status};
 use crate::domain::capture;
-use crate::domain::model::{SessionRef, Tab, Workspace, find_by_name, parse_ref};
+use crate::domain::model::{SessionRef, Tab, Workspace, find_by_name, has_control, parse_ref};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, Snapshots};
 
@@ -139,18 +139,20 @@ pub struct EditCtx<'a> {
     pub open: Option<&'a OpenState>,
 }
 
-pub fn apply_ops(workspaces: &mut Vec<Workspace>, ops: &[Op], ctx: &EditCtx) -> Result<()> {
+/// Applies `ops` in order; returns notes on what was left out (of workspaces added from cmux).
+pub fn apply_ops(workspaces: &mut Vec<Workspace>, ops: &[Op], ctx: &EditCtx) -> Result<Vec<String>> {
+    let mut notes = vec![];
     for op in ops {
-        apply(workspaces, op, ctx)?;
+        notes.extend(apply(workspaces, op, ctx)?);
     }
-    Ok(())
+    Ok(notes)
 }
 
 fn tab_at(workspaces: &[Workspace], tab: &str) -> Result<(usize, usize)> {
     locate(workspaces, &parse_tab_ref(tab)?)
 }
 
-fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
+fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>> {
     match op {
         Op::WsRename { ws: w, to } => {
             let i = find_ws(ws, w)?;
@@ -181,8 +183,9 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
             let open = ctx
                 .open
                 .ok_or_else(|| failure(Exit::CmuxUnreachable, "adding an open workspace needs cmux's state"))?;
-            let mut captured = capture::capture(open, ctx.agents, std::slice::from_ref(w))?;
+            let (mut captured, notes) = capture::capture(open, ctx.agents, std::slice::from_ref(w))?;
             add_workspace(ws, captured.remove(0))?;
+            return Ok(notes);
         }
         Op::WsFrom { from, ws: w } => {
             let (name, version) = parse_ref(from)?;
@@ -211,6 +214,8 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
             ws[dest].tabs.push(item);
         }
         Op::TabAddSession { ws: w, session_id, agent, title } => {
+            clean("session ID", session_id)?;
+            clean("agent", agent.as_deref().unwrap_or(""))?;
             let i = find_ws(ws, w)?;
             let (kind, info) = find_session(ctx.agents, session_id, agent.as_deref())?;
             // An agent without a history (resume only) starts in the workspace's folder.
@@ -232,6 +237,8 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
             });
         }
         Op::TabAddTerminal { ws: w, cwd, command, title } => {
+            clean("folder", cwd)?;
+            clean("command", command.as_deref().unwrap_or(""))?;
             let i = find_ws(ws, w)?;
             ws[i].tabs.push(Tab::Terminal {
                 title: title.clone().unwrap_or_else(|| folder_name(cwd)),
@@ -241,10 +248,13 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
         }
         Op::TabSetCwd { tab, cwd } => {
             // Claude Code (≥ 2.1.223) and Codex resume a session by ID from any folder.
+            clean("folder", cwd)?;
             let (w, t) = tab_at(ws, tab)?;
             ws[w].tabs[t].set_cwd(cwd.clone());
         }
         Op::TabSetSession { tab, session_id, agent } => {
+            clean("session ID", session_id)?;
+            clean("agent", agent.as_deref().unwrap_or(""))?;
             let (w, t) = tab_at(ws, tab)?;
             let (kind, _) = find_session(ctx.agents, session_id, agent.as_deref())?;
             let old = &ws[w].tabs[t];
@@ -256,6 +266,14 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<()> {
             let (title, cwd) = (old.title().to_string(), old.cwd().to_string());
             ws[w].tabs[t] = Tab::Agent { title, cwd, agent: kind, session_id: session_id.clone(), args };
         }
+    }
+    Ok(vec![])
+}
+
+/// Refuses a value with control characters: it could act on the terminal when typed.
+fn clean(what: &str, value: &str) -> Result<()> {
+    if has_control(value) {
+        return Err(failure(Exit::Error, format!("the {what} {value:?} contains control characters")));
     }
     Ok(())
 }
@@ -282,9 +300,17 @@ pub fn warnings(workspaces: &[Workspace], agents: &dyn AgentCatalog) -> Vec<Stri
     let mut seen: HashMap<SessionRef, usize> = HashMap::new();
     for w in workspaces {
         for (i, t) in w.tabs.iter().enumerate() {
+            if let Some(field) = t.control_field() {
+                out.push(format!(
+                    "{}#{} '{}': its {field} has control characters, restores as a plain shell",
+                    w.name,
+                    i + 1,
+                    t.title()
+                ));
+            }
             if let Some(s) = t.session() {
                 let status = resume_status(agents, &s);
-                if status != Resume::Ready {
+                if status != Resume::Ready && t.control_field().is_none() {
                     out.push(format!(
                         "{}#{} '{}': {}, restores as a plain shell",
                         w.name,
@@ -453,6 +479,34 @@ mod tests {
         assert!(matches!(&ws[0].tabs[0], Tab::Agent { args, .. } if args.len() == 2));
         apply_ops(&mut ws, &[set(B)], &ctx).unwrap();
         assert!(matches!(&ws[0].tabs[0], Tab::Agent { agent, args, .. } if agent == "codex" && args.is_empty()));
+    }
+
+    #[test]
+    fn edits_refuse_control_characters() {
+        let (snapshots, history, mut ws) = setup();
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None };
+        let ops = [
+            Op::TabAddSession {
+                ws: "Beta".into(),
+                session_id: "s\n1".into(),
+                agent: Some("opencode".into()),
+                title: None,
+            },
+            Op::TabSetSession { tab: "Alpha#1".into(), session_id: format!("{A}\r"), agent: None },
+            Op::TabAddTerminal {
+                ws: "Beta".into(),
+                cwd: "/w".into(),
+                command: Some("\u{3}rm -rf ~\r".into()),
+                title: None,
+            },
+            Op::TabAddTerminal { ws: "Beta".into(), cwd: "/w\t".into(), command: None, title: None },
+            Op::TabSetCwd { tab: "Alpha#1".into(), cwd: "/w\u{1b}[2J".into() },
+        ];
+        for op in ops {
+            let err = apply_ops(&mut ws, std::slice::from_ref(&op), &ctx).unwrap_err();
+            assert_eq!(exit_of(&err), Exit::Error, "{op:?}");
+            assert!(err.to_string().contains("control characters"), "{err}");
+        }
     }
 
     #[test]

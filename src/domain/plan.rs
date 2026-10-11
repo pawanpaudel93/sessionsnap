@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::agents::{Resume, problem, resume_status, unknown_session};
 use crate::domain::edit::{find_ws, locate, parse_tab_ref};
-use crate::domain::model::{SessionRef, Tab, Workspace};
+use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, OpenWorkspace};
 
@@ -139,6 +139,9 @@ pub fn recovered_workspace(sessions: &[SessionRef], agents: &dyn AgentCatalog) -
 ///   opens once.
 /// - Agent tabs that cannot be resumed (unknown agent, invalid ID, session gone from the agent's
 ///   history) become plain shells in their folder (with a warning); their ID is never run.
+/// - A tab with a control character in a value that would be typed or used as its folder
+///   (`Tab::control_field`) is never run either: it becomes a plain shell, in its folder when that
+///   is clean, else in the workspace's (else in "", which the caller replaces with home).
 /// - A saved workspace matching an open one gets only its missing agent tabs added; shells are
 ///   not added to open workspaces (they would duplicate). Unmatched workspaces are created.
 pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCatalog) -> Built {
@@ -150,8 +153,16 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
         let mut pending = vec![];
         for tab in &ws.tabs {
             let label = format!("{} › {}", ws.name, tab.title());
+            let control = tab.control_field();
+            let shell = || Tab::Terminal { title: tab.title().to_string(), cwd: clean_cwd(tab, ws), command: None };
             let Some(s) = tab.session() else {
-                pending.push(tab.clone());
+                match control {
+                    Some(field) => {
+                        b.warnings.push(format!("{label}: its {field} has control characters, opening a plain shell"));
+                        pending.push(shell());
+                    }
+                    None => pending.push(tab.clone()),
+                }
                 continue;
             };
             if open_sessions.contains(&s) {
@@ -162,21 +173,22 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
                 b.skipped.push(format!("{label}: same session listed earlier"));
                 continue;
             }
-            match resume_status(agents, &s) {
-                Resume::Ready => {
+            let why = match (control, resume_status(agents, &s)) {
+                (Some(field), _) => Some(format!("its {field} has control characters")),
+                (None, Resume::Ready) => None,
+                (None, status) => Some(problem(agents, &s, status)),
+            };
+            match why {
+                None => {
                     planned.insert(s);
                     pending.push(tab.clone());
                 }
-                status if live.is_some() => {
-                    b.skipped.push(format!("{label}: {}; not added to an open workspace", problem(agents, &s, status)));
+                Some(why) if live.is_some() => {
+                    b.skipped.push(format!("{label}: {why}; not added to an open workspace"));
                 }
-                status => {
-                    b.warnings.push(format!("{label}: {}, opening a plain shell", problem(agents, &s, status)));
-                    pending.push(Tab::Terminal {
-                        title: tab.title().to_string(),
-                        cwd: tab.cwd().to_string(),
-                        command: None,
-                    });
+                Some(why) => {
+                    b.warnings.push(format!("{label}: {why}, opening a plain shell"));
+                    pending.push(shell());
                 }
             }
         }
@@ -208,6 +220,11 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
         }
     }
     b
+}
+
+/// The tab's folder if it has no control characters, else the workspace's if that has none, else "".
+fn clean_cwd(tab: &Tab, ws: &Workspace) -> String {
+    [tab.cwd(), ws.cwd.as_str()].into_iter().find(|c| !has_control(c)).unwrap_or("").to_string()
 }
 
 /// The open workspace a saved one corresponds to: same terminal ID, else the one holding most of
@@ -357,6 +374,61 @@ mod tests {
             }]
         );
         assert_eq!(b.skipped, ["Alpha › one: already open"]);
+    }
+
+    #[test]
+    fn tabs_with_control_characters_never_run() {
+        let agent = |title: &str, cwd: &str, id: &str, args: &[&str]| Tab::Agent {
+            title: title.into(),
+            cwd: cwd.into(),
+            agent: "opencode".into(),
+            session_id: id.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+        };
+        let saved = vec![workspace(
+            "Gamma",
+            "/w/c",
+            None,
+            vec![
+                agent("ctrl-c", "/w/c", "s1", &["\u{3}touch /tmp/pwned\r"]),
+                agent("newline id", "/w/c", "s2\nrm -rf ~", &[]),
+                agent("bad folder", "/w/c\u{1b}x", "s3", &[]),
+                Tab::Terminal { title: "cmd".into(), cwd: "/w/c/sub".into(), command: Some("make\nrm -rf ~".into()) },
+                Tab::Terminal { title: "del".into(), cwd: "/w/c\u{7f}".into(), command: None },
+            ],
+        )];
+        let b = build_actions(&saved, &OpenState::default(), &history());
+        let shell = |title: &str, cwd: &str| Tab::Terminal { title: title.into(), cwd: cwd.into(), command: None };
+        assert_eq!(
+            b.actions,
+            vec![Action::CreateWorkspace {
+                name: "Gamma".into(),
+                cwd: "/w/c".into(),
+                tabs: vec![
+                    shell("ctrl-c", "/w/c"),
+                    shell("newline id", "/w/c"),
+                    shell("bad folder", "/w/c"),
+                    shell("cmd", "/w/c/sub"),
+                    shell("del", "/w/c"),
+                ],
+            }]
+        );
+        assert_eq!(
+            b.warnings,
+            [
+                "Gamma › ctrl-c: its flags has control characters, opening a plain shell",
+                "Gamma › newline id: its session ID has control characters, opening a plain shell",
+                "Gamma › bad folder: its folder has control characters, opening a plain shell",
+                "Gamma › cmd: its command has control characters, opening a plain shell",
+                "Gamma › del: its folder has control characters, opening a plain shell",
+            ]
+        );
+        // In an open workspace such a tab is skipped, never added.
+        let mut alpha = saved[0].clone();
+        alpha.name = "Alpha".into();
+        alpha.cmux_workspace_id = Some("WA".into());
+        let b = build_actions(&[alpha], &alpha_with_one_open(), &history());
+        assert!(b.actions.is_empty(), "{:?}", b.actions);
     }
 
     #[test]

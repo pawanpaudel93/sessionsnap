@@ -22,7 +22,7 @@ pub enum Commit {
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
     let previous = if ctx.store.exists(name) { Some(ctx.store.load(name, None)?) } else { None };
-    let (workspaces, source) = match from {
+    let (workspaces, source, notes) = match from {
         Some(from) => {
             let (src_name, version) = parse_ref(from)?;
             let src = ctx.store.load(&src_name, version)?;
@@ -31,23 +31,25 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
                 cmux_state_version: None,
                 from: Some(format!("{}@{}", src.snapshot, src.version)),
             };
-            (src.workspaces, source)
+            (src.workspaces, source, vec![])
         }
         None => {
             let open = super::read_open(ctx.terminal.as_ref())?;
-            let captured = capture(&open, &ctx.agents, only)?;
+            let (captured, notes) = capture(&open, &ctx.agents, only)?;
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
                 Some(p) => carry_over(&p.workspaces, captured),
                 None => captured,
             };
-            (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None })
+            (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None }, notes)
         }
     };
-    commit(ctx, name, previous.as_ref(), workspaces, source, message)
+    commit(ctx, name, previous.as_ref(), workspaces, source, message, notes)
 }
 
-/// Writes a new version unless nothing changed. Shared by save and edits.
+/// Writes a new version unless nothing changed. Shared by save and edits. `notes` (what capture
+/// left out) are shown first among the warnings.
+#[allow(clippy::too_many_arguments)]
 pub fn commit(
     ctx: &Ctx,
     name: &str,
@@ -55,6 +57,7 @@ pub fn commit(
     workspaces: Vec<Workspace>,
     source: Source,
     message: Option<String>,
+    notes: Vec<String>,
 ) -> Result<Commit> {
     if let Some(p) = previous
         && p.workspaces == workspaces
@@ -65,7 +68,7 @@ pub fn commit(
     let message = message
         .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
     let v = ctx.store.save_new(name, &message, source, workspaces)?;
-    let warnings = edit::warnings(&v.workspaces, &ctx.agents);
+    let warnings = [notes, edit::warnings(&v.workspaces, &ctx.agents)].concat();
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
 }
 

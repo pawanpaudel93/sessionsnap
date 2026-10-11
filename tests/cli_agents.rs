@@ -192,3 +192,33 @@ fn open_shows_each_tabs_agent() {
     assert_eq!(tabs[1]["agent"], serde_json::Value::Null);
     assert_eq!((tabs[2]["agent"].as_str(), tabs[2]["sessionId"].as_str()), (Some("codex"), Some(X)));
 }
+
+#[test]
+fn control_characters_never_reach_the_terminal() {
+    let env = setup();
+    // Captured: an agent record with ^C in a flag is left out, with a warning.
+    env.fake.state.borrow_mut().workspaces[0].tabs.push(codex_tab("bad", X, &["\u{3}touch /tmp/pwned\r"]));
+    let o = env.run(&["save", "work"]).unwrap();
+    assert!(o.json["warnings"][0].as_str().unwrap().contains("left out its agent session"), "{}", o.json);
+    env.fake.state.borrow_mut().workspaces[0].tabs.pop();
+    // Hand-edited: control characters in a flag, an ID, a folder and a command.
+    let dir = env.dir.path().join("store/snapshots/work");
+    let file = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    v["workspaces"].as_array_mut().unwrap().push(serde_json::json!({"name": "Evil", "cwd": "/w/e", "tabs": [
+        {"type": "agent", "title": "a", "cwd": "/w/e", "agent": "codex", "sessionId": X, "args": ["\u{3}touch /tmp/pwned\r"]},
+        {"type": "agent", "title": "b", "cwd": "/w/e", "agent": "opencode", "sessionId": "s1\nrm -rf ~"},
+        {"type": "agent", "title": "c", "cwd": "/w/e\u{1b}[2J", "agent": "opencode", "sessionId": "s2"},
+        {"type": "terminal", "title": "d", "cwd": "/w/e", "command": "make\rrm -rf ~"}
+    ]}));
+    std::fs::write(&file, serde_json::to_string(&v).unwrap()).unwrap();
+    let o = env.run(&["restore", "work", "--yes", "-w", "Evil"]).unwrap();
+    assert_eq!(o.json["failed"], 0, "{}", o.json);
+    let launched = env.fake.launched.borrow().clone();
+    assert_eq!(launched.len(), 4);
+    for t in &launched {
+        assert_eq!(t.command, None, "{t:?}");
+        assert!(!t.cwd.chars().any(|c| c.is_control()), "{t:?}");
+    }
+    assert_eq!(launched[2].cwd, "/w/e");
+}

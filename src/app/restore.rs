@@ -7,8 +7,9 @@ use anyhow::Result;
 
 use super::{Ctx, read_open};
 use crate::adapters::agents::Agents;
+use crate::adapters::home_dir;
 use crate::adapters::store::Store;
-use crate::domain::model::{SessionRef, Tab, Workspace, parse_ref};
+use crate::domain::model::{SessionRef, Tab, Workspace, has_control, parse_ref};
 use crate::domain::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, LaunchTab, OpenState, SessionInfo, Terminal};
@@ -122,7 +123,9 @@ pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Te
         match action {
             Action::CreateWorkspace { name, cwd, tabs } => steps.push(step(
                 format!("create workspace {name} with {} tab(s)", tabs.len()),
-                terminal.create_workspace(name, cwd, &tabs.iter().map(launch).collect::<Vec<_>>()).map(|_| ()),
+                terminal
+                    .create_workspace(name, &safe_cwd(cwd), &tabs.iter().map(launch).collect::<Vec<_>>())
+                    .map(|_| ()),
             )),
             Action::AddTabs { workspace_ref, workspace_name, tabs } => {
                 for tab in tabs {
@@ -140,13 +143,23 @@ pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Te
 
 /// What the terminal opens for a saved tab: the agent's resume command (with the saved flags,
 /// quoted for the shell), or the terminal tab's own command. An agent tab that cannot be resumed
-/// (the plan has already turned those into shells) gets no command.
+/// and any command with a control character get no command (the plan has already turned those
+/// tabs into shells, with a warning); a folder with one, or none, becomes the home folder.
 pub fn launch_tab(agents: &Agents, tab: &Tab) -> LaunchTab {
     let command = match tab {
         Tab::Terminal { command, .. } => command.clone(),
         Tab::Agent { agent, session_id, args, .. } => agents.resume_command(agent, session_id, args),
     };
-    LaunchTab { title: tab.title().to_string(), cwd: tab.cwd().to_string(), command }
+    LaunchTab { title: tab.title().to_string(), cwd: safe_cwd(tab.cwd()), command: command.filter(|c| !has_control(c)) }
+}
+
+/// `cwd`, or the home folder when it is empty or has a control character.
+fn safe_cwd(cwd: &str) -> String {
+    if cwd.is_empty() || has_control(cwd) {
+        home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| "/".into())
+    } else {
+        cwd.to_string()
+    }
 }
 
 fn step(description: String, result: Result<()>) -> ApplyStep {
@@ -251,6 +264,13 @@ mod launch_tests {
         assert_eq!(cmd(&tab("cursor-agent", "c1", &[])), Some("cursor-agent --resume c1".into()));
         assert_eq!(cmd(&tab("claude", "x; rm -rf ~", &[])), None);
         assert_eq!(cmd(&tab("aider", "x", &[])), None);
+        // Nothing with a control character ever reaches the terminal.
+        assert_eq!(cmd(&tab("codex", A, &["\u{3}touch /tmp/pwned\r"])), None);
+        assert_eq!(cmd(&tab("opencode", "s\n1", &[])), None);
+        let bad = Tab::Terminal { title: "t".into(), cwd: "/w\r".into(), command: Some("make\nrm -rf ~".into()) };
+        let launched = launch_tab(&agents, &bad);
+        assert_eq!(launched.command, None);
+        assert!(!launched.cwd.contains('\r') && !launched.cwd.is_empty());
         let term = Tab::Terminal { title: "t".into(), cwd: "/w".into(), command: Some("npm run dev".into()) };
         assert_eq!(cmd(&term).as_deref(), Some("npm run dev"));
     }

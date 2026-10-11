@@ -87,6 +87,9 @@ impl<R: Runner> Terminal for CmuxCli<R> {
     }
 
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {
+        for t in tabs {
+            check_command(t, false)?;
+        }
         let layout = layout_json(tabs);
         let out = self.cmux_ok(&["new-workspace", "--name", name, "--cwd", cwd, "--layout", layout.as_str()])?;
         find_ref(&out, "workspace")
@@ -94,6 +97,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
     }
 
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()> {
+        check_command(tab, true)?;
         let out =
             self.cmux_ok(&["new-surface", "--workspace", workspace_ref, "--working-directory", tab.cwd.as_str()])?;
         let surface = find_ref(&out, "surface")
@@ -133,6 +137,29 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         self.cmux_ok(&["browser", "open", url])?;
         Ok("tab")
     }
+}
+
+/// Refuses a command cmux would not type as given: a control character acts on the terminal
+/// (^C, Enter, ESC sequences), and `cmux send` (`typed`) turns backslash sequences such as `\n`
+/// into keys, so a backslash cannot be sent as itself.
+fn check_command(tab: &LaunchTab, typed: bool) -> Result<()> {
+    let Some(command) = &tab.command else { return Ok(()) };
+    if command.chars().any(|c| (c as u32) < 0x20 || c == '\u{7f}') {
+        return Err(failure(
+            Exit::Error,
+            format!("not running the command of tab '{}': it has control characters", tab.title),
+        ));
+    }
+    if typed && command.contains('\\') {
+        return Err(failure(
+            Exit::Error,
+            format!(
+                "not typing the command of tab '{}' into cmux: it has a backslash, which `cmux send` would turn into a key",
+                tab.title
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// `--layout` JSON for `cmux new-workspace`: one pane holding every tab.
@@ -304,6 +331,22 @@ mod tests {
             calls[2],
             ["cmux", "rename-tab", "--workspace", "workspace:1", "--surface", "surface:40", "--title", "fix login"]
         );
+    }
+
+    #[test]
+    fn never_types_control_characters_or_backslashes() {
+        let b = backend(true);
+        for bad in ["codex resume x '\u{3}touch /tmp/pwned\r'", "make\nrm -rf ~", "a\u{1b}[2J", "x\u{7f}"] {
+            assert!(b.add_tab("workspace:1", &launch("t", "/w", Some(bad))).is_err(), "{bad:?}");
+            assert!(b.create_workspace("W", "/w", &[launch("t", "/w", Some(bad))]).is_err(), "{bad:?}");
+        }
+        // `cmux send` would turn \n into Enter, so a backslash is never typed.
+        let err = b.add_tab("workspace:1", &launch("t", "/w", Some(r"codex resume x -c 'k=a\nb'"))).unwrap_err();
+        assert!(err.to_string().contains("backslash"), "{err}");
+        // Nothing was sent to cmux.
+        assert!(b.runner.calls.borrow().is_empty());
+        // The layout JSON carries the command as a JSON value, not typed by `cmux send`.
+        assert!(b.create_workspace("W", "/w", &[launch("t", "/w", Some(r"echo 'a\b'"))]).is_ok());
     }
 
     #[test]
