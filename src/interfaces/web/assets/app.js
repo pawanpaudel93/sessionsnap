@@ -107,6 +107,8 @@ const ICONS = {
   refresh: "M13 8a5 5 0 1 1-1.5-3.5M13 3v2.5h-2.5",
   terminal: "M3 4.5 6.5 8 3 11.5M8 11.5h5",
   claude: "M8 2v12M2 8h12M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4",
+  codex: "M8 1.8 13.5 5v6L8 14.2 2.5 11V5zM6 6.5 7.6 8 6 9.5M8.6 9.8h1.6",
+  agent: "M4 6h8v6.5H4zM8 3.5V6M8 3.5h.01M6.3 9h.01M9.7 9h.01M2.5 8.5v2M13.5 8.5v2",
   plus: "M8 3.5v9M3.5 8h9",
   trash: "M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 8h5l.5-8",
   check: "M3.5 8.5 6.5 11.5 12.5 4.5",
@@ -194,9 +196,37 @@ function opsOf(name) {
   if (!pending.has(name)) pending.set(name, []);
   return pending.get(name);
 }
-function kindOf(t) { return t.type === "claude" ? "Claude session" : t.command ? `Runs: ${t.command}` : "Shell"; }
+
+// The agents sessionsnap knows (`sessionsnap agents`), by kind; loaded once.
+let agentInfo = null;
+async function loadAgents() {
+  if (agentInfo) return agentInfo;
+  try {
+    const r = await sessionsnap(["agents"]);
+    agentInfo = Object.fromEntries(r.result.agents.map((a) => [a.kind, a]));
+  } catch (e) {
+    if (e.reconnect) throw e;
+    return {}; // names fall back to kinds; try again next time
+  }
+  return agentInfo;
+}
+function agentName(kind) { return (agentInfo && agentInfo[kind] && agentInfo[kind].name) || kind; }
+// Claude Code and Codex have their own icons; every other agent shares one.
+function agentIcon(kind) { return kind === "claude" || kind === "codex" ? kind : "agent"; }
+function kindOf(t) {
+  if (t.type === "agent") {
+    const flags = t.args && t.args.length ? ` · flags: ${t.args.join(" ")}` : "";
+    return `${agentName(t.agent)} session${flags}`;
+  }
+  return t.command ? `Runs: ${t.command}` : "Shell";
+}
 function kindIcon(t) {
-  return h("span", { class: `kind ${t.type === "claude" ? "claude" : ""}`, title: kindOf(t) }, icon(t.type === "claude" ? "claude" : "terminal"));
+  const name = t.type === "agent" ? agentIcon(t.agent) : "terminal";
+  return h("span", { class: `kind ${name === "terminal" ? "" : name}`, title: kindOf(t) }, icon(name));
+}
+// A generic agent's name, shown with its tab (Claude Code and Codex have their own icons).
+function agentLabel(t) {
+  return t.type === "agent" && agentIcon(t.agent) === "agent" ? h("span", { class: "faint small ellipsis" }, agentName(t.agent)) : null;
 }
 
 function go(view, extra = {}) {
@@ -353,6 +383,7 @@ async function viewSnapshot() {
 // ---- Editor: ops are previewed with `edit --dry-run` and saved together as one version ----
 
 async function renderEdit(name) {
+  await loadAgents();
   const ops = opsOf(name);
   let workspaces;
   let warnings;
@@ -496,6 +527,7 @@ function editTab(w, t, pos) {
     h("span", { class: "grip", title: "Drag to move" }, icon("grip")),
     kindIcon(t),
     h("div", { class: "title" }, title,
+      agentLabel(t),
       where ? h("span", { class: "mono faint ellipsis", title: t.cwd }, where) : null),
     h("div", { class: "actions" },
       iconButton("pencil", "Rename tab", () => title.startEdit()),
@@ -568,23 +600,24 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
   return el;
 }
 
-// "+ Claude session" (search) or "+ Shell" in the workspace's folder.
+// "+ Agent session" (search across agents with a history) or "+ Shell" in the workspace's folder.
 function addTabRow(w) {
   const slot = h("div", {});
   const sessions = h("button", { class: "ghost", onclick: () => {
     if (slot.firstChild) return slot.replaceChildren();
-    const p = picker("Search Claude sessions by title, prompt or folder", async (q) => {
+    const p = picker("Search agent sessions by title, prompt or folder", async (q) => {
       if (!q) return null;
       const r = await sessionsnap(["sessions", "--search", q, "--days", "365"]);
       return r.result.sessions.slice(0, 30).map(({ session: s, open }) => ({
         label: s.title || s.firstPrompt || s.sessionId,
-        sub: `${tilde(s.cwd)}${open ? " · open in cmux" : ""}`,
-        pick: () => pushOp(said({ op: "tab-add-session", ws: w.name, sessionId: s.sessionId }, `Added ${s.title || "a Claude session"} to ${w.name}`)),
+        sub: `${agentName(s.agent)} · ${tilde(s.cwd)}${open ? " · open in cmux" : ""}`,
+        pick: () => pushOp(said({ op: "tab-add-session", ws: w.name, sessionId: s.sessionId, agent: s.agent },
+          `Added ${s.title || `a ${agentName(s.agent)} session`} to ${w.name}`)),
       }));
     });
     slot.replaceChildren(p);
     p.focusInput();
-  } }, icon("plus"), "Claude session");
+  } }, icon("plus"), "Agent session");
   const shell = h("button", { class: "ghost", onclick: () => pushOp(said({ op: "tab-add-terminal", ws: w.name, cwd: w.cwd }, `Added a shell to ${w.name}`)) },
     icon("plus"), "Shell");
   return h("div", {}, h("div", { class: "add-row" }, sessions, shell), slot);
@@ -757,6 +790,7 @@ async function renderHistory(name) {
 // ---- Restore ----
 
 async function renderRestore(name) {
+  await loadAgents();
   const ref = state.version ? `${name}@${state.version}` : name;
   const { result } = await sessionsnap(["show", ref]);
   const boxes = []; // { ws, pos, box }
@@ -795,7 +829,7 @@ async function renderRestore(name) {
       sync();
     });
     const bodyEl = h("ol", { class: expanded.has(key) ? "ws-body" : "ws-body hidden" }, w.tabs.map((t, i) =>
-      h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title)))));
+      h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title), agentLabel(t)))));
     const toggle = h("button", { class: `icon toggle ${expanded.has(key) ? "open" : ""}`, title: "Show tabs", "aria-label": "Show tabs",
       onclick: () => {
         const open = !expanded.has(key);
@@ -872,6 +906,7 @@ function renderSteps(result) {
 // ---- Recent ----
 
 async function viewRecent() {
+  await loadAgents();
   const hours = state.hours;
   const r = await sessionsnap(["recent", "--hours", String(hours)]);
   const out = h("div", {});
@@ -880,16 +915,17 @@ async function viewRecent() {
   const sessions = r.result.sessions;
   return h("section", { class: "stack" },
     h("div", { class: "row" }, h("div", { class: "grow" }, h("h1", {}, "Not open in cmux"),
-      h("p", { class: "muted small" }, "Claude sessions you used recently that have no tab now.")), pick),
+      h("p", { class: "muted small" }, "Agent sessions you used recently that have no tab now.")), pick),
     sessions.length === 0
-      ? h("div", { class: "empty" }, h("strong", {}, "Nothing missing"), "Every recent Claude session has a tab in cmux.")
+      ? h("div", { class: "empty" }, h("strong", {}, "Nothing missing"), "Every recent agent session has a tab in cmux.")
       : h("div", { class: "stack" },
         h("ul", { class: "list" }, sessions.map((s) => h("li", { class: "item" },
-          h("span", { class: "kind claude" }, icon("claude")),
+          kindIcon({ type: "agent", agent: s.agent }),
           h("div", { class: "grow" },
             h("div", { class: "meta" }, h("span", { class: "ellipsis grow" }, s.title || s.firstPrompt || s.sessionId),
               h("span", { class: "muted small" }, time(s.modified))),
-            h("div", { class: "mono muted ellipsis", title: s.cwd }, tilde(s.cwd)))))),
+            h("div", { class: "row" }, h("span", { class: "faint small" }, agentName(s.agent)),
+              h("span", { class: "mono muted ellipsis", title: s.cwd }, tilde(s.cwd))))))),
         h("div", { class: "footer-actions" }, actionButton(`Preview restoring ${plural(sessions.length, "session")}`, async () => {
           out.replaceChildren(renderPlan(await sessionsnap(["recent", "--hours", String(hours), "--plan"])));
           out.scrollIntoView({ behavior: "smooth", block: "nearest" });
