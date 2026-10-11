@@ -170,7 +170,8 @@ async function viewList() {
 
 async function viewSnapshot() {
   const name = state.snapshot;
-  const body = await { edit: renderEdit, history: renderHistory, restore: renderRestore }[state.tab](name);
+  // The header and tabs come first, so a body that fails still leaves History, Restore and Discard.
+  const body = h("div", {});
   const update = () => guard(async () => {
     if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
     const r = await ccsnap(["save", name]);
@@ -189,6 +190,13 @@ async function viewSnapshot() {
     go("list");
   }) }, "Delete");
   const labels = { edit: opsOf(name).length ? "Workspaces •" : "Workspaces", history: "History", restore: "Restore" };
+  const renderBody = { edit: renderEdit, history: renderHistory, restore: renderRestore }[state.tab];
+  try {
+    body.replaceChildren(await renderBody(name));
+  } catch (e) {
+    if (e.reconnect) throw e;
+    body.replaceChildren(h("p", { class: "error" }, e.message));
+  }
   return h("section", {},
     h("div", { class: "row spread" },
       h("h2", {}, h("button", { class: "link", onclick: () => go("list") }, "Snapshots"), " / ", name),
@@ -206,7 +214,15 @@ async function renderEdit(name) {
   let workspaces;
   let warnings;
   if (ops.length) {
-    ({ workspaces, warnings } = (await ccsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
+    try {
+      ({ workspaces, warnings } = (await ccsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
+    } catch (e) {
+      if (e.reconnect) throw e;
+      // The snapshot changed outside this page and the queued edits no longer apply.
+      return h("div", {},
+        h("p", { class: "error" }, `Your unsaved edits no longer apply: ${e.message}`),
+        h("button", { onclick: () => { pending.delete(name); render(); } }, "Discard"));
+    }
   } else {
     const r = await ccsnap(["show", name]);
     workspaces = r.result.version.workspaces;
@@ -228,7 +244,7 @@ async function pushOp(...ops) {
   } catch (e) {
     list.splice(list.length - ops.length, ops.length);
     toast(e.message, "error");
-    return;
+    // Re-render so a rename input that was refused goes back to its name.
   }
   render();
 }
