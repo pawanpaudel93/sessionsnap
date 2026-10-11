@@ -21,7 +21,8 @@ agents are resumed with cmux's documented commands (`sessionsnap agents --json` 
   saves the plan and does not apply it; show that plan, then `apply`.
 - When some steps fail, `apply`/`restore` exit 1 with the normal result JSON (`failed: n`,
   `steps[].error`), not the `{"error": …}` shape. Argument (usage) errors print plain text and exit 1.
-- Never pass `--yes` to `delete`, `prune` or `install-cmux` unless the user asked for that exact action.
+- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action.
+- Run `update` (it replaces the sessionsnap binary) or `uninstall` only when the user asks; `update --check` is safe.
 - Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
 - Do not start `sessionsnap ui` unless the user asks for the UI; it is for people.
 - `sessionsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
@@ -50,6 +51,9 @@ agents are resumed with cmux's documented commands (`sessionsnap agents --json` 
 | Many edits as one version | `sessionsnap edit <name> --batch - --json` with a JSON array on stdin, e.g. `[{"op":"tab-move","tab":"Alpha#2","to":"Beta"}]` |
 | Workspaces and tabs open in cmux now | `sessionsnap open --json` |
 | Preview edits without saving | `sessionsnap edit <name> --batch - --dry-run --json` (ops on stdin) |
+| Newer release? | `sessionsnap update --check --json` (`updateAvailable`) |
+| Install the latest release | `sessionsnap update --json` |
+| Remove sessionsnap | `sessionsnap uninstall [--keep-data] --yes --json` (lists each step's `status`) |
 
 Tabs are `<workspace>#<position>` (1-based) or `<workspace>:"<part of the title>"`.
 Edit ops: `ws-rename {ws,to}`, `ws-color {ws,color}`, `ws-index {ws,index}`, `ws-remove {ws}`,

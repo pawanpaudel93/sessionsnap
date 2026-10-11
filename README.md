@@ -2,10 +2,12 @@
 
 [![CI](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml/badge.svg)](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 ![Terminal: cmux](https://img.shields.io/badge/terminal-cmux-8A2BE2)
 
 **Save your cmux workspaces and the coding-agent sessions in them; bring them back resumed.**
+
+Website: <https://sessionsnap.pawanpaudel.com.np>
 
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces and the agent
 sessions in their tabs (Claude Code, Codex and more). Save what is open, edit it, and later reopen
@@ -48,12 +50,38 @@ Nothing runs in the background: every snapshot is one you ask for.
 
 | Requirement | Details |
 | --- | --- |
-| OS | macOS (tested on macOS 15) |
+| OS | macOS (tested on macOS 15) or Linux x86_64/arm64 (not yet tested against a live cmux) |
 | Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22) |
 | Agents | The agents you want to restore, on your `PATH` (`sessionsnap agents` checks) |
-| Build | Rust 1.96 or newer |
+| Build (from source only) | Rust 1.96 or newer |
 
 ## Installation
+
+```sh
+curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh
+```
+
+The installer:
+
+1. Picks the build for your system: one universal binary for macOS (Apple Silicon and Intel), a
+   static binary for Linux x86_64 or arm64.
+2. Downloads the latest release from GitHub and checks its SHA-256.
+3. Installs `sessionsnap` into `~/.local/bin` and adds that folder to `PATH` in your shell's
+   startup file (zsh, bash or fish) if it is not there yet.
+4. If `cmux` is on your `PATH`, offers to add the sessionsnap commands to the cmux palette
+   (`sessionsnap install-cmux`, which asks before changing anything).
+
+Running it again upgrades in place; so does `sessionsnap update`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SESSIONSNAP_VERSION` | latest release | Install this version, e.g. `0.1.0` |
+| `SESSIONSNAP_INSTALL_DIR` | `~/.local/bin` | Where the binary goes |
+| `SESSIONSNAP_NO_CMUX` | unset | `1` skips the cmux palette step |
+
+For example: `curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | SESSIONSNAP_NO_CMUX=1 sh`.
+
+From source:
 
 ```sh
 cargo install --git https://github.com/pawanpaudel93/sessionsnap
@@ -82,6 +110,8 @@ sessionsnap tab work Cascadia#4 --move "Cascadia Community"
 sessionsnap tab work Cascadia --add-session <session-id>
 sessionsnap tab work Cascadia --add-session <id> --agent opencode
 sessionsnap agents                    # supported agents and whether each is on PATH
+sessionsnap update --check            # is there a newer release?
+sessionsnap update                    # install it over this binary
 ```
 
 Every command takes `--json` (for scripts and agents) and `--yes` (skip confirmations).
@@ -178,6 +208,8 @@ Details:
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
+| cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name, unverified | `SESSIONSNAP_CMUX_STATE` |
+| cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
 sessionsnap also reads cmux's state file and `cmux --json tree`.
 
@@ -203,8 +235,10 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 
 ## Status
 
-Early, macOS only, cmux only for now; the code is organised so other terminals can be added (see
-[ARCHITECTURE.md](ARCHITECTURE.md)).
+Early, cmux only for now; the code is organised so other terminals can be added (see
+[ARCHITECTURE.md](ARCHITECTURE.md)). Linux builds are published, but sessionsnap has not been run
+against cmux on Linux yet: the state file location is a guess, and sessionsnap cannot start cmux
+there (start it yourself first).
 
 Verified with cmux 0.64.22 on macOS:
 
@@ -225,24 +259,52 @@ Not yet checked:
 ## Uninstalling
 
 ```sh
-cargo uninstall sessionsnap
-rm -rf ~/.sessionsnap                 # your snapshots; skip to keep them
-rm -rf ~/.claude/skills/sessionsnap   # if you ran install-skill
+sessionsnap uninstall               # asks first; --yes skips the prompt
+sessionsnap uninstall --keep-data   # keep your snapshots in ~/.sessionsnap
 ```
 
-If you ran `install-cmux`, remove the `"sessionsnap: …"` entries from `"commands"` in
-`~/.config/cmux/cmux.json` (a backup from before the install sits next to it).
+This removes the `"sessionsnap: …"` palette commands from cmux's `cmux.json` (after backing it
+up next to itself; your other commands and comments stay), the Claude Code skill
+(`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), `~/.sessionsnap` (or
+`SESSIONSNAP_HOME`) unless `--keep-data`, and the `sessionsnap` binary. Anything already gone is
+reported, not an error. It leaves the `PATH` line the installer added in place (other tools may
+use `~/.local/bin`) and lists it.
+
+Installed with `cargo install`? `sessionsnap uninstall` removes everything but the binary; then run
+`cargo uninstall sessionsnap`.
 
 ## Development
 
 ```sh
 cargo build                                   # target/debug/sessionsnap
 cargo test
-cargo clippy --all-targets -- -D warnings
+scripts/check.sh                              # every CI check: fmt, clippy, tests, node, shellcheck
 ```
 
 No test runs cmux, an agent or a browser; they use fakes and temp dirs.
-[ARCHITECTURE.md](ARCHITECTURE.md) describes the code layout for contributors and coding agents.
+[ARCHITECTURE.md](ARCHITECTURE.md) describes the code layout for contributors and coding agents;
+[AGENTS.md](AGENTS.md) has the short version for coding agents.
+
+<details>
+<summary>Releasing (maintainers)</summary>
+
+```sh
+scripts/release.sh 0.2.0 --dry-run   # build dist/ and show what would be published
+scripts/release.sh 0.2.0             # bump, check, build, commit, tag, push, GitHub release
+```
+
+Run it on a Mac, on a clean `main` that matches `origin/main` and has passed CI, with Docker
+running, the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets, and `gh` logged in. It
+sets the version in `Cargo.toml`, `Cargo.lock` and any `site/` page showing it, runs
+`scripts/check.sh`, builds a universal macOS binary (`lipo`) and static Linux binaries for
+x86_64 and arm64 (musl, in Docker), and writes to `dist/` one
+`sessionsnap-X.Y.Z-<target>.tar.gz` plus `.sha256` per target (`universal-apple-darwin`,
+`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes from the
+Conventional Commit subjects since the last tag). Then it asks, commits `chore: release vX.Y.Z`,
+tags, pushes `main` and the tag, and creates the GitHub Release. `-y` skips the question;
+`RELEASE_ALLOW_DIRTY=1` lets a dry run work on a dirty tree or another branch.
+
+</details>
 
 ## Contributing
 
