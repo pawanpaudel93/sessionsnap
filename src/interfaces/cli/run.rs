@@ -125,6 +125,7 @@ fn install_cmux(ctx: &Ctx, print: bool) -> Result<Outcome> {
         let text = serde_json::to_string_pretty(&commands)?;
         return Ok(Outcome::ok(json!({"commands": commands}), text));
     }
+    app::install::check_palette_supported(std::env::consts::OS)?;
     let config = app::install::cmux_config_path()?;
     confirm(ctx, &format!("Add sessionsnap commands to {}?", config.display()))?;
     let backup = app::install::install_cmux(&config, &exe)?;
