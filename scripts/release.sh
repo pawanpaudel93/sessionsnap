@@ -5,7 +5,7 @@
 # builds for x86_64 and arm64, each as a tarball with a .sha256), then commits, tags, pushes main
 # and the tag, and creates the GitHub Release with those assets. Uses your existing `gh` login.
 # The Linux builds run in one Docker container of this Mac's own architecture
-# (RELEASE_RUST_IMAGE, default rust:1-alpine), cross-linking the other with rust-lld.
+# (RELEASE_RUST_IMAGE, default a pinned rust:1-alpine), cross-linking the other with rust-lld.
 #
 #   --dry-run  build dist/ and show what would be published; commit, tag, push nothing
 #   -y         don't ask before publishing
@@ -17,7 +17,8 @@ set -eu
 REPO="pawanpaudel93/sessionsnap"
 MAC_TARGETS="aarch64-apple-darwin x86_64-apple-darwin"
 LINUX_TARGETS="x86_64-unknown-linux-musl aarch64-unknown-linux-musl"
-RUST_IMAGE="${RELEASE_RUST_IMAGE:-rust:1-alpine}"
+# Pinned (rust 1.99.0, Alpine) so a release builds the same way every time; bump it on purpose.
+RUST_IMAGE="${RELEASE_RUST_IMAGE:-rust:1-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() {
@@ -72,13 +73,19 @@ fi
 
 CURRENT=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
 [ -n "$CURRENT" ] || die "no version in Cargo.toml."
-# Files that record the version: Cargo's, and any site page that shows the current one.
+# A release never goes backwards (the same version is the first release of it).
+older=$(printf '%s %s\n' "${VERSION%%-*}" "${CURRENT%%-*}" | tr '.' ' ' |
+  awk '{ for (i = 1; i <= 3; i++) { if ($i < $(i + 3)) { print 1; exit } if ($i > $(i + 3)) { print 0; exit } } print 0 }')
+[ "$older" = 0 ] || die "$VERSION is older than the current version $CURRENT."
+
+# Files that record the version: Cargo's, and on the site only the marked spots (the nav badge,
+# and the home page's JSON-LD "version"), never examples in the text.
 VERSION_FILES="Cargo.toml Cargo.lock"
 SITE_FILES=""
-if [ -d site ]; then
-  SITE_FILES=$(grep -rlF "$CURRENT" site | sort | tr '\n' ' ') || SITE_FILES=""
-  VERSION_FILES="$VERSION_FILES $SITE_FILES"
-fi
+for f in site/index.html site/docs.html; do
+  [ ! -f "$f" ] || SITE_FILES="$SITE_FILES $f"
+done
+VERSION_FILES="$VERSION_FILES$SITE_FILES"
 
 TESTING=0
 [ "$DRY_RUN" = 1 ] && [ "${RELEASE_ALLOW_DIRTY:-0}" = 1 ] && TESTING=1
@@ -137,10 +144,13 @@ else
   OLD_RE=$(printf '%s' "$CURRENT" | sed 's/\./\\./g')
   subst Cargo.toml "1,/^version = /s/^version = \"$OLD_RE\"/version = \"$VERSION\"/"
   for f in $SITE_FILES; do
-    # Only whole versions: 0.1.0 in 10.1.0 or 0.1.01 stays.
-    subst "$f" "s/\([^0-9.]\)$OLD_RE\([^0-9]\)/\1$VERSION\2/g; s/^$OLD_RE\([^0-9]\)/$VERSION\1/; s/\([^0-9.]\)$OLD_RE\$/\1$VERSION/"
-    grep -qF "$VERSION" "$f" || die "$f: version not updated to $VERSION."
+    subst "$f" "s#<span class=\"version\" translate=\"no\">v[0-9A-Za-z.+-]*</span>#<span class=\"version\" translate=\"no\">$TAG</span>#"
+    grep -qF "<span class=\"version\" translate=\"no\">$TAG</span>" "$f" || die "$f: nav version badge not updated to $TAG."
   done
+  if [ -f site/index.html ]; then
+    subst site/index.html "s/^\( *\"version\": \"\)[0-9A-Za-z.+-]*\(\",\)\$/\1$VERSION\2/"
+    grep -qF "\"version\": \"$VERSION\"," site/index.html || die "site/index.html: JSON-LD version not updated."
+  fi
   cargo update --quiet --offline --workspace
 fi
 [ "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)" = "$VERSION" ] ||
