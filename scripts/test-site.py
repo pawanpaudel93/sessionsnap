@@ -189,6 +189,13 @@ def check():
     for flag in ("--check", "--keep-data", "SESSIONSNAP_VERSION", "SESSIONSNAP_INSTALL_DIR", "SESSIONSNAP_NO_CMUX"):
         require(flag in docs, f"docs.html must mention {flag}")
 
+    # Linux: sessionsnap installs there, but save/restore don't work with Linux cmux yet.
+    for doc, text in {**texts, "llms.txt": llms}.items():
+        require("macOS or Linux" not in text and "macOS and Linux" not in text,
+                f"{doc} must not claim sessionsnap works with cmux on Linux")
+        require("saving and restoring don't work yet" in " ".join(text.split()),
+                f"{doc} must say saving and restoring don't work on Linux yet")
+
     # Agent support claims match the README: Claude Code and Codex tested, the rest untested.
     readme = (ROOT / "README.md").read_text()
     readme_agents = re.findall(r"^\| ([^|]+?) \| (Full \(tested\)|Resume only \(untested\)) \|", readme, re.M)
