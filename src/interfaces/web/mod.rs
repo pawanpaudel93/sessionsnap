@@ -1,4 +1,7 @@
 //! The local web UI: a small HTTP server on 127.0.0.1 that runs sessionsnap commands for its page.
+//!
+//! Layer rule: an interface. The page speaks the CLI's command protocol: the commands it sends
+//! run through `cli::run_json`, exactly as `sessionsnap <args> --json` would.
 
 pub mod api;
 pub mod http;
