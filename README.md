@@ -68,16 +68,17 @@ The installer:
 2. Downloads the latest release from GitHub and checks its SHA-256.
 3. Installs `sessionsnap` into `~/.local/bin` and adds that folder to `PATH` in your shell's
    startup file (zsh, bash or fish) if it is not there yet.
-4. If `cmux` is on your `PATH`, offers to add the sessionsnap commands to the cmux palette
-   (`sessionsnap install-cmux`, which asks before changing anything).
+4. On macOS, if `cmux` is on your `PATH`, offers to add the sessionsnap commands to the cmux
+   palette (`sessionsnap install-cmux`, which asks before changing anything). The palette is
+   macOS-only; on Linux the installer skips this step.
 
 Running it again upgrades in place; so does `sessionsnap update`.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `SESSIONSNAP_VERSION` | latest release | Install this version, e.g. `0.1.0` |
-| `SESSIONSNAP_INSTALL_DIR` | `~/.local/bin` | Where the binary goes |
-| `SESSIONSNAP_NO_CMUX` | unset | `1` skips the cmux palette step |
+| `SESSIONSNAP_INSTALL_DIR` | `~/.local/bin` | Where the binary goes: an absolute path (a leading `~` is expanded) without quotes, `$`, backquotes, backslashes or control characters |
+| `SESSIONSNAP_NO_CMUX` | unset | `1` skips the cmux palette step (macOS) |
 
 For example: `curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | SESSIONSNAP_NO_CMUX=1 sh`.
 
@@ -90,7 +91,7 @@ cargo install --git https://github.com/pawanpaudel93/sessionsnap
 Optional integrations:
 
 ```sh
-sessionsnap install-cmux     # palette commands in cmux (asks first, backs up cmux.json)
+sessionsnap install-cmux     # palette commands in cmux on macOS (asks first, backs up cmux.json)
 sessionsnap install-skill    # teaches Claude Code to use sessionsnap
 ```
 
@@ -264,9 +265,11 @@ sessionsnap uninstall --keep-data   # keep your snapshots in ~/.sessionsnap
 ```
 
 This removes the `"sessionsnap: …"` palette commands from cmux's `cmux.json` (after backing it
-up next to itself; your other commands and comments stay), the Claude Code skill
+up next to itself; your other commands and comments stay; if its `"commands"` array holds
+comments, the step is skipped and you remove those entries by hand), the Claude Code skill
 (`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), `~/.sessionsnap` (or
-`SESSIONSNAP_HOME`) unless `--keep-data`, and the `sessionsnap` binary. Anything already gone is
+`SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap
+did not make), and the `sessionsnap` binary. Anything already gone is
 reported, not an error. It leaves the `PATH` line the installer added in place (other tools may
 use `~/.local/bin`) and lists it.
 
@@ -295,9 +298,11 @@ scripts/release.sh 0.2.0             # bump, check, build, commit, tag, push, Gi
 
 Run it on a Mac, on a clean `main` that matches `origin/main` and has passed CI, with Docker
 running, the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets, and `gh` logged in. It
-sets the version in `Cargo.toml`, `Cargo.lock` and any `site/` page showing it, runs
+refuses a version older than the current one, sets the version in `Cargo.toml`, `Cargo.lock`
+and the site's nav badge and JSON-LD `version` (examples in the text are left alone), runs
 `scripts/check.sh`, builds a universal macOS binary (`lipo`) and static Linux binaries for
-x86_64 and arm64 (musl, in Docker), and writes to `dist/` one
+x86_64 and arm64 (musl, in a pinned `rust:1-alpine` Docker image; `RELEASE_RUST_IMAGE` overrides
+it), and writes to `dist/` one
 `sessionsnap-X.Y.Z-<target>.tar.gz` plus `.sha256` per target (`universal-apple-darwin`,
 `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes from the
 Conventional Commit subjects since the last tag). Then it asks, commits `chore: release vX.Y.Z`,

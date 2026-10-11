@@ -125,7 +125,7 @@
               <li>Downloads the archive and its <code translate="no">.sha256</code> file, and stops if the checksum does not match.</li>
               <li>Installs <code translate="no">sessionsnap</code> into <code translate="no">~/.local/bin</code> (copy, then rename, so a running sessionsnap keeps its old file). Running it again upgrades in place.</li>
               <li>Adds that folder to <code translate="no">PATH</code> in your shell's startup file (<code translate="no">.zshrc</code>, <code translate="no">.bash_profile</code> on macOS or <code translate="no">.bashrc</code> on Linux, fish's <code translate="no">config.fish</code>, else <code translate="no">.profile</code>) if it is not there yet.</li>
-              <li>If <code translate="no">cmux</code> is on your <code translate="no">PATH</code> and a terminal is attached, runs <code translate="no">sessionsnap install-cmux</code>, which asks before adding the palette commands; otherwise it says how to run that later.</li>
+              <li>On macOS, if <code translate="no">cmux</code> is on your <code translate="no">PATH</code> and a terminal is attached, runs <code translate="no">sessionsnap install-cmux</code>, which asks before adding the palette commands; otherwise it says how to run that later. The palette is macOS-only, so on Linux this step is skipped.</li>
               <li>Prints the installed version and the next steps.</li>
             </ol>
             <div class="table-wrap">
@@ -135,8 +135,8 @@
                 </thead>
                 <tbody>
                   <tr><td><code translate="no">SESSIONSNAP_VERSION</code></td><td>Install this version (for example <code translate="no">0.1.0</code>) instead of the latest.</td></tr>
-                  <tr><td><code translate="no">SESSIONSNAP_INSTALL_DIR</code></td><td>Install into this folder instead of <code translate="no">~/.local/bin</code> (it is created if missing).</td></tr>
-                  <tr><td><code translate="no">SESSIONSNAP_NO_CMUX=1</code></td><td>Skip the cmux palette step; the installer only says how to run it later.</td></tr>
+                  <tr><td><code translate="no">SESSIONSNAP_INSTALL_DIR</code></td><td>Install into this folder instead of <code translate="no">~/.local/bin</code> (it is created if missing). It must be an absolute path (a leading <code translate="no">~</code> is expanded) without quotes, <code translate="no">$</code>, backquotes, backslashes or control characters.</td></tr>
+                  <tr><td><code translate="no">SESSIONSNAP_NO_CMUX=1</code></td><td>Skip the cmux palette step (macOS); the installer only says how to run it later.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -452,7 +452,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               <code translate="no">install-cmux</code> adds these commands to
               <code translate="no">~/.config/cmux/cmux.json</code>; run <code translate="no">cmux reload-config</code>
-              to load them. <code translate="no">--print</code> prints them instead.
+              to load them. <code translate="no">--print</code> prints them instead. The palette is for cmux
+              on macOS: on Linux, <code translate="no">install-cmux</code> refuses (exit 4) and changes nothing.
             </p>
             <ul>
               <li>sessionsnap: Save / update snapshot</li>
@@ -547,9 +548,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             </div>
             <p>After you confirm (or with <code translate="no">-y</code>), <code translate="no">uninstall</code> removes:</p>
             <ul>
-              <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay;</li>
+              <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay (if its <code translate="no">"commands"</code> array holds comments, this step is skipped and you remove those entries by hand);</li>
               <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>, only if sessionsnap wrote it;</li>
-              <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a folder holding files sessionsnap did not make is left alone;</li>
+              <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a symlink, or a folder holding files sessionsnap did not make, is left alone;</li>
               <li>the <code translate="no">sessionsnap</code> binary. One installed with cargo is left; run <code translate="no">cargo uninstall sessionsnap</code> afterwards.</li>
             </ul>
             <p>

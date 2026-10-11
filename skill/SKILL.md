@@ -22,6 +22,7 @@ agents are resumed with cmux's documented commands (`sessionsnap agents --json` 
 - When some steps fail, `apply`/`restore` exit 1 with the normal result JSON (`failed: n`,
   `steps[].error`), not the `{"error": …}` shape. Argument (usage) errors print plain text and exit 1.
 - Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action.
+- `install-cmux` (the cmux palette) is macOS-only; on Linux it exits 4 and changes nothing.
 - Run `update` (it replaces the sessionsnap binary) or `uninstall` only when the user asks; `update --check` is safe.
 - Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
 - Do not start `sessionsnap ui` unless the user asks for the UI; it is for people.

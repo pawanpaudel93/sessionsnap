@@ -34,15 +34,17 @@ restoring don't work yet: cmux on Linux is a different app with a different comm
 | 7 | not found |
 
 Maintenance: `sessionsnap update --check` reports a newer release, `sessionsnap update` installs
-it, `sessionsnap uninstall [--keep-data]` removes sessionsnap (asks first).
+it, `sessionsnap uninstall [--keep-data]` removes sessionsnap (asks first). The cmux palette
+(`install-cmux`) is macOS-only; on Linux it refuses with exit 4.
 
 ## Working on this repo
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) first: ports and adapters, the layer rules, and recipes
   for adding an agent or a terminal. `src/testing.rs` has fakes for every port.
-- Verify with `scripts/check.sh`: fmt, clippy, tests, `node --check` on the web page's script, and
-  `sh -n` plus shellcheck on `install.sh` and `scripts/*.sh`. CI runs the same script on macOS
-  and Linux; `scripts/release.sh` runs it too. No test may run cmux, an agent, a browser, or touch
+- Verify with `scripts/check.sh`: fmt, clippy, tests, `node --check` on the web page's script,
+  `sh -n` plus shellcheck on `install.sh` and `scripts/*.sh`, `scripts/test-install.sh` (install.sh
+  offline against fake releases) and `scripts/test-site.py`. CI runs the same script on macOS and
+  Linux; `scripts/release.sh` runs it too. No test may run cmux, an agent, a browser, or touch
   the network.
 - Commits follow Conventional Commits: `type(scope): lowercase summary`, e.g.
   `feat(agents): add gemini history`. Types: feat, fix, refactor, docs, test, chore, ci, style.

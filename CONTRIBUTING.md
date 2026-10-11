@@ -17,7 +17,8 @@ scripts/check.sh
 
 It runs `cargo fmt --check`, clippy, the tests, `node --check` on the web page's script, and
 `sh -n` plus shellcheck on `install.sh` and `scripts/*.sh` (`brew install shellcheck` or
-`apt install shellcheck`). CI runs the same script on macOS and Linux.
+`apt install shellcheck`), `scripts/test-install.sh` (install.sh offline against fake releases)
+and `scripts/test-site.py` (needs python3). CI runs the same script on macOS and Linux.
 
 ## Guidelines
 
