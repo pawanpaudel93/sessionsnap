@@ -64,18 +64,68 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
         !bad
     });
     match agent {
-        Some(a) => Tab::Agent {
-            title: agents
-                .history(&a.kind)
-                .and_then(|h| h.title_for(&t.cwd, &a.session_id))
-                .unwrap_or_else(|| t.title.clone()),
-            cwd: t.cwd.clone(),
-            agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
-            session_id: a.session_id.clone(),
-            args: a.args.clone(),
-        },
+        Some(a) => {
+            let (args, dropped) = without_credentials(&a.args);
+            if dropped {
+                note("dropped a flag that looked like a credential");
+            }
+            Tab::Agent {
+                title: agents
+                    .history(&a.kind)
+                    .and_then(|h| h.title_for(&t.cwd, &a.session_id))
+                    .unwrap_or_else(|| t.title.clone()),
+                cwd: t.cwd.clone(),
+                agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
+                session_id: a.session_id.clone(),
+                args,
+            }
+        }
         None => Tab::Terminal { title: t.title.clone(), cwd: t.cwd.clone(), command: None },
     }
+}
+
+/// Words in a flag or config key that suggest a credential.
+const SECRET_WORDS: &[&str] = &["api-key", "apikey", "token", "secret", "password", "passwd", "credential"];
+
+fn looks_secret(name: &str) -> bool {
+    let name = name.to_ascii_lowercase().replace('_', "-");
+    SECRET_WORDS.iter().any(|w| name.contains(w))
+}
+
+/// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
+/// `-c openai_api_key=x`), with their values; and whether any was dropped. Snapshots are plain
+/// files, shown in the UI.
+fn without_credentials(args: &[String]) -> (Vec<String>, bool) {
+    let mut out = vec![];
+    let mut dropped = false;
+    let mut it = args.iter().peekable();
+    while let Some(a) = it.next() {
+        let config = a == "-c" || a == "--config";
+        let (name, inline) = match a.split_once('=') {
+            Some((n, _)) if a.starts_with('-') => (n, true),
+            _ => (a.as_str(), false),
+        };
+        if a.starts_with('-') && !config && looks_secret(name) {
+            dropped = true;
+            if !inline {
+                it.next_if(|v| !v.starts_with('-'));
+            }
+            continue;
+        }
+        if config && it.peek().is_some_and(|v| looks_secret(v.split('=').next().unwrap_or(""))) {
+            dropped = true;
+            it.next();
+            continue;
+        }
+        if let Some(kv) = a.strip_prefix("--config=").or_else(|| a.strip_prefix("-c="))
+            && looks_secret(kv.split('=').next().unwrap_or(""))
+        {
+            dropped = true;
+            continue;
+        }
+        out.push(a.clone());
+    }
+    (out, dropped)
 }
 
 /// Replaces same-named workspaces of `base` with `captured` (keeping their color); appends new ones.
@@ -203,6 +253,49 @@ mod tests {
         assert_eq!(ws[1].tabs, [Tab::Terminal { title: "bad".into(), cwd: "/w/b".into(), command: None }]);
         assert_eq!(notes.len(), 1);
         assert!(notes[0].starts_with("Beta › bad: left out its agent session"), "{notes:?}");
+    }
+
+    #[test]
+    fn drops_flags_that_look_like_credentials() {
+        let args: Vec<String> = [
+            "-m",
+            "o3",
+            "--api-key",
+            "sk-1",
+            "--Auth-Token=t",
+            "-c",
+            "openai_api_key=k",
+            "-c",
+            "model=o3",
+            "--config=github_token=g",
+            "--password",
+            "--verbose",
+            "--SECRET-file",
+            "/s",
+            "--credentials",
+        ]
+        .map(String::from)
+        .to_vec();
+        let (kept, dropped) = without_credentials(&args);
+        assert!(dropped);
+        assert_eq!(kept, ["-m", "o3", "-c", "model=o3", "--verbose"]);
+        assert_eq!(without_credentials(&["-m".into(), "o3".into()]), (vec!["-m".to_string(), "o3".to_string()], false));
+        let history = agents(vec![]);
+        let mut open = open_state();
+        open.workspaces[1].tabs = vec![OpenTab {
+            reference: None,
+            title: "codex".into(),
+            cwd: "/w/b".into(),
+            agent: Some(AgentRef {
+                kind: "codex".into(),
+                session_id: B.into(),
+                args: vec!["--api-key".into(), "sk-1".into()],
+                alt_session_id: None,
+            }),
+        }];
+        let (ws, notes) = capture(&open, &history, &[]).unwrap();
+        assert!(matches!(&ws[1].tabs[0], Tab::Agent { args, .. } if args.is_empty()));
+        assert_eq!(notes, ["Beta › codex: dropped a flag that looked like a credential"]);
     }
 
     #[test]

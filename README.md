@@ -115,7 +115,9 @@ opens as a normal browser tab.
 - Reads cmux's state file and `cmux --json tree`; reads Claude Code transcripts under
   `~/.claude/projects` (`SESSIONSNAP_CLAUDE_DIR` for another `~/.claude`) and Codex sessions under
   `~/.codex/sessions` (`SESSIONSNAP_CODEX_DIR` for another `~/.codex`)
-- Never stores environment variables from cmux's state
+- Never stores environment variables from cmux's state, nor launch flags that look like credentials
+  (a name or `-c` key with api-key, token, secret, password, passwd or credential): those are
+  dropped with their values, and `save` says so
 
 ## Verified
 
