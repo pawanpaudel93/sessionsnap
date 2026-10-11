@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml/badge.svg)](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
 ![Terminal: cmux](https://img.shields.io/badge/terminal-cmux-8A2BE2)
 
 **Save your cmux workspaces and the coding-agent sessions in them; bring them back resumed.**
@@ -50,7 +50,7 @@ Nothing runs in the background: every snapshot is one you ask for.
 
 | Requirement | Details |
 | --- | --- |
-| OS | macOS (tested on macOS 15) or Linux x86_64/arm64 (not yet tested against a live cmux) |
+| OS | macOS (tested on macOS 15). On Linux (x86_64, arm64), sessionsnap installs, updates and uninstalls, but saving and restoring don't work yet: cmux on Linux is a different app with a different command line |
 | Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22) |
 | Agents | The agents you want to restore, on your `PATH` (`sessionsnap agents` checks) |
 | Build (from source only) | Rust 1.96 or newer |
@@ -208,7 +208,7 @@ Details:
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
-| cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name, unverified | `SESSIONSNAP_CMUX_STATE` |
+| cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
 sessionsnap also reads cmux's state file and `cmux --json tree`.
@@ -235,10 +235,10 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 
 ## Status
 
-Early, cmux only for now; the code is organised so other terminals can be added (see
-[ARCHITECTURE.md](ARCHITECTURE.md)). Linux builds are published, but sessionsnap has not been run
-against cmux on Linux yet: the state file location is a guess, and sessionsnap cannot start cmux
-there (start it yourself first).
+Early, macOS and cmux only for now; the code is organised so other terminals can be added (see
+[ARCHITECTURE.md](ARCHITECTURE.md)). On Linux, sessionsnap installs, updates and uninstalls, but
+saving and restoring don't work yet: cmux on Linux is a different app (cmux Browser, backed by
+cmux-tui) with a different command line and state files, and needs its own terminal adapter.
 
 Verified with cmux 0.64.22 on macOS:
 

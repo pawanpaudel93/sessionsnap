@@ -5,7 +5,8 @@ coding-agent sessions in their tabs, and later reopens only what is missing, wit
 resumed with its original flags. Claude Code and Codex are fully supported (their session
 histories are read); 15 more agents are resume-only and untested. It is one Rust binary: a CLI
 with `--json`, a web UI in the cmux Dock, cmux palette commands, and a Claude Code skill. It runs
-on macOS; Linux builds exist but have not been tried against a live cmux yet.
+on macOS with cmux 0.64+. On Linux, sessionsnap installs, updates and uninstalls, but saving and
+restoring don't work yet: cmux on Linux is a different app with a different command line.
 
 ## Using sessionsnap
 
