@@ -87,10 +87,16 @@ impl Store {
     /// (macOS by default, but not case-sensitive APFS or Linux); every lookup goes through it.
     pub fn stored_name(&self, name: &str) -> String {
         let Ok(entries) = fs::read_dir(self.snapshots_dir()) else { return name.to_string() };
-        let folders: Vec<String> = entries
+        let folders: Vec<(String, bool)> = entries
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.eq_ignore_ascii_case(name))
+            .map(|n| {
+                let has_versions = fs::read_dir(self.snapshots_dir().join(&n))
+                    .is_ok_and(|d| d.flatten().any(|f| parse_version_file(&f.file_name().to_string_lossy()).is_some()));
+                (n, has_versions)
+            })
             .collect();
         resolve_name(&folders, name).to_string()
     }
@@ -190,21 +196,22 @@ impl Store {
         let name = &self.stored_name(name);
         make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
-        fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        let next = self.versions(name)?.last().copied().unwrap_or(0) + 1;
-        let now = chrono::Local::now();
-        let version = Version {
-            sessionsnap: FORMAT,
-            snapshot: name.to_string(),
-            version: next,
-            created_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
-            message: message.to_string(),
-            source,
-            workspaces,
-        };
-        let file = dir.join(format!("{next:04}-{}.json", now.format("%Y%m%dT%H%M%S")));
-        write_private_json_atomic(&file, &version)?;
-        Ok(version)
+        in_new_dir(&dir, || {
+            let next = self.versions(name)?.last().copied().unwrap_or(0) + 1;
+            let now = chrono::Local::now();
+            let version = Version {
+                sessionsnap: FORMAT,
+                snapshot: name.to_string(),
+                version: next,
+                created_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+                message: message.to_string(),
+                source,
+                workspaces,
+            };
+            let file = dir.join(format!("{next:04}-{}.json", now.format("%Y%m%dT%H%M%S")));
+            write_private_json_atomic(&file, &version)?;
+            Ok(version)
+        })
     }
 
     pub fn delete(&self, name: &str) -> Result<()> {
@@ -227,13 +234,27 @@ impl Store {
     }
 }
 
-/// `name` as one of `stored`: itself when stored so, else the first that differs only in case,
-/// else `name` (a new snapshot).
-fn resolve_name<'a>(stored: &'a [String], name: &'a str) -> &'a str {
-    if stored.iter().any(|s| s == name) {
-        return name;
+/// `name` as one of the `stored` folders (name, holds versions) that differ from it only in case:
+/// one with versions first, then `name` itself, then the first in sorted order, so the answer does
+/// not depend on listing order; `name` when there is none (a new snapshot).
+fn resolve_name<'a>(stored: &'a [(String, bool)], name: &'a str) -> &'a str {
+    stored
+        .iter()
+        .filter(|(s, _)| s.eq_ignore_ascii_case(name))
+        .min_by_key(|(s, has_versions)| (!has_versions, s != name, s.as_str()))
+        .map_or(name, |(s, _)| s.as_str())
+}
+
+/// Runs `f` with `dir` created; removes `dir` again when this made it and `f` failed, so a failed
+/// save leaves no empty folder behind.
+fn in_new_dir<T>(dir: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let made = !dir.exists();
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let result = f();
+    if made && result.is_err() {
+        let _ = fs::remove_dir(dir);
     }
-    stored.iter().find(|s| s.eq_ignore_ascii_case(name)).map_or(name, String::as_str)
+    result
 }
 
 fn parse_version_file(fname: &str) -> Option<u32> {
@@ -285,7 +306,7 @@ mod tests {
     /// volume (Linux, case-sensitive APFS) finds "main" for "Main" too.
     #[test]
     fn names_resolve_ignoring_case_by_the_listing() {
-        let stored = vec!["main".to_string(), "Work".to_string(), "work".to_string()];
+        let stored: Vec<(String, bool)> = ["main", "Work", "work"].iter().map(|n| (n.to_string(), true)).collect();
         assert_eq!(resolve_name(&stored, "main"), "main");
         assert_eq!(resolve_name(&stored, "Main"), "main");
         assert_eq!(resolve_name(&stored, "MAIN"), "main");
@@ -303,6 +324,45 @@ mod tests {
         assert_eq!(s.prune("MAIN", 1).unwrap(), Vec::<u32>::new());
         s.delete("Main").unwrap();
         assert!(s.list().unwrap().is_empty());
+    }
+
+    /// Folders that differ only in case resolve the same whatever the listing order: the one with
+    /// versions first, then an exact match, then the first in sorted order.
+    #[test]
+    fn colliding_names_resolve_deterministically() {
+        let both = |a: (&str, bool), b: (&str, bool)| {
+            let one = vec![(a.0.to_string(), a.1), (b.0.to_string(), b.1)];
+            let other: Vec<(String, bool)> = one.iter().rev().cloned().collect();
+            (one, other)
+        };
+        // An empty "Work" (left by a failed save) loses to "work", which has versions.
+        let (one, other) = both(("Work", false), ("work", true));
+        for stored in [&one, &other] {
+            assert_eq!(resolve_name(stored, "Work"), "work");
+            assert_eq!(resolve_name(stored, "WORK"), "work");
+        }
+        // Both with versions: the exact name, else the first in sorted order.
+        let (one, other) = both(("work", true), ("Work", true));
+        for stored in [&one, &other] {
+            assert_eq!(resolve_name(stored, "work"), "work");
+            assert_eq!(resolve_name(stored, "WORK"), "Work");
+        }
+    }
+
+    /// A save that fails leaves no empty folder behind to shadow the name later.
+    #[test]
+    fn a_failed_write_removes_the_folder_it_made() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("snapshots").join("new");
+        let r: Result<()> = in_new_dir(&dir, || anyhow::bail!("disk full"));
+        assert!(r.is_err());
+        assert!(!dir.exists());
+        // A folder that was already there is left alone.
+        fs::create_dir_all(&dir).unwrap();
+        let r: Result<()> = in_new_dir(&dir, || anyhow::bail!("disk full"));
+        assert!(r.is_err());
+        assert!(dir.is_dir());
+        assert_eq!(in_new_dir(&d.path().join("ok"), || Ok(7)).unwrap(), 7);
     }
 
     /// Snapshots hold launch flags and session IDs: only the owner may read them.
