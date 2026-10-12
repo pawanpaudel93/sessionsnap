@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/pawanpaudel93/sessionsnap/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: Documentation
+    url: https://sessionsnap.pawanpaudel.com.np/docs
+    about: Commands, files, exit codes and the web UI.
