@@ -122,7 +122,8 @@ const SECRET_PREFIXES: &[&str] = &[
 const GENERIC_PREFIXES: &[&str] = &["sk-", "sk_", "akia", "aiza"];
 
 /// `rest` (what follows a generic prefix in `word`, original case) looks like a key: 20 or more
-/// characters with a digit or with both upper and lower case, or an AWS key's 16 upper-case
+/// characters with a digit or with both upper and lower case, and an unbroken run of 16 or more
+/// letters and digits (a year in a folder name is not a key); or an AWS key's 16 upper-case
 /// letters and digits after `AKIA`.
 fn random_rest(word: &str, rest: &str) -> bool {
     let aws = word.starts_with("AKIA")
@@ -130,7 +131,8 @@ fn random_rest(word: &str, rest: &str) -> bool {
         && rest.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
     let has = |f: fn(&char) -> bool| rest.chars().any(|c| f(&c));
     let random = has(char::is_ascii_digit) || (has(char::is_ascii_uppercase) && has(char::is_ascii_lowercase));
-    aws || (rest.len() >= 20 && random)
+    let longest_run = rest.split(|c: char| !c.is_ascii_alphanumeric()).map(str::len).max().unwrap_or(0);
+    aws || (rest.len() >= 20 && random && longest_run >= 16)
 }
 
 /// A value that looks like a credential whatever flag it follows: a known token or a JWT anywhere
@@ -643,6 +645,29 @@ mod tests {
         assert!(dropped && kept.is_empty(), "{kept:?}");
         let args = vec!["--add-dir".to_string(), "/w/sk-learn-experiments-and-more-notes".to_string()];
         assert_eq!(without_credentials(&args), (args.clone(), false));
+    }
+
+    /// A year or version in a folder name is not a key: the rest needs an unbroken run of 16 or
+    /// more letters and digits.
+    #[test]
+    fn short_prefix_words_need_a_long_unbroken_run() {
+        for dir in [
+            "/Users/me/sk-learn-experiments-2024",
+            "/w/akiapolaau-notes-2024-and-more-stuff",
+            "/w/sk_v2_test_data_2024_q3",
+        ] {
+            let args = vec!["--add-dir".to_string(), dir.to_string()];
+            assert_eq!(without_credentials(&args), (args.clone(), false), "{dir}");
+        }
+        // Built at runtime so secret scanners don't flag the source.
+        for t in [
+            format!("sk_live_{}", "x9".repeat(12)),
+            format!("sk-{}", "a1".repeat(24)),
+            format!("AKIA{}", "Q7".repeat(8)),
+        ] {
+            let (kept, dropped) = without_credentials(&["--x".to_string(), t.clone()]);
+            assert!(dropped && kept.is_empty(), "{t}");
+        }
     }
 
     #[test]

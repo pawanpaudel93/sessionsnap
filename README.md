@@ -238,7 +238,7 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   - a value holding, anywhere: a token with a specific prefix (`sk-ant-`, `sk-proj-`, GitHub
     `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…`, GitLab `glpat-`); a short
     generic prefix (`sk-`, `sk_`, AWS `AKIA`, Google `AIza`) followed by 20 or more characters with
-    a digit or both cases, or an AWS key's shape; a JWT; the word `bearer` followed by a space; a
+    a digit or both cases and an unbroken run of 16 letters and digits, or an AWS key's shape; a JWT; the word `bearer` followed by a space; a
     URL with a password (`scheme://user:pass@host`); or a key followed by `:` or `=` (quotes and
     backslashes allowed between) whose name ends in token, password, passwd, credential(s), auth,
     authorization, bearer, access_key or secret_key, or holds `secret`, `private`, `api_key`,
