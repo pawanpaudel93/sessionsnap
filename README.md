@@ -248,7 +248,7 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 
   They are dropped with their values (a dropped value takes its flag with it), and `save` says so.
   Permission rules after `--allowedTools`, `--disallowedTools` or `--tools`, such as
-  `Bash(gh auth:*)`, are kept unless they hold a token: losing a deny rule on restore would weaken
+  `Bash(gh auth:*)`, are kept unless they hold a credential: losing a deny rule on restore would weaken
   your safety settings.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 

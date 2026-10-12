@@ -233,55 +233,6 @@ fn rule_tail(chars: &[char], colon: usize) -> bool {
     it.next() == Some(&'*') && it.find(|c| !c.is_whitespace()) == Some(&')')
 }
 
-/// `v` is one permission rule or a list of them (split by commas or spaces): `Edit`,
-/// `Bash(gh auth:*)`, `mcp__gh__get_issue`. A rule is a tool name with an optional `(…)`.
-fn rule_shaped(v: &str) -> bool {
-    let chars: Vec<char> = v.chars().collect();
-    let mut i = 0;
-    let mut rules = 0;
-    while i < chars.len() {
-        if chars[i] == ',' || chars[i].is_whitespace() {
-            i += 1;
-            continue;
-        }
-        if !(chars[i].is_ascii_alphabetic() || chars[i] == '_') {
-            return false;
-        }
-        while i < chars.len() && (chars[i].is_ascii_alphanumeric() || "_.-".contains(chars[i])) {
-            i += 1;
-        }
-        if i < chars.len() && chars[i] == '(' {
-            let mut depth = 0;
-            loop {
-                match chars.get(i) {
-                    None => return false,
-                    Some('(') => depth += 1,
-                    Some(')') => depth -= 1,
-                    _ => {}
-                }
-                i += 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-        }
-        if i < chars.len() && !(chars[i] == ',' || chars[i].is_whitespace()) {
-            return false;
-        }
-        rules += 1;
-    }
-    rules > 0
-}
-
-/// Flags whose values are permission rules (`Bash(gh auth:*)`): they name commands, not
-/// credentials, so only a token inside one drops it. Losing a deny rule would weaken safety.
-const RULE_FLAGS: &[&str] =
-    &["--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--tools"];
-
-fn is_rule_flag(flag: &str) -> bool {
-    RULE_FLAGS.contains(&flag.to_ascii_lowercase().as_str())
-}
-
 /// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
 /// `-c openai_api_key=x`), with their values; and whether any was dropped. Snapshots are plain
 /// files, shown in the UI.
@@ -317,20 +268,10 @@ fn without_credentials(args: &[String]) -> (Vec<String>, bool) {
     }
     // A credential-looking value goes, with the bare flag right before it (`--auth sk-…`).
     let mut kept: Vec<String> = Vec::with_capacity(out.len());
-    // After a rule flag in the spaced form (`--allowedTools A B`), the values that follow are
-    // its rules while they are rule-shaped.
-    let mut in_rules = false;
+    // Permission rules (`--allowedTools "Bash(gh auth:*)"`) get the same check: `rule_tail` keeps
+    // their `name:*)` tails, and a credential written inside one still goes.
     for a in out {
-        let secret = if a.starts_with('-') {
-            let (name, value) = a.split_once('=').unwrap_or((a.as_str(), ""));
-            let inline = a.contains('=');
-            in_rules = is_rule_flag(name) && !inline;
-            if is_rule_flag(name) && inline && rule_shaped(value) { token_like(value) } else { looks_secret_value(&a) }
-        } else if in_rules && rule_shaped(&a) {
-            token_like(&a)
-        } else {
-            looks_secret_value(&a)
-        };
+        let secret = looks_secret_value(&a);
         if secret {
             dropped = true;
             if kept.last().is_some_and(|p| p.starts_with('-') && !p.contains('=')) {
@@ -556,7 +497,7 @@ mod tests {
     }
 
     /// Permission rules name commands, not credentials: a deny rule lost on restore weakens the
-    /// user's safety, so `Bash(gh auth:*)` stays. A token inside one still goes.
+    /// user's safety, so `Bash(gh auth:*)` stays. A credential inside one still goes.
     #[test]
     fn keeps_permission_rules_that_name_credential_commands() {
         let rules = ["Bash(gh auth:*)", "Bash(op secret:*)", "Bash(npm run auth:*)"];
@@ -663,6 +604,35 @@ mod tests {
             let (kept, dropped) = without_credentials(&args);
             assert!(dropped && kept.is_empty(), "{value}: {kept:?}");
         }
+    }
+
+    /// A credential written inside a permission rule is dropped like anywhere else: rule flags get
+    /// the full check, and only `rule_tail` keeps rules such as `Bash(gh auth:*)`.
+    #[test]
+    fn credentials_inside_permission_rules_are_dropped() {
+        // Built at runtime so secret scanners don't flag the source.
+        let pw = format!("pw{}", "7x".repeat(6));
+        let key = "k3y9".repeat(6);
+        let token = "a1b2c3d4e5".repeat(3);
+        let rules = [
+            format!("Bash(PGPASSWORD={pw} psql:*)"),
+            format!("Bash(mysql -u root --password={pw} db:*)"),
+            format!("Bash(curl -H 'x-api-key: {key}' https://api.x.com/*)"),
+            format!("Bash(export GITHUB_TOKEN={token})"),
+            format!("Bash(psql postgres://u:{pw}@db/x)"),
+        ];
+        for flag in ["--allowedTools", "--disallowedTools", "--tools"] {
+            for rule in &rules {
+                let (kept, dropped) = without_credentials(&[flag.to_string(), rule.clone()]);
+                assert!(dropped && kept.is_empty(), "{flag} {rule}: {kept:?}");
+                let (kept, dropped) = without_credentials(&[format!("{flag}={rule}")]);
+                assert!(dropped && kept.is_empty(), "{flag}={rule}: {kept:?}");
+            }
+        }
+        // A later rule-shaped argument is checked too.
+        let args: Vec<String> =
+            ["--tools", "Edit", "Read", &format!("Fix(the password: {pw})")].map(String::from).to_vec();
+        assert_eq!(without_credentials(&args), (["--tools", "Edit", "Read"].map(String::from).to_vec(), true));
     }
 
     /// A key whose rest is long and mixed-case counts even without a digit.
