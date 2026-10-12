@@ -172,7 +172,7 @@ fn names_a_credential(v: &str) -> bool {
         while j < chars.len() && chars[j].is_whitespace() {
             j += 1;
         }
-        let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=');
+        let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=') && !rule_syntax(&chars[j + 1..]);
         let credential = SECRET_KEY_ENDINGS.iter().any(|e| key.ends_with(e))
             || SECRET_KEY_PARTS.iter().any(|p| key.contains(p))
             || looks_secret(&key);
@@ -181,6 +181,20 @@ fn names_a_credential(v: &str) -> bool {
         }
     }
     false
+}
+
+/// After a `:`, `*` or `)` is permission-rule syntax (`Bash(gh auth:*)`), not a value.
+fn rule_syntax(rest: &[char]) -> bool {
+    rest.iter().find(|c| !c.is_whitespace()).is_some_and(|c| *c == '*' || *c == ')')
+}
+
+/// Flags whose values are permission rules (`Bash(gh auth:*)`): they name commands, not
+/// credentials, so only a token inside one drops it. Losing a deny rule would weaken safety.
+const RULE_FLAGS: &[&str] =
+    &["--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--tools"];
+
+fn is_rule_flag(flag: &str) -> bool {
+    RULE_FLAGS.contains(&flag.to_ascii_lowercase().as_str())
 }
 
 /// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
@@ -218,8 +232,19 @@ fn without_credentials(args: &[String]) -> (Vec<String>, bool) {
     }
     // A credential-looking value goes, with the bare flag right before it (`--auth sk-…`).
     let mut kept: Vec<String> = Vec::with_capacity(out.len());
+    // The flag the next values belong to (a flag may take several: `--allowedTools A B`).
+    let mut flag: Option<String> = None;
     for a in out {
-        if looks_secret_value(&a) {
+        let secret = if a.starts_with('-') {
+            let (name, value) = a.split_once('=').unwrap_or((a.as_str(), ""));
+            flag = Some(name.to_string());
+            if is_rule_flag(name) { token_like(value) } else { looks_secret_value(&a) }
+        } else if flag.as_deref().is_some_and(is_rule_flag) {
+            token_like(&a)
+        } else {
+            looks_secret_value(&a)
+        };
+        if secret {
             dropped = true;
             if kept.last().is_some_and(|p| p.starts_with('-') && !p.contains('=')) {
                 kept.pop();
@@ -441,6 +466,33 @@ mod tests {
         .map(String::from)
         .to_vec();
         assert_eq!(without_credentials(&fine), (fine.clone(), false));
+    }
+
+    /// Permission rules name commands, not credentials: a deny rule lost on restore weakens the
+    /// user's safety, so `Bash(gh auth:*)` stays. A token inside one still goes.
+    #[test]
+    fn keeps_permission_rules_that_name_credential_commands() {
+        let rules = ["Bash(gh auth:*)", "Bash(op secret:*)", "Bash(npm run auth:*)"];
+        for flag in ["--disallowedTools", "--allowedTools", "--allowed-tools", "--disallowed-tools", "--tools"] {
+            for rule in rules {
+                let args = vec![flag.to_string(), rule.to_string()];
+                assert_eq!(without_credentials(&args), (args.clone(), false), "{flag} {rule}");
+                let inline = vec![format!("{flag}={rule}")];
+                assert_eq!(without_credentials(&inline), (inline.clone(), false), "{flag}={rule}");
+            }
+            // Several rules after one flag.
+            let args: Vec<String> = [flag, "Edit", "Bash(gh token:*)", "-m", "o3"].map(String::from).to_vec();
+            assert_eq!(without_credentials(&args), (args.clone(), false), "{flag}");
+        }
+        // `key:*` and `key:)` are rule syntax wherever they appear.
+        for rule in rules {
+            let args = vec!["--permission-rule".to_string(), rule.to_string()];
+            assert_eq!(without_credentials(&args), (args.clone(), false), "{rule}");
+        }
+        // A token inside a rule still goes.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        let (kept, dropped) = without_credentials(&["--allowedTools".to_string(), format!("Bash(curl -H {ghp}:*)")]);
+        assert!(dropped && kept.is_empty(), "{kept:?}");
     }
 
     #[test]
