@@ -122,12 +122,15 @@ const SECRET_PREFIXES: &[&str] = &[
 const GENERIC_PREFIXES: &[&str] = &["sk-", "sk_", "akia", "aiza"];
 
 /// `rest` (what follows a generic prefix in `word`, original case) looks like a key: 20 or more
-/// characters with a digit, or an AWS key's 16 upper-case letters and digits after `AKIA`.
+/// characters with a digit or with both upper and lower case, or an AWS key's 16 upper-case
+/// letters and digits after `AKIA`.
 fn random_rest(word: &str, rest: &str) -> bool {
     let aws = word.starts_with("AKIA")
         && rest.len() == 16
         && rest.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-    aws || (rest.len() >= 20 && rest.chars().any(|c| c.is_ascii_digit()))
+    let has = |f: fn(&char) -> bool| rest.chars().any(|c| f(&c));
+    let random = has(char::is_ascii_digit) || (has(char::is_ascii_uppercase) && has(char::is_ascii_lowercase));
+    aws || (rest.len() >= 20 && random)
 }
 
 /// A value that looks like a credential whatever flag it follows: a known token or a JWT anywhere
@@ -200,7 +203,7 @@ fn names_a_credential(v: &str) -> bool {
         while j < chars.len() && chars[j].is_whitespace() {
             j += 1;
         }
-        let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=') && !rule_syntax(&chars[j + 1..]);
+        let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=') && !rule_tail(&chars, j);
         let credential = SECRET_KEY_ENDINGS.iter().any(|e| key.ends_with(e))
             || SECRET_KEY_PARTS.iter().any(|p| key.contains(p))
             || looks_secret(&key);
@@ -211,9 +214,63 @@ fn names_a_credential(v: &str) -> bool {
     false
 }
 
-/// After a `:`, `*` or `)` is permission-rule syntax (`Bash(gh auth:*)`), not a value.
-fn rule_syntax(rest: &[char]) -> bool {
-    rest.iter().find(|c| !c.is_whitespace()).is_some_and(|c| *c == '*' || *c == ')')
+/// The `:` at `colon` ends a permission rule (`Bash(gh auth:*)`), not a value: it is inside an
+/// open `(`, and followed by `*` and `)` (spaces allowed around the `*`) or directly by `)`.
+fn rule_tail(chars: &[char], colon: usize) -> bool {
+    let depth = chars[..colon].iter().fold(0i32, |d, c| match c {
+        '(' => d + 1,
+        ')' => d - 1,
+        _ => d,
+    });
+    if depth <= 0 || chars[colon] != ':' {
+        return false;
+    }
+    let rest = &chars[colon + 1..];
+    if rest.first() == Some(&')') {
+        return true;
+    }
+    let mut it = rest.iter().skip_while(|c| c.is_whitespace());
+    it.next() == Some(&'*') && it.find(|c| !c.is_whitespace()) == Some(&')')
+}
+
+/// `v` is one permission rule or a list of them (split by commas or spaces): `Edit`,
+/// `Bash(gh auth:*)`, `mcp__gh__get_issue`. A rule is a tool name with an optional `(…)`.
+fn rule_shaped(v: &str) -> bool {
+    let chars: Vec<char> = v.chars().collect();
+    let mut i = 0;
+    let mut rules = 0;
+    while i < chars.len() {
+        if chars[i] == ',' || chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if !(chars[i].is_ascii_alphabetic() || chars[i] == '_') {
+            return false;
+        }
+        while i < chars.len() && (chars[i].is_ascii_alphanumeric() || "_.-".contains(chars[i])) {
+            i += 1;
+        }
+        if i < chars.len() && chars[i] == '(' {
+            let mut depth = 0;
+            loop {
+                match chars.get(i) {
+                    None => return false,
+                    Some('(') => depth += 1,
+                    Some(')') => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        if i < chars.len() && !(chars[i] == ',' || chars[i].is_whitespace()) {
+            return false;
+        }
+        rules += 1;
+    }
+    rules > 0
 }
 
 /// Flags whose values are permission rules (`Bash(gh auth:*)`): they name commands, not
@@ -260,14 +317,16 @@ fn without_credentials(args: &[String]) -> (Vec<String>, bool) {
     }
     // A credential-looking value goes, with the bare flag right before it (`--auth sk-…`).
     let mut kept: Vec<String> = Vec::with_capacity(out.len());
-    // The flag the next values belong to (a flag may take several: `--allowedTools A B`).
-    let mut flag: Option<String> = None;
+    // After a rule flag in the spaced form (`--allowedTools A B`), the values that follow are
+    // its rules while they are rule-shaped.
+    let mut in_rules = false;
     for a in out {
         let secret = if a.starts_with('-') {
             let (name, value) = a.split_once('=').unwrap_or((a.as_str(), ""));
-            flag = Some(name.to_string());
-            if is_rule_flag(name) { token_like(value) } else { looks_secret_value(&a) }
-        } else if flag.as_deref().is_some_and(is_rule_flag) {
+            let inline = a.contains('=');
+            in_rules = is_rule_flag(name) && !inline;
+            if is_rule_flag(name) && inline && rule_shaped(value) { token_like(value) } else { looks_secret_value(&a) }
+        } else if in_rules && rule_shaped(&a) {
             token_like(&a)
         } else {
             looks_secret_value(&a)
@@ -577,6 +636,43 @@ mod tests {
         .map(String::from)
         .to_vec();
         assert_eq!(without_credentials(&fine), (fine.clone(), false));
+    }
+
+    /// Only rule-shaped values after a rule flag skip the key rule, and `key:*)` is rule syntax
+    /// only as the tail of an open `Tool(…`.
+    #[test]
+    fn rule_exemptions_are_narrow() {
+        // A prompt-like value after a rule flag is checked as usual; the rule and flag stay.
+        let args: Vec<String> = ["--allowedTools", "Edit", "DB password=hunter2"].map(String::from).to_vec();
+        assert_eq!(without_credentials(&args), (vec!["--allowedTools".to_string(), "Edit".to_string()], true));
+        // After the inline form nothing is exempt.
+        let args: Vec<String> = ["--allowedTools=Edit", "SECRET_KEY=abc"].map(String::from).to_vec();
+        assert_eq!(without_credentials(&args), (vec!["--allowedTools=Edit".to_string()], true));
+        // An inline value that is not rule-shaped is checked as usual.
+        let (kept, dropped) = without_credentials(&["--allowedTools=API_KEY=x".to_string()]);
+        assert!(dropped && kept.is_empty(), "{kept:?}");
+        // Lists of rules stay.
+        for rules in ["Edit,Bash(gh auth:*)", "Edit Bash(gh auth:*) mcp__gh__get_issue", "Bash(op secret: * )"] {
+            let args = vec!["--allowedTools".to_string(), rules.to_string()];
+            assert_eq!(without_credentials(&args), (args.clone(), false), "{rules}");
+        }
+        let args = vec!["--note".to_string(), "Bash(op secret: * )".to_string()];
+        assert_eq!(without_credentials(&args), (args.clone(), false));
+        for value in ["api_key: *s3cretvalue", "x-api-key: *abc123def", "password:)x", "token:)x"] {
+            let args = vec!["--header".to_string(), value.to_string()];
+            let (kept, dropped) = without_credentials(&args);
+            assert!(dropped && kept.is_empty(), "{value}: {kept:?}");
+        }
+    }
+
+    /// A key whose rest is long and mixed-case counts even without a digit.
+    #[test]
+    fn mixed_case_rest_after_a_short_prefix_is_a_token() {
+        let letters: String = ('A'..='Z').zip('a'..='z').flat_map(|(u, l)| [u, l]).take(22).collect();
+        let (kept, dropped) = without_credentials(&["--x".to_string(), format!("sk-{letters}")]);
+        assert!(dropped && kept.is_empty(), "{kept:?}");
+        let args = vec!["--add-dir".to_string(), "/w/sk-learn-experiments-and-more-notes".to_string()];
+        assert_eq!(without_credentials(&args), (args.clone(), false));
     }
 
     #[test]
