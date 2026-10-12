@@ -100,10 +100,11 @@ fn looks_secret(name: &str) -> bool {
     SECRET_ENDINGS.contains(&last)
 }
 
-/// Prefixes of well-known token formats (OpenAI, Anthropic, GitHub, Slack, GitLab, AWS, Google).
+/// Prefixes specific to one token format (Anthropic, OpenAI projects, GitHub, Slack, GitLab):
+/// followed by 8 or more characters, a word is taken as a token.
 const SECRET_PREFIXES: &[&str] = &[
-    "sk-",
-    "sk_",
+    "sk-ant-",
+    "sk-proj-",
     "ghp_",
     "gho_",
     "ghu_",
@@ -114,9 +115,20 @@ const SECRET_PREFIXES: &[&str] = &[
     "xoxp-",
     "xoxa-",
     "glpat-",
-    "akia",
-    "aiza",
 ];
+
+/// Short prefixes that ordinary words also start with (OpenAI and others `sk-`/`sk_`, AWS `AKIA`,
+/// Google `AIza`): a token only when the rest looks random (see `random_rest`).
+const GENERIC_PREFIXES: &[&str] = &["sk-", "sk_", "akia", "aiza"];
+
+/// `rest` (what follows a generic prefix in `word`, original case) looks like a key: 20 or more
+/// characters with a digit, or an AWS key's 16 upper-case letters and digits after `AKIA`.
+fn random_rest(word: &str, rest: &str) -> bool {
+    let aws = word.starts_with("AKIA")
+        && rest.len() == 16
+        && rest.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    aws || (rest.len() >= 20 && rest.chars().any(|c| c.is_ascii_digit()))
+}
 
 /// A value that looks like a credential whatever flag it follows: a known token or a JWT anywhere
 /// in it, a `Bearer` header, or a credential-named key followed by `:` or `=` anywhere in it
@@ -127,20 +139,23 @@ fn looks_secret_value(v: &str) -> bool {
 
 /// A known token prefix or a JWT at the start of any word of `v`, or a Bearer header.
 fn token_like(v: &str) -> bool {
-    let lower = v.to_ascii_lowercase();
-    let words = lower.split(|c: char| !(c.is_ascii_alphanumeric() || "_-.".contains(c)));
+    let words = v.split(|c: char| !(c.is_ascii_alphanumeric() || "_-.".contains(c)));
     for word in words {
         // A word may run on into a dot ("ghp_….", a sentence's end); prefixes hold none.
         let plain = word.split('.').next().unwrap_or("");
-        if SECRET_PREFIXES.iter().any(|p| plain.starts_with(p) && plain.len() >= p.len() + 8) {
+        let lower = plain.to_ascii_lowercase();
+        if SECRET_PREFIXES.iter().any(|p| lower.starts_with(p) && lower.len() >= p.len() + 8) {
+            return true;
+        }
+        if GENERIC_PREFIXES.iter().any(|p| lower.starts_with(p) && random_rest(plain, &plain[p.len()..])) {
             return true;
         }
         let parts: Vec<&str> = word.split('.').collect();
-        if word.starts_with("eyj") && parts.len() == 3 && parts.iter().all(|p| !p.is_empty()) {
+        if word.to_ascii_lowercase().starts_with("eyj") && parts.len() == 3 && parts.iter().all(|p| !p.is_empty()) {
             return true;
         }
     }
-    lower.contains("bearer ")
+    v.to_ascii_lowercase().contains("bearer ")
 }
 
 /// Key endings that name a credential in a value's `key: …` or `key=…`.
@@ -493,6 +508,30 @@ mod tests {
         let ghp = format!("ghp_{}", "a1".repeat(18));
         let (kept, dropped) = without_credentials(&["--allowedTools".to_string(), format!("Bash(curl -H {ghp}:*)")]);
         assert!(dropped && kept.is_empty(), "{kept:?}");
+    }
+
+    /// The short generic prefixes (`sk-`, `sk_`, `akia`, `aiza`) count only before something
+    /// random-looking, so paths and names that start with them stay.
+    #[test]
+    fn short_token_prefixes_need_a_random_looking_rest() {
+        for value in ["/Users/me/src/sk-learn-experiments", "aizawa_takeshi", "/w/akiapolaau-notes", "sk_test_mode"] {
+            let args = vec!["--add-dir".to_string(), value.to_string()];
+            assert_eq!(without_credentials(&args), (args.clone(), false), "{value}");
+        }
+        // Built at runtime so secret scanners don't flag the source.
+        let tokens = [
+            format!("sk-{}", "a1b2c3d4e5".repeat(3)),
+            format!("sk_live_{}", "x9".repeat(12)),
+            format!("AKIA{}", "Q7".repeat(8)),
+            format!("AIza{}", "Sy9".repeat(12)),
+            format!("sk-ant-{}", "abcdefgh"),
+            format!("sk-proj-{}", "abcdefgh"),
+        ];
+        for t in &tokens {
+            let args = vec!["--add-dir".to_string(), format!("/w/{t}/x")];
+            let (kept, dropped) = without_credentials(&args);
+            assert!(dropped && kept.is_empty(), "{t}");
+        }
     }
 
     #[test]
