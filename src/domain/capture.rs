@@ -179,15 +179,20 @@ fn token_like(v: &str) -> bool {
 const SECRET_KEY_ENDINGS: &[&str] =
     &["token", "password", "passwd", "credential", "credentials", "auth", "authorization", "access_key", "secret_key"];
 /// Key parts that name a credential wherever they appear in the key.
-const SECRET_KEY_PARTS: &[&str] = &["api_key", "api-key", "apikey", "x-api-key", "secret", "private"];
+const SECRET_KEY_PARTS: &[&str] =
+    &["api_key", "api-key", "apikey", "x-api-key", "secret", "private_key", "private-key", "privatekey"];
 
 /// Last key segments (split on `_`, `-`, `.`) that name a password: `DB_PASS`, `MYSQL_PWD`.
 const SECRET_KEY_SEGMENTS: &[&str] = &["pass", "pwd"];
 
 /// `key` (as written) names a credential: see `SECRET_KEY_ENDINGS`, `SECRET_KEY_PARTS` and
 /// `SECRET_KEY_SEGMENTS`, or an upper-case name ending in `_KEY` (`OPENAI_KEY`; `sort_key` is not).
+/// A key ending in `helper` (`apiKeyHelper`) names a script that prints a credential, not one.
 fn credential_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
+    if lower.ends_with("helper") {
+        return false;
+    }
     let last = lower.rsplit(['.', '_', '-']).next().unwrap_or("");
     let upper_key = key.ends_with("_KEY") && !key.chars().any(|c| c.is_ascii_lowercase());
     SECRET_KEY_ENDINGS.iter().any(|e| lower.ends_with(e))
@@ -571,7 +576,7 @@ mod tests {
             r#"{"env":{"SECRET_KEY":"abc"}}"#.to_string(),
             r#"{"env":{"AWS_SECRET_ACCESS_KEY":"abc"}}"#.to_string(),
             r#"{"env":{"AWS_ACCESS_KEY":"abc"}}"#.to_string(),
-            r#"{"env":{"CLIENT_PRIVATE_PEM":"abc"}}"#.to_string(),
+            r#"{"env":{"CLIENT_PRIVATE_KEY":"abc"}}"#.to_string(),
             format!(r#"{{"env":{{"DATABASE_URL":"postgres://u:{pw}@h/db"}}}}"#),
             format!("redis://:{pw}@cache:6379"),
             format!(r#"{{\"env\":{{\"GITHUB_TOKEN\":\"{ghp}\"}}}}"#).replace(&ghp, "x"),
@@ -619,6 +624,31 @@ mod tests {
             let (kept, dropped) = without_credentials(&args);
             assert!(dropped && kept.is_empty(), "{value}: {kept:?}");
         }
+    }
+
+    /// `private` counts only as a private key, and a `*Helper` key holds a script path.
+    #[test]
+    fn private_means_a_private_key_and_helpers_are_paths() {
+        for json in [
+            r#"{"env":{"SSH_PRIVATE_KEY":"abc"}}"#,
+            r#"{"privateKey":"abc"}"#,
+            r#"{"private-key":"abc"}"#,
+            r#"{"tls":{"private_key":"abc"}}"#,
+        ] {
+            let (kept, dropped) = without_credentials(&["--mcp-config".to_string(), json.to_string()]);
+            assert!(dropped && kept.is_empty(), "{json}");
+        }
+        let fine = [
+            "--settings",
+            r#"{"private":true}"#,
+            "--settings",
+            r#"{"apiKeyHelper":"~/bin/key.sh","awsAuthHelper":"~/bin/aws.sh"}"#,
+            "--mcp-config",
+            r#"{"env":{"CLIENT_PRIVATE_PEM_PATH":"/k/c.pem"}}"#,
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(without_credentials(&fine), (fine.clone(), false));
     }
 
     /// Short password keys and upper-case `*_KEY` names are credentials; `sort_key` is not.
