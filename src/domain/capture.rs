@@ -134,7 +134,19 @@ fn random_rest(word: &str, rest: &str) -> bool {
 /// in it, a `Bearer` header, or a credential-named key followed by `:` or `=` anywhere in it
 /// (`NAME=value`, inline JSON or TOML such as `{"GITHUB_TOKEN":"…"}`, `x-api-key: …`).
 fn looks_secret_value(v: &str) -> bool {
-    token_like(v) || names_a_credential(v)
+    token_like(v) || names_a_credential(v) || url_with_password(v)
+}
+
+/// `v` holds a URL with a password: `scheme://user:pass@host` (or `scheme://:pass@host`).
+fn url_with_password(v: &str) -> bool {
+    v.match_indices("://").any(|(i, _)| {
+        let rest = &v[i + 3..];
+        let authority = rest.split(|c: char| "/?#\"' \\".contains(c) || c.is_whitespace()).next().unwrap_or("");
+        authority
+            .rsplit_once('@')
+            .and_then(|(userinfo, _)| userinfo.split_once(':'))
+            .is_some_and(|(_, password)| !password.is_empty())
+    })
 }
 
 /// A known token prefix or a JWT at the start of any word of `v`, or a Bearer header.
@@ -160,9 +172,9 @@ fn token_like(v: &str) -> bool {
 
 /// Key endings that name a credential in a value's `key: …` or `key=…`.
 const SECRET_KEY_ENDINGS: &[&str] =
-    &["token", "secret", "password", "passwd", "credential", "credentials", "auth", "authorization"];
+    &["token", "password", "passwd", "credential", "credentials", "auth", "authorization", "access_key", "secret_key"];
 /// Key parts that name a credential wherever they appear in the key.
-const SECRET_KEY_PARTS: &[&str] = &["api_key", "api-key", "apikey", "x-api-key", "private_key"];
+const SECRET_KEY_PARTS: &[&str] = &["api_key", "api-key", "apikey", "x-api-key", "secret", "private"];
 
 /// `v` holds a key that names a credential, followed by `:` or `=` (after an optional closing
 /// quote and spaces), ignoring case: `GITHUB_TOKEN=`, `"X-API-Key":`, `x-api-key: `.
@@ -181,7 +193,8 @@ fn names_a_credential(v: &str) -> bool {
         }
         let key: String = chars[start..i].iter().collect::<String>().to_ascii_lowercase();
         let mut j = i;
-        while j < chars.len() && (chars[j] == '"' || chars[j] == '\'') {
+        // Closing quotes, also escaped ones in JSON inside JSON (`\"TOKEN\":`).
+        while j < chars.len() && (chars[j] == '"' || chars[j] == '\'' || chars[j] == '\\') {
             j += 1;
         }
         while j < chars.len() && chars[j].is_whitespace() {
@@ -532,6 +545,38 @@ mod tests {
             let (kept, dropped) = without_credentials(&args);
             assert!(dropped && kept.is_empty(), "{t}");
         }
+    }
+
+    /// More secret key names, connection strings with a password, and escaped JSON.
+    #[test]
+    fn drops_secret_keys_urls_with_passwords_and_escaped_json() {
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        let pw = "hunter2";
+        let secret = [
+            r#"{"env":{"SECRET_KEY":"abc"}}"#.to_string(),
+            r#"{"env":{"AWS_SECRET_ACCESS_KEY":"abc"}}"#.to_string(),
+            r#"{"env":{"AWS_ACCESS_KEY":"abc"}}"#.to_string(),
+            r#"{"env":{"CLIENT_PRIVATE_PEM":"abc"}}"#.to_string(),
+            format!(r#"{{"env":{{"DATABASE_URL":"postgres://u:{pw}@h/db"}}}}"#),
+            format!("redis://:{pw}@cache:6379"),
+            format!(r#"{{\"env\":{{\"GITHUB_TOKEN\":\"{ghp}\"}}}}"#).replace(&ghp, "x"),
+        ];
+        for value in &secret {
+            let args = vec!["--mcp-config".to_string(), value.clone()];
+            let (kept, dropped) = without_credentials(&args);
+            assert!(dropped && kept.is_empty(), "{value}");
+        }
+        let fine = [
+            "--mcp-config",
+            r#"{"env":{"DATABASE_URL":"postgres://h/db","HOME_URL":"https://user@example.com/x"}}"#,
+            "-c",
+            "mcp_servers.x.bearer_token_env_var=GH_PAT",
+            "--add-dir",
+            "/w/a",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(without_credentials(&fine), (fine.clone(), false));
     }
 
     #[test]
