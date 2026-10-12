@@ -150,20 +150,21 @@ fn save(
         None => return Err(failure(Exit::Error, "give a snapshot name (or --pick in a terminal)")),
     };
     let commit = app::snapshots::save(ctx, &name, only, from.as_deref(), message)?;
-    Ok(committed(&name, commit))
+    Ok(committed(commit))
 }
 
-/// The outcome of writing a version: exit 3 when nothing changed. Shared by save and edits.
-fn committed(name: &str, commit: Commit) -> Outcome {
+/// The outcome of writing a version: exit 3 when nothing changed. Shared by save and edits. Names
+/// the snapshot as stored ("main" for `save Main`).
+fn committed(commit: Commit) -> Outcome {
     match commit {
-        Commit::Unchanged { version } => Outcome::ok(
+        Commit::Unchanged { snapshot: name, version } => Outcome::ok(
             json!({"snapshot": name, "version": version, "changed": false}),
             format!("{name}: no changes since v{version}"),
         )
         .with_exit(Exit::NothingToDo),
         Commit::Saved { version: v, changes, warnings } => Outcome::ok(
             json!({
-                "snapshot": name, "version": v.version, "changed": true, "message": v.message, "changes": changes,
+                "snapshot": v.snapshot, "version": v.version, "changed": true, "message": v.message, "changes": changes,
                 "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces), "warnings": warnings,
             }),
             human::saved(&v, &warnings),
@@ -281,7 +282,7 @@ fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, d
                 format!("{name} (not saved): {summary}"),
             )
         }
-        Edited::Committed(commit) => committed(name, commit),
+        Edited::Committed(commit) => committed(commit),
     })
 }
 

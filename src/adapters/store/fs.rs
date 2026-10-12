@@ -77,8 +77,22 @@ impl Store {
         self.root.join("snapshots")
     }
 
+    /// The folder of snapshot `name`, under the name it is stored as (see `stored_name`).
     fn snapshot_dir(&self, name: &str) -> PathBuf {
-        self.snapshots_dir().join(name)
+        self.snapshots_dir().join(self.stored_name(name))
+    }
+
+    /// The name snapshot `name` is stored under. Names ignore case: "Main" is an existing "main".
+    /// Found in the folder listing, so it is the same whether or not the file system ignores case
+    /// (macOS by default, but not case-sensitive APFS or Linux); every lookup goes through it.
+    pub fn stored_name(&self, name: &str) -> String {
+        let Ok(entries) = fs::read_dir(self.snapshots_dir()) else { return name.to_string() };
+        let folders: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        resolve_name(&folders, name).to_string()
     }
 
     pub fn list(&self) -> Result<Vec<String>> {
@@ -172,9 +186,8 @@ impl Store {
     /// Writes the next version of `name` and returns it.
     pub fn save_new(&self, name: &str, message: &str, source: Source, workspaces: Vec<Workspace>) -> Result<Version> {
         validate_name(name)?;
-        // Names ignore case, as macOS folders do: "Main" adds to an existing "main".
-        let existing = self.list()?.into_iter().find(|n| n.eq_ignore_ascii_case(name));
-        let name = existing.as_deref().unwrap_or(name);
+        // Names ignore case: "Main" adds to an existing "main".
+        let name = &self.stored_name(name);
         make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -212,6 +225,15 @@ impl Store {
         }
         Ok(doomed)
     }
+}
+
+/// `name` as one of `stored`: itself when stored so, else the first that differs only in case,
+/// else `name` (a new snapshot).
+fn resolve_name<'a>(stored: &'a [String], name: &'a str) -> &'a str {
+    if stored.iter().any(|s| s == name) {
+        return name;
+    }
+    stored.iter().find(|s| s.eq_ignore_ascii_case(name)).map_or(name, String::as_str)
 }
 
 fn parse_version_file(fname: &str) -> Option<u32> {
@@ -257,6 +279,30 @@ mod tests {
         let v = s.save_new("Main", "m", Source::default(), vec![ws("A")]).unwrap();
         assert_eq!((v.snapshot.as_str(), v.version), ("main", 2));
         assert_eq!(s.list().unwrap(), vec!["main".to_string()]);
+    }
+
+    /// Lookups go by the folder listing, not by the file system's case rules, so a case-sensitive
+    /// volume (Linux, case-sensitive APFS) finds "main" for "Main" too.
+    #[test]
+    fn names_resolve_ignoring_case_by_the_listing() {
+        let stored = vec!["main".to_string(), "Work".to_string(), "work".to_string()];
+        assert_eq!(resolve_name(&stored, "main"), "main");
+        assert_eq!(resolve_name(&stored, "Main"), "main");
+        assert_eq!(resolve_name(&stored, "MAIN"), "main");
+        // Two folders that differ only in case (possible on a case-sensitive volume): exact wins.
+        assert_eq!(resolve_name(&stored, "work"), "work");
+        assert_eq!(resolve_name(&stored, "Work"), "Work");
+        assert_eq!(resolve_name(&stored, "new"), "new");
+
+        let (_d, s) = store();
+        s.save_new("main", "m", Source::default(), vec![ws("A")]).unwrap();
+        assert_eq!(s.stored_name("MAIN"), "main");
+        assert!(s.exists("Main"));
+        assert_eq!(s.versions("mAiN").unwrap(), vec![1]);
+        assert_eq!(s.load("Main", None).unwrap().snapshot, "main");
+        assert_eq!(s.prune("MAIN", 1).unwrap(), Vec::<u32>::new());
+        s.delete("Main").unwrap();
+        assert!(s.list().unwrap().is_empty());
     }
 
     /// Snapshots hold launch flags and session IDs: only the owner may read them.

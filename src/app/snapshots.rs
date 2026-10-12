@@ -11,8 +11,8 @@ use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name}
 /// What writing a version did.
 #[derive(Debug)]
 pub enum Commit {
-    /// Nothing changed since `version`; nothing was written.
-    Unchanged { version: u32 },
+    /// Nothing changed since `version` of `snapshot`; nothing was written.
+    Unchanged { snapshot: String, version: u32 },
     /// A new version, the changes from the previous one, and problems worth showing.
     Saved { version: Box<Version>, changes: Vec<Change>, warnings: Vec<String> },
 }
@@ -64,7 +64,7 @@ pub fn commit(
     if let Some(p) = previous
         && p.workspaces == workspaces
     {
-        return Ok(Commit::Unchanged { version: p.version });
+        return Ok(Commit::Unchanged { snapshot: p.snapshot.clone(), version: p.version });
     }
     let changes = diff::diff(previous.map(|p| p.workspaces.as_slice()).unwrap_or(&[]), &workspaces);
     let message = message

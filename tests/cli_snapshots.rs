@@ -79,3 +79,22 @@ fn open_lists_live_workspaces() {
     assert_eq!(o.json["workspaces"][0]["tabs"][1]["sessionId"], serde_json::Value::Null);
     assert!(o.text.contains("Beta (1 tab"), "{}", o.text);
 }
+
+/// Names ignore case on every command, also where the file system does not (Linux, case-sensitive
+/// APFS): `save Main` after `save main` adds to "main", so it compares with and merges into it.
+#[test]
+fn names_ignore_case_on_every_command() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    assert_eq!(env.run(&["save", "Work"]).unwrap().exit, Exit::NothingToDo, "nothing changed");
+    env.fake.state.borrow_mut().workspaces[1].tabs.clear();
+    let o = env.run(&["save", "WORK", "--workspace", "beta"]).unwrap();
+    assert_eq!((o.json["snapshot"].as_str(), o.json["version"].as_u64()), (Some("work"), Some(2)));
+    assert_eq!(o.json["workspaces"], 2, "Alpha is kept: {}", o.json);
+    assert_eq!(env.run(&["show", "Work"]).unwrap().json["version"]["workspaces"].as_array().unwrap().len(), 2);
+    assert_eq!(env.run(&["history", "WORK"]).unwrap().json["versions"].as_array().unwrap().len(), 2);
+    assert_eq!(env.run(&["list"]).unwrap().json["snapshots"].as_array().unwrap().len(), 1);
+    assert_eq!(env.run(&["prune", "Work", "--keep", "1", "--yes"]).unwrap().json["deleted"], serde_json::json!([1]));
+    env.run(&["delete", "WORK", "-y"]).unwrap();
+    assert_eq!(exit_of(&env.run(&["show", "work"]).unwrap_err()), Exit::NotFound);
+}
