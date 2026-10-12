@@ -232,10 +232,16 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 - A tab whose flags, ID, folder or command hold a control character (newline, ^C, ESC …) is never
   run, and an agent record with one is not saved. A resume command with a backslash is not typed
   into an already open workspace (`cmux send` would turn `\n` into Enter).
-- Environment variables from cmux's state are never stored, nor flags that look like credentials
-  (a flag name or `-c` key ending in token, secret, password, credential(s), auth, or holding an
-  API key, and values that look like tokens). They are dropped with their values, and `save` says
-  so.
+- Environment variables from cmux's state are never stored, nor flags that look like credentials:
+  - a flag name or `-c` key ending in token, secret, password, passwd, credential(s), auth,
+    authorization or bearer, or holding `api_key`, `api-key` or `apikey`;
+  - a value holding, anywhere, a token with a well-known prefix (OpenAI and Anthropic `sk-`,
+    GitHub, Slack, GitLab, AWS, Google), a JWT, a `Bearer` header, or a key ending in token,
+    secret, password, passwd, credential(s), auth or authorization, or holding `api_key`,
+    `api-key`, `apikey` or `private_key`, followed by `:` or `=` (as in inline JSON or TOML for
+    `--mcp-config` or `-c`, and headers such as `x-api-key: …`).
+
+  They are dropped with their values (a dropped value takes its flag with it), and `save` says so.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 
 ## Status

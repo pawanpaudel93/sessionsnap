@@ -118,23 +118,69 @@ const SECRET_PREFIXES: &[&str] = &[
     "aiza",
 ];
 
-/// A value that looks like a credential whatever flag it follows: a known token prefix, a JWT,
-/// an `Authorization`/`Bearer` header, or `NAME=value` whose name looks like a credential.
+/// A value that looks like a credential whatever flag it follows: a known token or a JWT anywhere
+/// in it, a `Bearer` header, or a credential-named key followed by `:` or `=` anywhere in it
+/// (`NAME=value`, inline JSON or TOML such as `{"GITHUB_TOKEN":"…"}`, `x-api-key: …`).
 fn looks_secret_value(v: &str) -> bool {
-    token_like(v)
-        || (!v.starts_with('-')
-            && v.split_once('=').is_some_and(|(name, value)| looks_secret(name) || token_like(value)))
+    token_like(v) || names_a_credential(v)
 }
 
+/// A known token prefix or a JWT at the start of any word of `v`, or a Bearer header.
 fn token_like(v: &str) -> bool {
-    let lower = v.trim().to_ascii_lowercase();
-    if SECRET_PREFIXES.iter().any(|p| lower.starts_with(p) && lower.len() >= p.len() + 8) {
-        return true;
+    let lower = v.to_ascii_lowercase();
+    let words = lower.split(|c: char| !(c.is_ascii_alphanumeric() || "_-.".contains(c)));
+    for word in words {
+        // A word may run on into a dot ("ghp_….", a sentence's end); prefixes hold none.
+        let plain = word.split('.').next().unwrap_or("");
+        if SECRET_PREFIXES.iter().any(|p| plain.starts_with(p) && plain.len() >= p.len() + 8) {
+            return true;
+        }
+        let parts: Vec<&str> = word.split('.').collect();
+        if word.starts_with("eyj") && parts.len() == 3 && parts.iter().all(|p| !p.is_empty()) {
+            return true;
+        }
     }
-    if lower.starts_with("eyj") && lower.matches('.').count() == 2 {
-        return true;
+    lower.contains("bearer ")
+}
+
+/// Key endings that name a credential in a value's `key: …` or `key=…`.
+const SECRET_KEY_ENDINGS: &[&str] =
+    &["token", "secret", "password", "passwd", "credential", "credentials", "auth", "authorization"];
+/// Key parts that name a credential wherever they appear in the key.
+const SECRET_KEY_PARTS: &[&str] = &["api_key", "api-key", "apikey", "x-api-key", "private_key"];
+
+/// `v` holds a key that names a credential, followed by `:` or `=` (after an optional closing
+/// quote and spaces), ignoring case: `GITHUB_TOKEN=`, `"X-API-Key":`, `x-api-key: `.
+fn names_a_credential(v: &str) -> bool {
+    let key_char = |c: char| c.is_ascii_alphanumeric() || "_-.".contains(c);
+    let chars: Vec<char> = v.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if !key_char(chars[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && key_char(chars[i]) {
+            i += 1;
+        }
+        let key: String = chars[start..i].iter().collect::<String>().to_ascii_lowercase();
+        let mut j = i;
+        while j < chars.len() && (chars[j] == '"' || chars[j] == '\'') {
+            j += 1;
+        }
+        while j < chars.len() && chars[j].is_whitespace() {
+            j += 1;
+        }
+        let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=');
+        let credential = SECRET_KEY_ENDINGS.iter().any(|e| key.ends_with(e))
+            || SECRET_KEY_PARTS.iter().any(|p| key.contains(p))
+            || looks_secret(&key);
+        if assigned && credential {
+            return true;
+        }
     }
-    lower.contains("bearer ") || lower.starts_with("authorization:")
+    false
 }
 
 /// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
@@ -340,6 +386,61 @@ mod tests {
         let (kept, dropped) = without_credentials(&args);
         assert!(dropped);
         assert_eq!(kept, ["--model", "o3", "--sort-key", "name"].map(String::from).to_vec());
+    }
+
+    /// Credentials inside a flag's value (inline JSON or TOML, a header) go with their flag.
+    #[test]
+    fn drops_values_holding_credentials_anywhere() {
+        // Built at runtime so secret scanners don't flag the source.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        let jwt = format!("eyJ{}.eyJ{}.{}", "hbGciOi", "zdWIiOiIx", "c2lnbmF0dXJl");
+        let secret = [
+            ("--mcp-config", format!(r#"{{"mcpServers":{{"gh":{{"env":{{"GITHUB_TOKEN":"{ghp}"}}}}}}}}"#)),
+            (
+                "--mcp-config",
+                r#"{"mcpServers":{"x":{"url":"https://x","headers":{"X-API-Key":"abc123"}}}}"#.to_string(),
+            ),
+            ("-c", format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)),
+            ("-c", r#"mcp_servers.x.http_headers={"X-API-Key"="abc123"}"#.to_string()),
+            ("--header", "x-api-key: abc123".to_string()),
+            // A known token or a JWT anywhere in the value, not only at its start.
+            ("--mcp-config", format!(r#"{{"args":["--key","{ghp}"]}}"#)),
+            ("--note", format!("use {jwt} here")),
+            ("-c", "mcp_servers.db.env={DB_PASSWORD='p'}".to_string()),
+            ("--mcp-config", r#"{"env":{"PRIVATE_KEY_PATH" : "x", "Authorization":"Basic x"}}"#.to_string()),
+        ];
+        for (flag, value) in &secret {
+            let args = vec!["-m".to_string(), "o3".to_string(), flag.to_string(), value.clone()];
+            let (kept, dropped) = without_credentials(&args);
+            assert!(dropped, "{flag} {value}");
+            assert_eq!(kept, ["-m", "o3"], "{flag} {value}");
+            // Written as one word too.
+            let (kept, dropped) = without_credentials(&[format!("{flag}={value}")]);
+            assert!(dropped && kept.is_empty(), "{flag}={value}");
+        }
+        let fine = [
+            "--model",
+            "o3",
+            "--sort-key",
+            "name",
+            "--max-tokens",
+            "100",
+            "-c",
+            "model=o3",
+            "-c",
+            "model_auto_compact_token_limit=5000",
+            "--allowedTools",
+            "Bash(git:*)",
+            "--mcp-config",
+            r#"{"mcpServers":{"gh":{"command":"npx","args":["-y","@modelcontextprotocol/server-github"]}}}"#,
+            "--append-system-prompt",
+            "Keep answers short: one line.",
+            "--add-dir",
+            "/w/task-runner",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(without_credentials(&fine), (fine.clone(), false));
     }
 
     #[test]
