@@ -195,9 +195,12 @@ Details:
   login. Stop it with Ctrl-C, or close the "sessionsnap UI" workspace.
 - Flags: `--port <n>` (default 47317), `--idle-minutes <n>` (default 30), `--no-open` (serve
   without showing the page).
-- The link carries a one-time key after `#` (`…/#t=<key>`), which browsers never send to a server.
-  A new start makes a new key. If the page has no key or an old one, click **Reconnect** or run
-  `sessionsnap ui` again.
+- The link carries a key after `#` (`…/#t=<key>`), which browsers never send to a server. The key
+  lasts as long as the server: each start makes a new one. It never goes on a command line, where
+  other users could read it with `ps`: cmux opens the page without it, and the key is handed over
+  through cmux's socket. If that fails, the page opens without a key and `sessionsnap ui` prints
+  the keyed link in its terminal. If the page has no key or an old one, click **Reconnect**, open
+  that link, or run `sessionsnap ui` again.
 - In cmux 0.64 the Dock is a beta feature (Settings → Beta Features → Dock). Without it the page
   opens as a normal browser tab.
 
@@ -210,6 +213,7 @@ Details:
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
 | cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
+| cmux socket (web UI) | `$CMUX_SOCKET_PATH`, else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
 sessionsnap also reads cmux's state file and `cmux --json tree`.

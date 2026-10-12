@@ -7,6 +7,7 @@
 pub mod cli;
 pub mod palette;
 pub mod runner;
+pub mod socket;
 pub mod state_file;
 pub mod tree;
 

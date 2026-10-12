@@ -434,10 +434,14 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">--no-open</code> (serve without showing the page).
             </p>
             <p>
-              The link carries a one-time key after <code translate="no">#</code>
-              (<code translate="no">…/#t=&lt;key&gt;</code>), which browsers never send to a server. A new
-              start makes a new key. If the page has no key or an old one, click
-              <strong>Reconnect</strong> or run <code translate="no">sessionsnap ui</code> again. In cmux
+              The link carries a key after <code translate="no">#</code>
+              (<code translate="no">…/#t=&lt;key&gt;</code>), which browsers never send to a server. The key
+              lasts as long as the server: each start makes a new one. It never goes on a command line,
+              where other users could read it with <code translate="no">ps</code>: cmux opens the page
+              without it, and the key is handed over through cmux's socket. If that fails, the page opens
+              without a key and <code translate="no">sessionsnap ui</code> prints the keyed link in its
+              terminal. If the page has no key or an old one, click <strong>Reconnect</strong>, open that
+              link, or run <code translate="no">sessionsnap ui</code> again. In cmux
               0.64 the Dock is a beta feature (Settings → Beta Features → Dock); without it the page
               opens as a normal browser tab.
             </p>
@@ -483,6 +487,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>Codex sessions (read)</td><td><code translate="no">~/.codex/sessions</code>; <code translate="no">SESSIONSNAP_CODEX_DIR</code> (another <code translate="no">~/.codex</code>)</td></tr>
                   <tr><td>cmux binary</td><td><code translate="no">cmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_CMUX_BIN</code></td></tr>
                   <tr><td>cmux state file (read)</td><td><code translate="no">~/Library/Application Support/cmux/session-com.cmuxterm.app.json</code>; <code translate="no">SESSIONSNAP_CMUX_STATE</code></td></tr>
+                  <tr><td>cmux socket (web UI)</td><td><code translate="no">$CMUX_SOCKET_PATH</code>, else the path in <code translate="no">~/Library/Application Support/cmux/last-socket-path</code>; <code translate="no">SESSIONSNAP_CMUX_SOCKET</code></td></tr>
                   <tr><td>cmux palette config</td><td><code translate="no">~/.config/cmux/cmux.json</code> (on Linux, <code translate="no">$XDG_CONFIG_HOME/cmux/cmux.json</code> when that is set); <code translate="no">SESSIONSNAP_CMUX_CONFIG</code></td></tr>
                   <tr><td>Claude Code skill (written by <code translate="no">install-skill</code>)</td><td><code translate="no">~/.claude/skills/sessionsnap</code>; <code translate="no">SESSIONSNAP_SKILLS_DIR</code> (another skills folder)</td></tr>
                 </tbody>
@@ -506,7 +511,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <li>A tab whose flags, ID, folder or command hold a control character (newline, ^C, ESC …) is never run, and an agent record with one is not saved. A resume command with a backslash is not typed into an already open workspace.</li>
               <li>Environment variables from cmux's state are never stored, nor flags that look like credentials (a flag name or <code translate="no">-c</code> key ending in token, secret, password, credential(s), auth, or holding an API key, and values that look like tokens). They are dropped with their values, and <code translate="no">save</code> says so.</li>
               <li>Snapshot files are readable only by you (folder 0700, files 0600).</li>
-              <li>The web UI listens on <code translate="no">127.0.0.1</code> only and needs the one-time key from its link.</li>
+              <li>The web UI listens on <code translate="no">127.0.0.1</code> only and needs the key from its link (new for each start, never put on a command line).</li>
             </ul>
           </section>
 

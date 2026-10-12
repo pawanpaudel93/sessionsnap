@@ -227,9 +227,9 @@ impl Terminal for FakeTerminal {
         Ok(())
     }
 
-    fn show_url(&self, url: &str) -> anyhow::Result<&'static str> {
+    fn show_url(&self, url: &str) -> anyhow::Result<crate::ports::Shown> {
         self.log.borrow_mut().push(format!("show {url}"));
-        Ok("dock")
+        Ok(crate::ports::Shown::whole("dock"))
     }
 }
 

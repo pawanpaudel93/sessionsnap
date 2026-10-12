@@ -5,9 +5,9 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::runner::{Output, ProcessRunner, Runner};
-use super::{state_file, tree};
+use super::{socket, state_file, tree};
 use crate::error::{Exit, failure};
-use crate::ports::{LaunchTab, OpenState, Terminal};
+use crate::ports::{LaunchTab, OpenState, Shown, Terminal};
 
 /// The cmux terminal: reads state from the `cmux` CLI and the state file, opens tabs via the CLI.
 pub struct CmuxCli<R: Runner> {
@@ -17,6 +17,8 @@ pub struct CmuxCli<R: Runner> {
     pub launch_timeout: Duration,
     /// The command that starts the cmux app; None where sessionsnap does not know one.
     pub launcher: Option<Vec<String>>,
+    /// cmux's control socket, for links that must stay off command lines; None when unknown.
+    pub socket: Option<PathBuf>,
 }
 
 /// How to start cmux on `os`: `open -a cmux` on macOS. On Linux cmux ships as a separate app
@@ -33,6 +35,7 @@ impl CmuxCli<ProcessRunner> {
             state_path: state_file::default_path()?,
             launch_timeout: Duration::from_secs(30),
             launcher: launcher_for(std::env::consts::OS),
+            socket: socket::default_path(),
         })
     }
 }
@@ -131,23 +134,51 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         Ok(())
     }
 
-    fn show_url(&self, url: &str) -> Result<&'static str> {
-        // Match an open UI tab by its address without the fragment (the key).
-        let base = url.split('#').next().unwrap_or(url);
-        if let Some((surface, in_dock)) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
-            self.cmux_ok(&["browser", surface.as_str(), "goto", url])?;
-            if in_dock {
-                self.show_dock()?;
-            }
-            return Ok("reused");
-        }
-        if self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", url])?.success {
-            self.show_dock()?;
-            return Ok("dock");
-        }
-        // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
-        self.cmux_ok(&["browser", "open", url])?;
-        Ok("tab")
+    fn show_url(&self, url: &str) -> Result<Shown> {
+        // The `#` part may carry the UI's key, and any local user can read a command line with
+        // `ps`: cmux's command line gets only the address, the whole link goes over its socket.
+        let (base, fragment) = url.split_once('#').map_or((url, None), |(b, f)| (b, Some(f).filter(|f| !f.is_empty())));
+        let (surface, place) =
+            if let Some((surface, in_dock)) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
+                if fragment.is_none() {
+                    self.cmux_ok(&["browser", surface.as_str(), "goto", base])?;
+                }
+                if in_dock {
+                    self.show_dock()?;
+                }
+                (Some(surface), "reused")
+            } else {
+                let out = self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", base])?;
+                if out.success {
+                    self.show_dock()?;
+                    (find_ref(&out.stdout, "surface"), "dock")
+                } else {
+                    // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
+                    let out = self.cmux_ok(&["browser", "open", base])?;
+                    (find_ref(&out, "surface"), "tab")
+                }
+            };
+        let Some(fragment) = fragment else { return Ok(Shown::whole(place)) };
+        let result = self.navigate(surface, base, url).map_err(|e| {
+            // cmux's message could quote the link.
+            format!("{e:#}").replace(url, base).replace(fragment, "…")
+        });
+        Ok(Shown { place, fragment_error: result.err() })
+    }
+}
+
+impl<R: Runner> CmuxCli<R> {
+    /// Points the browser `surface` (looked up by `base` when cmux printed no ref) at `url` over
+    /// cmux's socket.
+    fn navigate(&self, surface: Option<String>, base: &str, url: &str) -> Result<()> {
+        let path = self.socket.as_deref().ok_or_else(|| anyhow::anyhow!("cmux's socket was not found"))?;
+        let surface = match surface {
+            Some(s) => s,
+            None => tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)?
+                .map(|(s, _)| s)
+                .ok_or_else(|| anyhow::anyhow!("cmux did not report the new browser tab"))?,
+        };
+        socket::call(path, "browser.navigate", json!({"surface_id": surface, "url": url})).map(drop)
     }
 }
 
@@ -229,6 +260,7 @@ mod tests {
                     stderr: "Error: invalid_params: Dock placement is disabled".into(),
                 }),
                 Some("new-surface") => ok("OK surface:40 pane:3 workspace:1\n"),
+                Some("browser") if args.get(1).is_some_and(|a| a == "open") => ok("OK surface:41 pane:3 workspace:1\n"),
                 _ => ok("OK\n"),
             }
         }
@@ -241,54 +273,150 @@ mod tests {
             state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
             launch_timeout: Duration::from_millis(10),
             launcher: launcher_for("macos"),
+            socket: None,
         }
+    }
+
+    /// A cmux socket in a short temp folder (macOS caps socket paths at 104 bytes) that answers one
+    /// request with `answer`. The thread returns the request line, or None if none came in 5 s.
+    fn fake_socket(answer: &'static str) -> (tempfile::TempDir, PathBuf, std::thread::JoinHandle<Option<String>>) {
+        use std::io::{BufRead, BufReader, Write};
+        let dir = tempfile::Builder::new().prefix("ss").tempdir_in("/tmp").unwrap();
+        let path = dir.path().join("s");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((s, _)) => break s,
+                    Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => return None,
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            (&stream).write_all(answer.as_bytes()).unwrap();
+            Some(line)
+        });
+        (dir, path, server)
+    }
+
+    const OK_ANSWER: &str = "{\"ok\":true,\"result\":{},\"id\":\"sessionsnap\"}\n";
+
+    /// No argument cmux was run with holds the link's `#` part.
+    fn assert_no_key_in_argv(b: &CmuxCli<FakeRunner>) {
+        for call in b.runner.calls.borrow().iter() {
+            assert!(call.iter().all(|a| !a.contains("#t=") && !a.contains(KEY)), "{call:?}");
+        }
+    }
+
+    /// The request the fake socket received, as JSON.
+    fn navigate_request(server: std::thread::JoinHandle<Option<String>>) -> serde_json::Value {
+        let line = server.join().unwrap().expect("no request reached cmux's socket");
+        assert!(line.ends_with('\n'), "{line:?}");
+        serde_json::from_str(&line).unwrap()
     }
 
     fn launch(title: &str, cwd: &str, command: Option<&str>) -> LaunchTab {
         LaunchTab { title: title.into(), cwd: cwd.into(), command: command.map(str::to_string) }
     }
 
-    const UI: &str = "http://127.0.0.1:47317/#t=abc";
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+    const BASE: &str = "http://127.0.0.1:47317/";
+
+    fn ui() -> String {
+        format!("{BASE}#t={KEY}")
+    }
 
     #[test]
-    fn show_url_adds_a_dock_browser() {
-        let b = backend(true);
-        assert_eq!(b.show_url(UI).unwrap(), "dock");
-        let calls = b.runner.calls.borrow();
-        let n = calls.len();
-        assert_eq!(&calls[n - 2][1..], ["new-surface", "--type", "browser", "--placement", "dock", "--url", UI]);
-        // A hidden Dock pauses its pages, so the Dock is brought up too.
-        assert_eq!(&calls[n - 1][1..], ["right-sidebar", "set", "dock", "--no-focus"]);
+    fn show_url_adds_a_dock_browser_and_hands_it_the_key_over_the_socket() {
+        let (_dir, path, server) = fake_socket(OK_ANSWER);
+        let mut b = backend(true);
+        b.socket = Some(path);
+        assert_eq!(b.show_url(&ui()).unwrap(), Shown::whole("dock"));
+        {
+            let calls = b.runner.calls.borrow();
+            let n = calls.len();
+            assert_eq!(&calls[n - 2][1..], ["new-surface", "--type", "browser", "--placement", "dock", "--url", BASE]);
+            // A hidden Dock pauses its pages, so the Dock is brought up too.
+            assert_eq!(&calls[n - 1][1..], ["right-sidebar", "set", "dock", "--no-focus"]);
+        }
+        let req = navigate_request(server);
+        assert_eq!(req["method"], "browser.navigate");
+        assert_eq!(req["params"], json!({"surface_id": "surface:40", "url": ui()}));
+        assert_no_key_in_argv(&b);
     }
 
     #[test]
     fn show_url_falls_back_to_a_tab_without_dock() {
+        let (_dir, path, server) = fake_socket(OK_ANSWER);
         let mut b = backend(true);
         b.runner.dock_ok = false;
-        assert_eq!(b.show_url(UI).unwrap(), "tab");
-        let calls = b.runner.calls.borrow();
-        assert_eq!(&calls.last().unwrap()[1..], ["browser", "open", UI]);
+        b.socket = Some(path);
+        assert_eq!(b.show_url(&ui()).unwrap(), Shown::whole("tab"));
+        assert_eq!(&b.runner.calls.borrow().last().unwrap()[1..], ["browser", "open", BASE]);
+        assert_eq!(navigate_request(server)["params"], json!({"surface_id": "surface:41", "url": ui()}));
+        assert_no_key_in_argv(&b);
     }
 
     #[test]
     fn show_url_reuses_an_open_page() {
+        let (_dir, path, server) = fake_socket(OK_ANSWER);
         let mut b = backend(true);
         b.runner.tree = crate::adapters::terminal::cmux::tree::TEST_BROWSER_TREE;
-        assert_eq!(b.show_url(UI).unwrap(), "reused");
-        let calls = b.runner.calls.borrow();
-        let n = calls.len();
-        assert_eq!(&calls[n - 2][1..], ["browser", "surface:71", "goto", UI]);
-        assert_eq!(&calls[n - 1][1..], ["right-sidebar", "set", "dock", "--no-focus"]);
+        b.socket = Some(path);
+        assert_eq!(b.show_url(&ui()).unwrap(), Shown::whole("reused"));
+        assert_eq!(&b.runner.calls.borrow().last().unwrap()[1..], ["right-sidebar", "set", "dock", "--no-focus"]);
+        assert_eq!(navigate_request(server)["params"], json!({"surface_id": "surface:71", "url": ui()}));
+        assert_no_key_in_argv(&b);
     }
 
     #[test]
     fn show_url_reuses_a_tab_outside_the_dock_without_opening_the_dock() {
+        let (_dir, path, server) = fake_socket(OK_ANSWER);
         let mut b = backend(true);
         b.runner.tree = r#"{"windows":[{"workspaces":[{"panes":[{"surfaces":[
             {"ref":"surface:3","type":"browser","url":"http://127.0.0.1:47317/"}]}]}]}]}"#;
-        assert_eq!(b.show_url(UI).unwrap(), "reused");
-        let calls = b.runner.calls.borrow();
-        assert_eq!(&calls.last().unwrap()[1..], ["browser", "surface:3", "goto", UI]);
+        b.socket = Some(path);
+        assert_eq!(b.show_url(&ui()).unwrap(), Shown::whole("reused"));
+        assert!(b.runner.calls.borrow().iter().all(|c| c[1] != "right-sidebar"));
+        assert_eq!(navigate_request(server)["params"]["surface_id"], "surface:3");
+    }
+
+    #[test]
+    fn a_link_without_a_key_goes_on_the_command_line() {
+        let mut b = backend(true);
+        b.runner.tree = crate::adapters::terminal::cmux::tree::TEST_BROWSER_TREE;
+        assert_eq!(b.show_url(BASE).unwrap(), Shown::whole("reused"));
+        assert!(b.runner.calls.borrow().iter().any(|c| c[1..] == ["browser", "surface:71", "goto", BASE]));
+    }
+
+    #[test]
+    fn without_the_socket_shows_the_page_without_its_key() {
+        for socket in [None, Some(PathBuf::from("/nonexistent/cmux.sock"))] {
+            let mut b = backend(true);
+            b.socket = socket;
+            let shown = b.show_url(&ui()).unwrap();
+            assert_eq!(shown.place, "dock");
+            let why = shown.fragment_error.expect("the key cannot have reached the page");
+            assert!(!why.contains(KEY), "{why}");
+            assert_no_key_in_argv(&b);
+        }
+    }
+
+    #[test]
+    fn a_refused_navigate_keeps_the_key_out_of_the_reason() {
+        let answer = "{\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"no surface for http://127.0.0.1:47317/#t=0123456789abcdef0123456789abcdef\"}}\n";
+        let (_dir, path, server) = fake_socket(answer);
+        let mut b = backend(true);
+        b.socket = Some(path);
+        let why = b.show_url(&ui()).unwrap().fragment_error.unwrap();
+        assert!(why.contains("not_found"), "{why}");
+        assert!(!why.contains(KEY), "{why}");
+        server.join().unwrap().unwrap();
+        assert_no_key_in_argv(&b);
     }
 
     #[test]

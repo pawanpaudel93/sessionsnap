@@ -93,8 +93,24 @@ pub trait Terminal {
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()>;
     /// Shows `url` in the terminal: points a browser already on its address (ignoring the `#` part)
     /// at it ("reused"), else adds a Dock browser tab ("dock"), else, with the Dock off, opens a
-    /// browser tab ("tab").
-    fn show_url(&self, url: &str) -> Result<&'static str>;
+    /// browser tab ("tab"). The `#` part may carry a key, so it never goes on a command line; when
+    /// it cannot be handed over another way, the page is shown without it.
+    fn show_url(&self, url: &str) -> Result<Shown>;
+}
+
+/// Where `Terminal::show_url` showed a page, and whether the link's `#` part reached it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shown {
+    /// "reused", "dock" or "tab".
+    pub place: &'static str,
+    /// Why the page was shown without its `#` part; None when the whole link reached it.
+    pub fragment_error: Option<String>,
+}
+
+impl Shown {
+    pub fn whole(place: &'static str) -> Self {
+        Shown { place, fragment_error: None }
+    }
 }
 
 /// One agent session as its history records it. The same fields for every agent.

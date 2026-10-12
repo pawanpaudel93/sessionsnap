@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::http::{Request, Response};
 use crate::interfaces::cli::{Cli, Ctx, run_json};
+use crate::ports::Shown;
 
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_JS: &str = include_str!("assets/app.js");
@@ -20,8 +21,8 @@ pub const ALLOWED: &[&str] = &[
 /// Builds the context for one API call; the `Option<String>` is the call's `input`.
 pub type MakeCtx<'a> = dyn Fn(&Cli, Option<String>) -> Result<Ctx> + 'a;
 
-/// Shows a URL in cmux; returns where ("reused", "dock" or "tab").
-pub type ShowFn<'a> = dyn Fn(&str) -> Result<&'static str> + Send + Sync + 'a;
+/// Shows a URL in cmux; returns where ("reused", "dock" or "tab") and whether its key got there.
+pub type ShowFn<'a> = dyn Fn(&str) -> Result<Shown> + Send + Sync + 'a;
 
 pub struct Server<'a> {
     pub port: u16,
@@ -79,7 +80,8 @@ impl Server<'_> {
     }
 
     /// Shows this server's page, with its key, in cmux. Needs no key: it is how a page without
-    /// one (or a second `sessionsnap ui`) gets one, and the key only ever goes to cmux.
+    /// one (or a second `sessionsnap ui`) gets one, and the key only ever goes to cmux, never on a
+    /// command line.
     fn show(&self, req: &Request) -> Response {
         if self.foreign_origin(req) {
             return Response::text(403, "wrong origin");
@@ -90,10 +92,22 @@ impl Server<'_> {
         self.show_page()
     }
 
-    /// Shows the keyed link in cmux: `200 {"shown": …}`, or `502` with the reason.
+    /// Shows the keyed link in cmux: `200 {"shown": …, "keyed": …}`, or `502` with the reason.
+    /// When cmux showed the page but could not be handed its key, the keyed link is printed to
+    /// this server's own terminal instead, for the user to open.
     pub fn show_page(&self) -> Response {
-        match (self.show)(&format!("http://127.0.0.1:{}/#t={}", self.port, self.token)) {
-            Ok(shown) => Response::json(200, &json!({"shown": shown})),
+        let link = format!("http://127.0.0.1:{}/#t={}", self.port, self.token);
+        match (self.show)(&link) {
+            Ok(shown) => {
+                if let Some(why) = &shown.fragment_error {
+                    eprintln!(
+                        "sessionsnap: showed the UI in cmux but could not hand it its key ({}).\n\
+                         Open this link in cmux's browser, or click Reconnect on the page to try again:\n{link}",
+                        why.replace(&self.token, "…")
+                    );
+                }
+                Response::json(200, &json!({"shown": shown.place, "keyed": shown.fragment_error.is_none()}))
+            }
             // cmux's message could quote the link; the key stays out of the answer.
             Err(e) => Response::text(502, &format!("could not show the UI in cmux: {e:#}").replace(&self.token, "…")),
         }
@@ -148,7 +162,7 @@ mod tests {
     const PORT: u16 = 47317;
 
     fn server() -> Server<'static> {
-        Server { port: PORT, token: "t0k".into(), show: Box::new(|_| Ok("dock")) }
+        Server { port: PORT, token: "t0k".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) }
     }
 
     fn req(method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Request {
@@ -284,18 +298,33 @@ mod tests {
                 token: "t0k".into(),
                 show: Box::new(|u: &str| {
                     seen.lock().unwrap().push(u.to_string());
-                    Ok("reused")
+                    Ok(Shown::whole("reused"))
                 }),
             };
             let origin = format!("http://127.0.0.1:{PORT}");
             let r = s.handle(&show_req(&[("content-type", "application/json"), ("origin", origin.as_str())]), mk);
             assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
-            assert_eq!(body(&r), json!({"shown": "reused"}));
+            assert_eq!(body(&r), json!({"shown": "reused", "keyed": true}));
             assert!(!String::from_utf8_lossy(&r.body).contains("t0k"), "never returns the key");
             assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{PORT}/#t=t0k")]);
             // Without an Origin (a local program such as `sessionsnap ui`) it works too.
             assert_eq!(s.handle(&show_req(&[("content-type", "application/json")]), mk).status, 200);
             assert_eq!(s.handle(&req("GET", "/api/show", &[], ""), mk).status, 405);
+        });
+    }
+
+    #[test]
+    fn show_says_when_the_key_did_not_reach_the_page() {
+        with_store(|mk| {
+            let s = Server {
+                port: PORT,
+                token: "t0k".into(),
+                show: Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("cmux refused t0k".into()) })),
+            };
+            let r = s.handle(&show_req(&[("content-type", "application/json")]), mk);
+            assert_eq!(r.status, 200);
+            assert_eq!(body(&r), json!({"shown": "dock", "keyed": false}));
+            assert!(!String::from_utf8_lossy(&r.body).contains("t0k"), "never returns the key");
         });
     }
 

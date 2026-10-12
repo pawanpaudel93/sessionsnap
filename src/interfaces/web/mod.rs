@@ -69,7 +69,13 @@ fn report_shown(response: &http::Response) {
     let body = String::from_utf8_lossy(&response.body);
     if response.status == 200 {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-        eprintln!("Showed it in cmux ({}).", v["shown"].as_str().unwrap_or("?"));
+        let place = v["shown"].as_str().unwrap_or("?");
+        if v["keyed"] == false {
+            // `show_page` printed the keyed link just above.
+            eprintln!("Showed it in cmux ({place}) without its key: open the link above.");
+        } else {
+            eprintln!("Showed it in cmux ({place}).");
+        }
     } else {
         eprintln!("sessionsnap: {}\nRun `sessionsnap ui` again to show it.", body.trim());
     }
@@ -139,8 +145,9 @@ pub fn is_running(port: u16) -> bool {
     request(port, &req, Duration::from_secs(2)).is_ok_and(|out| out.contains(r#""app":"sessionsnap""#))
 }
 
-/// Asks the UI server on `port` to show its page (with its key) in cmux; returns where.
-pub fn ask_to_show(port: u16) -> Result<String> {
+/// Asks the UI server on `port` to show its page (with its key) in cmux; returns where, and
+/// whether the key reached the page (if not, that server printed the keyed link in its terminal).
+pub fn ask_to_show(port: u16) -> Result<(String, bool)> {
     let req = format!(
         "POST /api/show HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
          Content-Length: 2\r\nConnection: close\r\n\r\n{{}}"
@@ -153,7 +160,8 @@ pub fn ask_to_show(port: u16) -> Result<String> {
         anyhow::bail!("the running sessionsnap UI could not show itself: {}", body.trim());
     }
     let v: serde_json::Value = serde_json::from_str(body).context("reading the running sessionsnap UI's answer")?;
-    v["shown"].as_str().map(str::to_string).context("the running sessionsnap UI gave no `shown`")
+    let shown = v["shown"].as_str().map(str::to_string).context("the running sessionsnap UI gave no `shown`")?;
+    Ok((shown, v["keyed"] != false))
 }
 
 /// 32 hex characters from the system's random source.
@@ -173,9 +181,16 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
         ));
     }
     match ask_to_show(port) {
-        Ok(shown) => Ok(Outcome::ok(
-            json!({"url": url, "started": false, "shown": shown}),
+        Ok((shown, true)) => Ok(Outcome::ok(
+            json!({"url": url, "started": false, "shown": shown, "keyed": true}),
             format!("The sessionsnap UI is already running at {url}; showed it ({shown})."),
+        )),
+        Ok((shown, false)) => Ok(Outcome::ok(
+            json!({"url": url, "started": false, "shown": shown, "keyed": false}),
+            format!(
+                "The sessionsnap UI is already running at {url}; showed it ({shown}) but could not hand it its key. \
+                 Open the link printed in the terminal running `sessionsnap ui`, or click Reconnect on the page."
+            ),
         )),
         Err(e) => Err(failure(
             Exit::Error,
@@ -222,13 +237,14 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
 mod tests {
     use super::*;
     use crate::interfaces::cli::Cli;
+    use crate::ports::Shown;
     use crate::testing::FakeTerminal;
 
     #[test]
     fn serves_requests_until_idle() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok("dock")) };
+        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) };
         let client = std::thread::spawn(move || {
             let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
             write!(s, "GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
@@ -276,7 +292,7 @@ mod tests {
     fn a_silent_client_does_not_block_others() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok("dock")) };
+        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) };
         let (tx, rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let silent = std::thread::spawn(move || {
@@ -307,7 +323,7 @@ mod tests {
     fn a_slow_drip_client_is_cut_off_at_the_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok("dock")) };
+        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) };
         let drip = std::thread::spawn(move || {
             let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
             for _ in 0..14 {
@@ -336,24 +352,24 @@ mod tests {
             token: "k3y".into(),
             show: Box::new(|u: &str| {
                 seen.lock().unwrap().push(u.to_string());
-                Ok("reused")
+                Ok(Shown::whole("reused"))
             }),
         };
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
         serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        assert_eq!(client.join().unwrap(), Ok("reused".to_string()));
+        assert_eq!(client.join().unwrap(), Ok(("reused".to_string(), true)));
         assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{port}/#t=k3y")]);
     }
 
     /// A show function that, like `cmux browser goto`, returns only once the page has loaded.
-    fn show_that_loads_the_page(port: u16) -> impl Fn(&str) -> Result<&'static str> + Send + Sync {
+    fn show_that_loads_the_page(port: u16) -> impl Fn(&str) -> Result<Shown> + Send + Sync {
         move |_| {
             let req = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
             let out = request(port, &req, Duration::from_secs(2)).context("navigation_timeout")?;
             anyhow::ensure!(out.starts_with("HTTP/1.1 200 OK"), "page did not load");
-            Ok("reused")
+            Ok(Shown::whole("reused"))
         }
     }
 
@@ -366,7 +382,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
         serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        assert_eq!(client.join().unwrap(), Ok("reused".to_string()));
+        assert_eq!(client.join().unwrap(), Ok(("reused".to_string(), true)));
     }
 
     #[test]
@@ -380,7 +396,7 @@ mod tests {
             token: "k3y".into(),
             show: Box::new(|u: &str| {
                 let r = load(u);
-                *shown.lock().unwrap() = Some(r.as_ref().map(|s| s.to_string()).map_err(|e| format!("{e:#}")));
+                *shown.lock().unwrap() = Some(r.as_ref().map(|s| s.place.to_string()).map_err(|e| format!("{e:#}")));
                 r
             }),
         };
@@ -389,6 +405,22 @@ mod tests {
         serve(listener, &server, &make, Duration::from_millis(300), true).unwrap();
         drop(server);
         assert_eq!(shown.into_inner().unwrap(), Some(Ok("reused".to_string())));
+    }
+
+    #[test]
+    fn a_second_ui_hears_when_the_key_did_not_reach_the_page() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server {
+            port,
+            token: "k3y".into(),
+            show: Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("no socket".into()) })),
+        };
+        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
+        assert_eq!(client.join().unwrap(), Ok(("dock".to_string(), false)));
     }
 
     #[test]

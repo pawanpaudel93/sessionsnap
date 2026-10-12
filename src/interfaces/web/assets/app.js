@@ -53,7 +53,11 @@ function setBusy(delta) {
 
 // Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
 async function sessionsnap(args, input) {
-  if (!TOKEN) throw new CommandError("This page has no key yet.", 1, true);
+  if (!TOKEN) {
+    throw new CommandError(
+      "This page has no key yet. Click Reconnect to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
+      1, true);
+  }
   setBusy(1);
   try {
     let r;
@@ -277,7 +281,14 @@ function reconnectView(message) {
         throw new Error("The sessionsnap UI server is not running.");
       }
       if (!r.ok) throw new Error(await r.text());
-      const { shown } = await r.json();
+      const { shown, keyed } = await r.json();
+      if (keyed === false) {
+        // The key never goes on a command line; when cmux's socket could not take it, the server
+        // printed the keyed link in its own terminal instead.
+        status.className = "error small";
+        status.textContent = "cmux showed the page but could not hand it its key. Open the link printed in the terminal running `sessionsnap ui`, or try again.";
+        return;
+      }
       status.textContent = shown === "reused" ? "Reconnecting…" : `Opened the sessionsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
     } catch (e) {
       status.className = "error small";
