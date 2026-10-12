@@ -213,7 +213,7 @@ Details:
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
 | cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
-| cmux socket (web UI) | `$CMUX_SOCKET_PATH`, else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
+| cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
 sessionsnap also reads cmux's state file and `cmux --json tree`.
@@ -235,13 +235,21 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 - Environment variables from cmux's state are never stored, nor flags that look like credentials:
   - a flag name or `-c` key ending in token, secret, password, passwd, credential(s), auth,
     authorization or bearer, or holding `api_key`, `api-key` or `apikey`;
-  - a value holding, anywhere, a token with a well-known prefix (OpenAI and Anthropic `sk-`,
-    GitHub, Slack, GitLab, AWS, Google), a JWT, a `Bearer` header, or a key ending in token,
-    secret, password, passwd, credential(s), auth or authorization, or holding `api_key`,
-    `api-key`, `apikey` or `private_key`, followed by `:` or `=` (as in inline JSON or TOML for
-    `--mcp-config` or `-c`, and headers such as `x-api-key: …`).
+  - a value holding, anywhere: a token with a specific prefix (`sk-ant-`, `sk-proj-`, GitHub
+    `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…`, GitLab `glpat-`); a short
+    generic prefix (`sk-`, `sk_`, AWS `AKIA`, Google `AIza`) followed by 20 or more characters with
+    a digit or both cases, or an AWS key's shape; a JWT; the word `bearer` followed by a space; a
+    URL with a password (`scheme://user:pass@host`); or a key followed by `:` or `=` (quotes and
+    backslashes allowed between) whose name ends in token, password, passwd, credential(s), auth,
+    authorization, bearer, access_key or secret_key, or holds `secret`, `private`, `api_key`,
+    `api-key` or `apikey`. That catches inline JSON or TOML for `--mcp-config` or `-c`, and headers
+    such as `x-api-key: …`. A value that names a credential key, even in prose ("never print a
+    token: …"), is dropped.
 
   They are dropped with their values (a dropped value takes its flag with it), and `save` says so.
+  Permission rules after `--allowedTools`, `--disallowedTools` or `--tools`, such as
+  `Bash(gh auth:*)`, are kept unless they hold a token: losing a deny rule on restore would weaken
+  your safety settings.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 
 ## Status
