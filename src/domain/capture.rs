@@ -181,6 +181,22 @@ const SECRET_KEY_ENDINGS: &[&str] =
 /// Key parts that name a credential wherever they appear in the key.
 const SECRET_KEY_PARTS: &[&str] = &["api_key", "api-key", "apikey", "x-api-key", "secret", "private"];
 
+/// Last key segments (split on `_`, `-`, `.`) that name a password: `DB_PASS`, `MYSQL_PWD`.
+const SECRET_KEY_SEGMENTS: &[&str] = &["pass", "pwd"];
+
+/// `key` (as written) names a credential: see `SECRET_KEY_ENDINGS`, `SECRET_KEY_PARTS` and
+/// `SECRET_KEY_SEGMENTS`, or an upper-case name ending in `_KEY` (`OPENAI_KEY`; `sort_key` is not).
+fn credential_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let last = lower.rsplit(['.', '_', '-']).next().unwrap_or("");
+    let upper_key = key.ends_with("_KEY") && !key.chars().any(|c| c.is_ascii_lowercase());
+    SECRET_KEY_ENDINGS.iter().any(|e| lower.ends_with(e))
+        || SECRET_KEY_PARTS.iter().any(|p| lower.contains(p))
+        || SECRET_KEY_SEGMENTS.contains(&last)
+        || upper_key
+        || looks_secret(&lower)
+}
+
 /// `v` holds a key that names a credential, followed by `:` or `=` (after an optional closing
 /// quote and spaces), ignoring case: `GITHUB_TOKEN=`, `"X-API-Key":`, `x-api-key: `.
 fn names_a_credential(v: &str) -> bool {
@@ -196,7 +212,7 @@ fn names_a_credential(v: &str) -> bool {
         while i < chars.len() && key_char(chars[i]) {
             i += 1;
         }
-        let key: String = chars[start..i].iter().collect::<String>().to_ascii_lowercase();
+        let key: String = chars[start..i].iter().collect();
         let mut j = i;
         // Closing quotes, also escaped ones in JSON inside JSON (`\"TOKEN\":`).
         while j < chars.len() && (chars[j] == '"' || chars[j] == '\'' || chars[j] == '\\') {
@@ -206,10 +222,7 @@ fn names_a_credential(v: &str) -> bool {
             j += 1;
         }
         let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=') && !rule_tail(&chars, j);
-        let credential = SECRET_KEY_ENDINGS.iter().any(|e| key.ends_with(e))
-            || SECRET_KEY_PARTS.iter().any(|p| key.contains(p))
-            || looks_secret(&key);
-        if assigned && credential {
+        if assigned && credential_key(&key) {
             return true;
         }
     }
@@ -606,6 +619,25 @@ mod tests {
             let (kept, dropped) = without_credentials(&args);
             assert!(dropped && kept.is_empty(), "{value}: {kept:?}");
         }
+    }
+
+    /// Short password keys and upper-case `*_KEY` names are credentials; `sort_key` is not.
+    #[test]
+    fn drops_pass_pwd_and_upper_case_key_names() {
+        for json in [
+            r#"{"env":{"DB_PASS":"abc"}}"#,
+            r#"{"env":{"MYSQL_PWD":"abc"}}"#,
+            r#"{"env":{"OPENAI_KEY":"abc"}}"#,
+            r#"{"env":{"STRIPE_KEY":"abc"}}"#,
+        ] {
+            let (kept, dropped) = without_credentials(&["--mcp-config".to_string(), json.to_string()]);
+            assert!(dropped && kept.is_empty(), "{json}");
+        }
+        let fine =
+            ["-c", "sort_key=name", "-c", "sandbox_bypass=1", "--mcp-config", r#"{"compass":"n","primary_key":"id"}"#]
+                .map(String::from)
+                .to_vec();
+        assert_eq!(without_credentials(&fine), (fine.clone(), false));
     }
 
     /// A credential written inside a permission rule is dropped like anywhere else: rule flags get
