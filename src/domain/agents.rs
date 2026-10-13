@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use crate::domain::model::{SessionRef, Tab, Workspace};
+use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, SessionInfo};
 
@@ -11,13 +11,12 @@ use crate::ports::{AgentCatalog, SessionInfo};
 /// so sessions compare equal however the tab was written (unknown agents are left as they are),
 /// and keeps only the saved flags the agent allows (`AgentCatalog::check_flags`), so a snapshot
 /// saved before the allow-list, or edited by hand, is never shown or carried forward with flags a
-/// save would leave out today. A tab whose flags lose the session becomes a plain terminal tab, as
-/// a save today makes it. A tab with a control character is left as it is (restore never runs it).
+/// save would leave out today. Every tab's flags are filtered, whatever else it holds. A tab whose
+/// flags lose the session, or hold a control character (it can't be resumed), becomes a plain
+/// terminal tab without them, as a save today makes it. Every read of a snapshot goes through this
+/// (`app::load_normalized`).
 pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
     for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        if tab.control_field().is_some() {
-            continue;
-        }
         let Tab::Agent { agent, args, title, cwd, .. } = tab else { continue };
         if let Some(kind) = agents.kind_of(agent)
             && kind != agent
@@ -25,7 +24,7 @@ pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
             *agent = kind.to_string();
         }
         let check = agents.check_flags(agent, args);
-        if check.lost.is_some() {
+        if check.lost.is_some() || args.iter().any(|a| has_control(a)) {
             *tab = Tab::Terminal { title: title.clone(), cwd: cwd.clone(), command: None };
         } else {
             *args = check.kept;

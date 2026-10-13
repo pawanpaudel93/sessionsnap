@@ -88,7 +88,7 @@ pub fn list(ctx: &Ctx) -> Result<Vec<(String, Listed)>> {
     let mut out = vec![];
     for name in ctx.store.list()? {
         let Some(&n) = ctx.store.versions(&name)?.last() else { continue };
-        out.push((name.clone(), (n, ctx.store.read_version(&name, n)?)));
+        out.push((name.clone(), (n, read_normalized(ctx, &name, n)?)));
     }
     Ok(out)
 }
@@ -105,9 +105,17 @@ pub fn show(ctx: &Ctx, snapshot: &str) -> Result<(Version, Vec<String>)> {
 pub fn history(ctx: &Ctx, name: &str) -> Result<Vec<Listed>> {
     let mut out = vec![];
     for n in ctx.store.versions(name)? {
-        out.push((n, ctx.store.read_version(name, n)?));
+        out.push((n, read_normalized(ctx, name, n)?));
     }
     Ok(out)
+}
+
+/// `Store::read_version` with its tabs normalized, like every other read of a snapshot.
+fn read_normalized(ctx: &Ctx, name: &str, n: u32) -> Result<std::result::Result<Version, String>> {
+    Ok(ctx.store.read_version(name, n)?.map(|mut v| {
+        crate::domain::agents::normalize_tabs(&mut v.workspaces, &ctx.agents);
+        v
+    }))
 }
 
 /// Two versions (`<name>[@v]` each) and the changes from the first to the second.

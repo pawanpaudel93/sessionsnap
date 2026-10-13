@@ -302,3 +302,48 @@ fn old_snapshots_are_filtered_on_load() {
     // The deny rule can't be kept: the tab is a plain terminal, as a save today would make it.
     assert_eq!(old[1]["type"], "terminal", "{old}");
 }
+
+/// A control character anywhere in a tab (a title is enough) never stops its flags being filtered:
+/// no command that reads a snapshot shows flags a save would leave out.
+#[test]
+fn every_read_of_a_snapshot_filters_its_flags() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let dir = env.dir.path().join("store/snapshots/work");
+    let file = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    // Built at runtime so secret scanners don't flag the source.
+    let ghp = format!("ghp_{}", "a1".repeat(18));
+    let inline = format!(r#"{{"env":{{"T":"{ghp}"}}}}"#);
+    v["workspaces"].as_array_mut().unwrap().push(serde_json::json!({"name": "Old", "cwd": "/w/o", "tabs": [
+        {"type": "agent", "title": "bell\u{7}", "cwd": "/w/o", "agent": "claude", "sessionId": C,
+         "args": ["--mcp-config", inline.clone(), "--model", "opus"]},
+        {"type": "agent", "title": "t", "cwd": "/w/o", "agent": "claude", "sessionId": A,
+         "args": ["--mcp-config", inline, "\u{3}x"]},
+    ]}));
+    std::fs::write(&file, serde_json::to_string(&v).unwrap()).unwrap();
+    // A second version, so there is a diff and a history.
+    env.fake.state.borrow_mut().workspaces[0].tabs.pop();
+    env.run(&["save", "work"]).unwrap();
+    let ops = r#"[{"op":"ws-from","from":"work@1","ws":"Old"}]"#;
+    env.run(&["save", "other"]).unwrap();
+    let outputs = [
+        env.run(&["show", "work", "--json"]).unwrap(),
+        env.run(&["show", "work"]).unwrap(),
+        env.run(&["show", "work@1", "--json"]).unwrap(),
+        env.run(&["diff", "work@1", "work@2", "--json"]).unwrap(),
+        env.run(&["diff", "work@1", "work@2"]).unwrap(),
+        env.run(&["history", "work", "--json"]).unwrap(),
+        env.run(&["list", "--json"]).unwrap(),
+        env.run_with_input(&["edit", "other", "--batch", "-", "--dry-run", "--json"], ops).unwrap(),
+    ];
+    for o in &outputs {
+        let all = format!("{} {}", o.json, o.text);
+        assert!(!all.contains(&ghp), "{all}");
+    }
+    let shown = &outputs[2].json["version"]["workspaces"][2]["tabs"];
+    assert_eq!(shown[0]["args"], serde_json::json!(["--model", "opus"]), "{shown}");
+    // Flags with a control character: the tab can't be resumed, so it is a plain terminal tab.
+    assert_eq!(shown[1]["type"], "terminal", "{shown}");
+    assert!(shown[1].get("args").is_none());
+}

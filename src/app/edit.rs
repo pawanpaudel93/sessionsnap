@@ -33,7 +33,11 @@ pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_ru
     let notes = edit::apply_ops(
         &mut workspaces,
         &ops,
-        &EditCtx { agents: &ctx.agents, snapshots: &ctx.store, open: open.as_ref() },
+        &EditCtx {
+            agents: &ctx.agents,
+            snapshots: &super::NormalizedSnapshots { store: &ctx.store, agents: &ctx.agents },
+            open: open.as_ref(),
+        },
     )?;
     if dry_run {
         let changes = diff::diff(&previous.workspaces, &workspaces);

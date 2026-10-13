@@ -58,6 +58,20 @@ pub fn load_version(ctx: &Ctx, name: &str, version: Option<u32>) -> anyhow::Resu
     load_normalized(&ctx.store, &ctx.agents, name, version)
 }
 
+/// Saved snapshots read through `load_normalized`, for edit ops that copy from another snapshot.
+pub struct NormalizedSnapshots<'a> {
+    pub store: &'a Store,
+    pub agents: &'a Agents,
+}
+
+impl crate::ports::Snapshots for NormalizedSnapshots<'_> {
+    fn load(&self, name: &str, version: Option<u32>) -> anyhow::Result<crate::domain::model::Version> {
+        load_normalized(self.store, self.agents, name, version)
+    }
+}
+
+/// A version as stored, with its tabs normalized (see `domain::agents::normalize_tabs`): every read
+/// of a snapshot goes through here, so none shows flags a save would leave out.
 pub fn load_normalized(
     store: &Store,
     agents: &Agents,
