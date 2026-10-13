@@ -467,23 +467,38 @@ const TOKEN_PREFIXES: &[(&str, usize)] = &[
 /// `v` holds, anywhere, a credential in a format that can be told apart for certain: a token with
 /// a specific prefix (see `TOKEN_PREFIXES`, Slack `xox?-`, AWS `AKIA`/`ASIA` plus 16, Google
 /// `AIza` plus 35), a JWT, a URL with a password (`scheme://user:pass@host`), or an HTTP credential
-/// (`Bearer <token>`, `Authorization: <value>`).
+/// (see `auth_header`).
 pub fn holds_credential(v: &str) -> bool {
     token_in(v) || url_with_password(v) || auth_header(v)
 }
 
-/// `v` holds an HTTP credential: `Bearer <token>` or `Authorization: <value>` (any case), the
-/// token at least 12 characters.
+/// `v` holds an HTTP credential: `Bearer <token>` (the token at least 12 characters), or a value
+/// after an `Authorization:`, `X-Api-Key:` or `Api-Key:` header (after one scheme word such as
+/// `Basic`, at least 4 characters), any case; or curl's `-u`/`--user` with `user:password`.
 fn auth_header(v: &str) -> bool {
     let lower = v.to_ascii_lowercase();
-    let token_after = |at: usize| {
-        let rest = lower[at..].trim_start();
-        let rest = rest.strip_prefix("bearer ").map(str::trim_start).unwrap_or(rest);
-        let rest = rest.strip_prefix("token ").map(str::trim_start).unwrap_or(rest);
-        rest.chars().take_while(|c| c.is_ascii_alphanumeric() || "._~+/=-".contains(*c)).count() >= 12
-    };
-    lower.match_indices("bearer ").any(|(i, m)| token_after(i + m.len()))
-        || lower.match_indices("authorization:").any(|(i, m)| token_after(i + m.len()))
+    let token = |s: &str| s.chars().take_while(|c| c.is_ascii_alphanumeric() || "._~+/=-".contains(*c)).count();
+    let bearer = lower.match_indices("bearer ").any(|(i, m)| token(lower[i + m.len()..].trim_start()) >= 12);
+    let header = ["authorization:", "api-key:"].iter().any(|h| {
+        lower.match_indices(h).any(|(i, m)| {
+            let rest = lower[i + m.len()..].trim_start();
+            // One scheme word (`Basic `, `Bearer `, `token `) before the value.
+            let scheme = rest.chars().take_while(char::is_ascii_alphabetic).count();
+            let after = match rest[scheme..].strip_prefix(' ') {
+                Some(after) if scheme > 0 => after.trim_start(),
+                _ => rest,
+            };
+            token(after) >= 4
+        })
+    });
+    let words: Vec<&str> =
+        v.split(|c: char| c.is_whitespace() || "\"'()".contains(c)).filter(|w| !w.is_empty()).collect();
+    let user_pass = |w: &str| w.split_once(':').is_some_and(|(u, p)| !u.is_empty() && !p.is_empty());
+    let curl_user = words.iter().enumerate().any(|(i, w)| {
+        (matches!(*w, "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
+            || w.strip_prefix("--user=").is_some_and(user_pass)
+    });
+    bearer || header || curl_user
 }
 
 fn token_in(v: &str) -> bool {
@@ -811,6 +826,12 @@ mod tests {
             format!("Bash(curl -H 'Authorization: Bearer {}' https://x)", "q7Zr".repeat(8)),
             format!("curl -H 'authorization: token {}'", "q7Zr".repeat(3)),
             format!("bearer {}", "q7Zr".repeat(3)),
+            format!("Bash(curl -H \"Authorization: Basic {}\")", "YTpi"),
+            format!("authorization:{}", "q7Zr9"),
+            format!("Bash(curl -H 'X-Api-Key: {}' https://x)", "q7Zr9"),
+            format!("api-key: {}", "q7Zr9"),
+            format!("Bash(curl -u admin:{} https://x)", "pw12"),
+            format!("Bash(curl --user=admin:{} https://x)", "pw12"),
         ];
         for v in &found {
             assert!(holds_credential(v), "{v}");
@@ -827,6 +848,10 @@ mod tests {
             "Bash(gh auth:*)",
             "bearer",
             "the bearer of news",
+            "authorization: ",
+            "api-key",
+            "Bash(git push -u origin main)",
+            "Bash(npm i -u)",
         ] {
             assert!(!holds_credential(v), "{v}");
         }

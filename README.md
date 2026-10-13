@@ -172,9 +172,9 @@ of Claude Code 2.1.296 and Codex 0.160.0) leaves out the session, since what fol
 read for certain. So does a Codex `-c` key on neither list below, since it may limit Codex; only
 `model_*`, `hide_agent_reasoning`, `show_raw_agent_reasoning`, `file_opener`, `tui.*` and
 `shell_environment_policy.set.*` (environment variables) and `model_providers.*` (a provider's
-definition, which may hold its token or headers) are left out with just a note, never saved. If the
-launch also picked that provider (`-c model_provider=<id>`), the note says its settings were not
-saved, and the resumed session can't reach the provider until you pass them again.
+definition, which may hold its token or headers) are left out with just a note, never saved; the
+note says the provider's settings were not saved, so a resume that picks it with
+`-c model_provider=<id>` can't reach it until you pass them again.
 A note shows a `-c` key only up to its first segment (`tools.*`). Claude Code flags missing from
 `claude --help` (hidden flags such as `--permission-prompt-tool` or `--max-turns`, and the teammate
 flags cmux passes to Claude Code teams, such as `--agent-id` or `--plan-mode-required`) leave out the
@@ -197,7 +197,9 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
   prefix (`sk-ant-`, `sk-proj-`, `sk-svcacct-`, `sk-admin-`, Stripe `sk_live_`/`rk_live_`, GitHub
   `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…-`/`xapp-`, GitLab `glpat-`, Hugging
   Face `hf_`, npm `npm_`, AWS `AKIA`/`ASIA` plus 16, Google `AIza` plus 35), a JWT, a URL with a
-  password (`scheme://user:pass@host`), or `Bearer <token>` / `Authorization: <value>`.
+  password (`scheme://user:pass@host`), a `Bearer` token, an `Authorization:`, `X-Api-Key:` or
+  `Api-Key:` header value, or curl's `-u user:password`. Other opaque secrets (a password with no
+  marker around it) are not recognised: keep them out of permission rules and flag values.
 
 A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
 the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
