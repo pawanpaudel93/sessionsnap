@@ -160,8 +160,8 @@ const CLAUDE_FLAGS: Policy = Policy {
         Flag::paths(&["--add-dir"]),
         Flag::paths(&["--mcp-config"]),
         Flag::path(&["--settings"]).restricting(),
-        Flag::path(&["--agents"]),
-        Flag::path(&["--plugin-dir"]),
+        Flag::path(&["--agents"]).restricting(),
+        Flag::path(&["--plugin-dir"]).restricting(),
         Flag::path(&["--append-system-prompt-file"]),
         Flag::path(&["--system-prompt-file"]),
         Flag::switch(&["--strict-mcp-config"]).restricting(),
@@ -256,8 +256,15 @@ const CODEX_CONFIG_KEYS: &[&str] =
 
 /// `-c` keys that neither limit nor loosen Codex: left out with a note. Any other key leaves out the
 /// session, since it may limit Codex. An entry ending in `.` or `_` covers every key starting with it.
-const CODEX_NEUTRAL_KEYS: &[&str] =
-    &["model_", "hide_agent_reasoning", "show_raw_agent_reasoning", "file_opener", "tui."];
+const CODEX_NEUTRAL_KEYS: &[&str] = &[
+    "model_",
+    "hide_agent_reasoning",
+    "show_raw_agent_reasoning",
+    "file_opener",
+    "tui.",
+    // Environment variables Codex adds to its shell: they limit nothing, and may hold secrets.
+    "shell_environment_policy.set.",
+];
 
 /// The `-c` keys that limit Codex, also restored; one that can't be kept loses the session. A key
 /// ending in `.` stands for every key under it.
@@ -267,7 +274,12 @@ const CODEX_RESTRICTING_KEYS: &[&str] = &[
     "sandbox_workspace_write.",
     "profile",
     "features.",
-    "shell_environment_policy.",
+    "shell_environment_policy.inherit",
+    "shell_environment_policy.exclude",
+    "shell_environment_policy.include_only",
+    "shell_environment_policy.ignore_default_excludes",
+    // A provider's endpoint and headers: kept with `model_provider`, or the resume can't reach it.
+    "model_providers.",
 ];
 
 const CODEX_FLAGS: Policy = Policy {
@@ -276,7 +288,7 @@ const CODEX_FLAGS: Policy = Policy {
         Flag::word(&["--sandbox", "-s"]).restricting(),
         Flag::word(&["--ask-for-approval", "-a"]).restricting(),
         Flag::word(&["--profile", "-p"]).restricting(),
-        Flag::word(&["--enable"]),
+        Flag::word(&["--enable"]).restricting(),
         Flag::word(&["--disable"]).restricting(),
         Flag::config(&["--config", "-c"], CODEX_CONFIG_KEYS, CODEX_RESTRICTING_KEYS, CODEX_NEUTRAL_KEYS),
         Flag::path(&["--cd", "-C"]),
@@ -660,6 +672,38 @@ mod tests {
         // Codex (clap): a dash word is a flag, so the sandbox has no value.
         let codex = find("codex").unwrap();
         assert!(codex.check_args(&strings(&["-s", "-m", "o3"])).lost.is_some());
+    }
+
+    /// The marks on single flags and `-c` families.
+    #[test]
+    fn restricting_marks() {
+        let codex = find("codex").unwrap();
+        // `set` only adds environment variables, and may hold secrets: never saved, only noted.
+        let c = codex.check_args(&strings(&["-c", "shell_environment_policy.set.API_KEY=abc123secretvalue"]));
+        assert_eq!((&c.kept, &c.lost, &c.left_out), (&strings(&[]), &None, &strings(&["-c"])));
+        assert!(!c.note("Codex").unwrap().contains("abc123"));
+        let kept =
+            strings(&["-c", "shell_environment_policy.inherit=core", "-c", "shell_environment_policy.exclude=x"]);
+        assert_eq!(codex.check_args(&kept).kept, kept);
+        for bad in [
+            strings(&["-c", "shell_environment_policy.experimental=x"]),
+            strings(&["-c", "shell_environment_policy.inherit=a b"]),
+            strings(&["--enable", "a b"]),
+            strings(&["-c", "model_providers.corp.http_headers.Authorization=\"Bearer x\""]),
+        ] {
+            assert!(codex.check_args(&bad).lost.is_some(), "{bad:?}");
+        }
+        // A provider's settings are kept with it, so the resume still reaches it.
+        let provider = strings(&["-c", "model_provider=corp", "-c", "model_providers.corp.base_url=https://proxy"]);
+        assert_eq!(codex.check_args(&provider).kept, provider);
+        let claude = find("claude").unwrap();
+        // Interactive `--agents` takes JSON, which can't be saved: the agent it defines may be the
+        // one `--agent` picks, with its tool limits.
+        let json = r#"{"r":{"description":"d","prompt":"p","tools":["Read"]}}"#;
+        let c = claude.check_args(&strings(&["--agents", json, "--agent", "r"]));
+        assert_eq!(c.lost, Some(flags::Lost::Restriction("--agents".into())));
+        assert_eq!(claude.kept_args(&strings(&["--agents", "/w/a.json"])), strings(&["--agents", "/w/a.json"]));
+        assert!(claude.check_args(&strings(&["--plugin-dir", "{x}"])).lost.is_some());
     }
 
     #[test]
