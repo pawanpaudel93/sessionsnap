@@ -263,6 +263,9 @@ const CODEX_NEUTRAL_KEYS: &[&str] = &[
     "tui.",
     // Environment variables Codex adds to its shell: they limit nothing, and may hold secrets.
     "shell_environment_policy.set.",
+    // A provider's definition may hold its credentials (`experimental_bearer_token`, `http_headers`,
+    // `query_params`): never saved. A resume that picks the provider then fails, loudly.
+    "model_providers.",
 ];
 
 /// The `-c` keys that limit Codex, also restored; one that can't be kept loses the session. A key
@@ -277,8 +280,6 @@ const CODEX_RESTRICTING_KEYS: &[&str] = &[
     "shell_environment_policy.exclude",
     "shell_environment_policy.include_only",
     "shell_environment_policy.ignore_default_excludes",
-    // A provider's endpoint and headers: kept with `model_provider`, or the resume can't reach it.
-    "model_providers.",
 ];
 
 const CODEX_FLAGS: Policy = Policy {
@@ -381,7 +382,11 @@ impl AgentSpec {
             Flags::Claude => args.to_vec(),
             Flags::Codex => codex_args(args),
         };
-        flags::check(&picked, &self.saved)
+        let mut check = flags::check(&picked, &self.saved);
+        if self.flags == Flags::Codex {
+            check.remarks.extend(dropped_providers(&picked));
+        }
+        check
     }
 
     /// The flags `check_args` keeps.
@@ -458,6 +463,30 @@ fn drop_resume_words(spec: &AgentSpec, args: &[String]) -> Vec<String> {
         i += 1;
     }
     out
+}
+
+/// "its model_providers.<id> settings were not saved", once per provider a Codex `-c` defined (those
+/// keys are never saved). An id that is not a plain name is not shown.
+fn dropped_providers(args: &[String]) -> Vec<String> {
+    let mut ids: Vec<String> = vec![];
+    let mut it = args.iter().peekable();
+    while let Some(a) = it.next() {
+        let value = match a.as_str() {
+            "-c" | "--config" => it.next().map(String::as_str),
+            _ => a.strip_prefix("--config=").or_else(|| a.strip_prefix("-c=")).or_else(|| a.strip_prefix("-c")),
+        };
+        let Some(rest) = value.and_then(|v| v.trim_start().strip_prefix("model_providers.")) else { continue };
+        let id = rest.split(['.', '=']).next().unwrap_or("");
+        let plain = !id.is_empty()
+            && id.len() <= 32
+            && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && !flags::holds_credential(id);
+        let shown = if plain { id.to_string() } else { "<provider>".to_string() };
+        if !ids.contains(&shown) {
+            ids.push(shown);
+        }
+    }
+    ids.into_iter().map(|id| format!("its model_providers.{id} settings were not saved")).collect()
 }
 
 /// Codex: `resume <x>` and `fork <x>` when `<x>` is a session ID or `--last`, after the hook flags
@@ -666,13 +695,30 @@ mod tests {
             strings(&["-c", "shell_environment_policy.experimental=x"]),
             strings(&["-c", "shell_environment_policy.inherit=a b"]),
             strings(&["--enable", "a b"]),
-            strings(&["-c", "model_providers.corp.http_headers.Authorization=\"Bearer x\""]),
         ] {
             assert!(codex.check_args(&bad).lost.is_some(), "{bad:?}");
         }
-        // A provider's settings are kept with it, so the resume still reaches it.
+        // A provider's settings may hold its credentials: never saved, and the note says so (a
+        // resume that picks the provider then fails loudly).
         let provider = strings(&["-c", "model_provider=corp", "-c", "model_providers.corp.base_url=https://proxy"]);
-        assert_eq!(codex.check_args(&provider).kept, provider);
+        let c = codex.check_args(&provider);
+        assert_eq!((&c.kept, &c.lost), (&strings(&["-c", "model_provider=corp"]), &None));
+        assert!(c.note("Codex").unwrap().contains("its model_providers.corp settings were not saved"), "{c:?}");
+        // Built at runtime so secret scanners don't flag the source.
+        let token = format!("q{}Z", "7rT2".repeat(5));
+        for field in [
+            format!("experimental_bearer_token={token}"),
+            format!("experimental_bearer_token=\"{token}\""),
+            format!("http_headers.X-Api-Key={token}"),
+            format!("query_params.api-key={token}"),
+            format!("env_http_headers.X={token}"),
+        ] {
+            let args = vec!["-c".to_string(), format!("model_providers.corp.{field}")];
+            let c = codex.check_args(&args);
+            let shown = format!("{:?} {:?}", c.kept, c.note("Codex"));
+            assert!(c.kept.is_empty() && c.lost.is_none() && !shown.contains(&token), "{args:?}: {shown}");
+            assert!(!codex.resume_command(A, &args).unwrap().contains(&token), "{args:?}");
+        }
         let claude = find("claude").unwrap();
         // Interactive `--agents` takes JSON, which can't be saved: the agent it defines may be the
         // one `--agent` picks, with its tool limits.

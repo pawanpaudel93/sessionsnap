@@ -166,6 +166,8 @@ pub struct FlagCheck {
     pub other_words: usize,
     /// Set when the whole session must be left out.
     pub lost: Option<Lost>,
+    /// More to say in the note about what was left out (no values).
+    pub remarks: Vec<String>,
 }
 
 impl FlagCheck {
@@ -194,14 +196,15 @@ impl FlagCheck {
             1 => "1 other argument".to_string(),
             n => format!("{n} other arguments"),
         };
-        match (self.left_out.is_empty(), others.is_empty()) {
+        let note = match (self.left_out.is_empty(), others.is_empty()) {
             (true, true) => None,
             (false, true) => Some(format!("left out flags it does not restore: {}", self.left_out.join(", "))),
             (false, false) => {
                 Some(format!("left out flags it does not restore: {} (and {others})", self.left_out.join(", ")))
             }
             (true, false) => Some(format!("left out {others} it does not restore")),
-        }
+        };
+        note.map(|n| [n].into_iter().chain(self.remarks.iter().cloned()).collect::<Vec<_>>().join("; "))
     }
 }
 

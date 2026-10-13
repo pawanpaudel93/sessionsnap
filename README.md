@@ -171,7 +171,10 @@ their values). A flag sessionsnap doesn't know at all (not in `claude --help` or
 of Claude Code 2.1.296 and Codex 0.160.0) leaves out the session, since what follows it can't be
 read for certain. So does a Codex `-c` key on neither list below, since it may limit Codex; only
 `model_*`, `hide_agent_reasoning`, `show_raw_agent_reasoning`, `file_opener`, `tui.*` and
-`shell_environment_policy.set.*` (environment variables, never saved) are left out with just a note.
+`shell_environment_policy.set.*` (environment variables) and `model_providers.*` (a provider's
+definition, which may hold its token or headers) are left out with just a note, never saved. If the
+launch also picked that provider (`-c model_provider=<id>`), the note says its settings were not
+saved, and the resumed session can't reach the provider until you pass them again.
 A note shows a `-c` key only up to its first segment (`tools.*`). Claude Code flags missing from
 `claude --help` (hidden flags such as `--permission-prompt-tool` or `--max-turns`, and the teammate
 flags cmux passes to Claude Code teams, such as `--agent-id` or `--plan-mode-required`) leave out the
@@ -181,7 +184,7 @@ another flag is one line in `src/adapters/agents/registry.rs`.
 | Agent | Flags kept | Restricting (also kept, fail closed) |
 |---|---|---|
 | Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`; `--settings`, `--agents`, `--plugin-dir` (paths only: inline JSON leaves out the session); `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands`, `--bare` |
-| Codex | `--model`/`-m`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `model_providers.*`, `shell_environment_policy.inherit`/`.exclude`/`.include_only`/`.ignore_default_excludes` |
+| Codex | `--model`/`-m`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.inherit`/`.exclude`/`.include_only`/`.ignore_default_excludes` |
 | Every other agent | none: a session started with any flag is left out | every flag |
 
 Both `--flag value` and `--flag=value` work. A kept flag's values are checked too:
