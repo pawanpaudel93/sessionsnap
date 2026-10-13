@@ -66,12 +66,14 @@ word is shell-quoted. Keep it that way.
 1. Add an entry to `AGENTS` in `src/adapters/agents/registry.rs`: `kind` (use the name cmux reports,
    plus any `aliases`), `display`, `program`, and `resume` (the words between the program and the
    session ID). That alone gives **resume-only** support: the agent's tabs are saved and restored
-   without any saved flag (`saved: Policy::NONE`).
+   only when started without flags (`saved: Policy::NONE`; a launch with any flag is left out, since
+   an unknown flag may limit the agent).
 2. Add a test in `registry.rs` for its resume command, including saved flags that repeat its own
    resume words.
 3. To restore some of its flags, give it a `saved` policy: one `Flag::…` line per flag (all its
    spellings, and its value kind from `domain::flags::Value`: `switch`, `word`, `path`, `rules`,
-   `deny_rules`, `config`), checked against the agent's `--help`; `skip` lines for flags that are
+   `config`; `.restricting()` for every flag that limits the agent), checked against the agent's
+   `--help`; `skip` lines for flags that are
    not restored but take a value; and the subcommands and flags that make a launch not a session.
    Every flag not listed is left out at save and at restore.
 4. For **full** support (titles, `sessions`, `recent`, search, adding sessions by ID): implement

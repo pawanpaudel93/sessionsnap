@@ -135,27 +135,29 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 |---|---|---|---|
 | Claude Code | Full (tested) | `claude --resume <id>` | [listed below](#how-flags-are-restored) |
 | Codex | Full (tested) | `codex resume <id>` | [listed below](#how-flags-are-restored) |
-| Grok | Resume only (untested) | `grok -r <id>` | none |
-| OpenCode | Resume only (untested) | `opencode --session <id>` | none |
-| Pi | Resume only (untested) | `pi --session <id>` | none |
-| omp | Resume only (untested) | `omp --session <id>` | none |
-| Campfire | Resume only (untested) | `campfire --session <id>` | none |
-| Amp | Resume only (untested) | `amp threads continue <id>` | none |
-| Cursor Agent | Resume only (untested) | `cursor-agent --resume <id>` | none |
-| Gemini CLI | Resume only (untested) | `gemini --resume <id>` | none |
-| Antigravity | Resume only (untested) | `agy --conversation <id>` | none |
-| Rovo Dev | Resume only (untested) | `acli rovodev run --restore <id>` | none |
-| Hermes Agent | Resume only (untested) | `hermes --resume <id>` | none |
-| GitHub Copilot CLI | Resume only (untested) | `copilot --resume <id>` | none |
-| CodeBuddy | Resume only (untested) | `codebuddy --resume <id>` | none |
-| Factory Droid | Resume only (untested) | `droid --resume <id>` | none |
-| Qoder CLI | Resume only (untested) | `qodercli --resume <id>` | none |
+| Grok | Resume only (untested) | `grok -r <id>` | only launches without flags |
+| OpenCode | Resume only (untested) | `opencode --session <id>` | only launches without flags |
+| Pi | Resume only (untested) | `pi --session <id>` | only launches without flags |
+| omp | Resume only (untested) | `omp --session <id>` | only launches without flags |
+| Campfire | Resume only (untested) | `campfire --session <id>` | only launches without flags |
+| Amp | Resume only (untested) | `amp threads continue <id>` | only launches without flags |
+| Cursor Agent | Resume only (untested) | `cursor-agent --resume <id>` | only launches without flags |
+| Gemini CLI | Resume only (untested) | `gemini --resume <id>` | only launches without flags |
+| Antigravity | Resume only (untested) | `agy --conversation <id>` | only launches without flags |
+| Rovo Dev | Resume only (untested) | `acli rovodev run --restore <id>` | only launches without flags |
+| Hermes Agent | Resume only (untested) | `hermes --resume <id>` | only launches without flags |
+| GitHub Copilot CLI | Resume only (untested) | `copilot --resume <id>` | only launches without flags |
+| CodeBuddy | Resume only (untested) | `codebuddy --resume <id>` | only launches without flags |
+| Factory Droid | Resume only (untested) | `droid --resume <id>` | only launches without flags |
+| Qoder CLI | Resume only (untested) | `qodercli --resume <id>` | only launches without flags |
 
 - **Full:** sessionsnap reads the agent's session history (titles, `sessions`, `recent`, checks that
   a saved session still exists) and resumes it.
 - **Resume only:** sessionsnap saves and resumes the session with the command cmux documents for
-  that agent; it cannot read its history. These have not been tried with sessionsnap yet, so no
-  saved flag is restored for them: the session resumes with the agent's defaults.
+  that agent; it cannot read its history. These have not been tried with sessionsnap yet, so their
+  flags are not known: a session started with no flags resumes, and one started with any flag is
+  left out (an unknown flag may limit the agent, such as a sandbox), with a note to resume it by
+  hand.
 - cmux records which agent runs in a tab. For agents other than Claude Code it does so only after
   `cmux hooks setup <agent>`.
 
@@ -166,11 +168,11 @@ record). Only the flags on the agent's allow-list are saved and passed again; ev
 left out when you save, and `save` names the flags it left out (never their values). Supporting
 another flag is one line in `src/adapters/agents/registry.rs`.
 
-| Agent | Flags kept |
-|---|---|
-| Claude Code | `--model`, `--fallback-model`, `--permission-mode`, `--agent`, `--effort`, `--setting-sources`, `--max-budget-usd`, `--betas`; `--allowedTools`/`--allowed-tools`, `--disallowedTools`/`--disallowed-tools`, `--tools`; `--add-dir`, `--mcp-config`, `--settings`, `--agents`, `--plugin-dir`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--strict-mcp-config`, `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` |
-| Codex | `--model`/`-m`, `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` only for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity`, `approval_policy`, `sandbox_mode` and `profile` |
-| Every other agent | none |
+| Agent | Flags kept | Restricting (also kept, fail closed) |
+|---|---|---|
+| Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--agents`, `--plugin-dir`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`, `--settings` (path only), `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands` |
+| Codex | `--model`/`-m`, `--enable`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--disable`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.*` |
+| Every other agent | none: a session started with any flag is left out | every flag |
 
 Both `--flag value` and `--flag=value` work. A kept flag's values are checked too:
 
@@ -183,15 +185,20 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
   `xox…-`, GitLab `glpat-`, AWS `AKIA` plus 16, Google `AIza` plus 35), a JWT, or a URL with a
   password (`scheme://user:pass@host`).
 
-A value that fails is left out; a flag left with no value goes too. A deny rule is never lost
-quietly: if any value of `--disallowedTools`/`--disallowed-tools` would be left out, the tab's agent
-session is left out (the tab is saved as a plain terminal tab and `save` says to resume it by hand),
-because resuming without the rule would allow what you denied. A launch that is not a session —
+A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
+the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
+saved (a value of the wrong shape, a credential in it, a missing value, a `-c` key of a restricting
+family with an unexpected value), the tab's agent session is left out. The tab is saved as a plain
+terminal tab and `save` says "left out its agent session: a restricting flag (`<name>`) could not
+be saved; resume it by hand", because resuming without it would allow more than you did. A launch
+that is not a session —
 Claude Code with `--print`/`-p` or `--no-session-persistence`, or a subcommand such as `claude mcp`
 — is left out the same way.
 
-Restore applies the same lists, so a snapshot saved by an older sessionsnap never passes a flag that
-is no longer allowed. The tokens that pick another session are also taken out before the list
+Restore applies the same lists and rules, so a snapshot saved by an older sessionsnap never passes
+a flag that is no longer allowed, and a tab whose restricting flag can't be passed again (or an
+untested agent's tab with flags) is not resumed: it opens as a plain shell in a new workspace, or is
+skipped in an open one, with the reason. The tokens that pick another session are also taken out before the list
 applies: the agent's own resume words and resume flags with the old ID, its continue flag, Claude
 Code's `--session-id <id>` and `--fork-session`, Codex's `resume|fork <uuid|--last>` and a leading
 `exec` run.
@@ -263,8 +270,9 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   allow-list are saved; every other flag (`--api-key`, `--header`, `-c mcp_servers…`, anything
   unknown) is left out, and `save` names what it left out. Kept values are checked for their kind
   (inline JSON is not a path) and for known credential formats (see
-  [How flags are restored](#how-flags-are-restored)). A deny rule that can't be saved leaves out
-  the whole agent session rather than resume it with weaker settings. Restore filters old
+  [How flags are restored](#how-flags-are-restored)). A flag that limits the agent (deny rules,
+  sandbox, permission mode, settings) that can't be saved leaves out the whole agent session rather
+  than resume it with fewer limits; so does any flag of an agent whose flags are untested. Restore filters old
   snapshots through the same lists.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 
