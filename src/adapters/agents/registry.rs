@@ -27,16 +27,17 @@ pub enum Ids {
 }
 
 /// Which tokens that pick a session are taken out of saved args before the agent's allow-list
-/// (`AgentSpec::saved`) applies: every agent's resume and continue flags (see
-/// `AgentSpec::kept_args`), plus, per agent:
+/// (`AgentSpec::saved`) applies (see `AgentSpec::check_args`), per agent:
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flags {
-    /// Claude Code: also `--session-id <id>` and `--fork-session`.
+    /// Claude Code: none; its session flags (`--resume`/`-r`, `--continue`/`-c`, `--session-id`,
+    /// `--fork-session`) are silent entries of its flag table, read in the one parse, so the word
+    /// after one is never taken as a value of the flag before it.
     Claude,
     /// Codex: also `resume|fork <uuid|--last>`, and the hook flags
     /// cmux puts first (`--enable hooks --dangerously-bypass-hook-trust -c hooks.…`).
     Codex,
-    /// Nothing more.
+    /// Its resume words, resume flags and continue flags (`drop_resume_words`).
     Others,
 }
 
@@ -186,27 +187,27 @@ const CLAUDE_FLAGS: Policy = Policy {
         Flag::skip(&["--permission-prompts"]),
         Flag::skip(&["--plugin-url"]),
         Flag::skip(&["--remote-control-session-name-prefix"]),
-        Flag::skip(&["--session-id"]),
+        Flag::skip(&["--session-id"]).silent(),
         Flag::skip(&["--system-prompt-snapshot"]),
         Flag::skip(&["--teammate-mode"]),
         Flag::skip_many(&["--file"]),
         Flag::skip_many(&["--dangerously-load-development-channels"]),
         // An optional value: the next word when it is not a flag.
-        Flag::skip(&["--cloud"]),
-        Flag::skip(&["--debug", "-d"]),
-        Flag::skip(&["--from-pr"]),
-        Flag::skip(&["--prompt-suggestions"]),
-        Flag::skip(&["--remote-control"]),
-        Flag::skip(&["--resume", "-r"]),
-        Flag::skip(&["--teleport"]),
-        Flag::skip(&["--worktree", "-w"]),
+        Flag::skip(&["--cloud"]).optional(),
+        Flag::skip(&["--debug", "-d"]).optional(),
+        Flag::skip(&["--from-pr"]).optional(),
+        Flag::skip(&["--prompt-suggestions"]).optional(),
+        Flag::skip(&["--remote-control"]).optional(),
+        Flag::skip(&["--resume", "-r"]).optional().silent(),
+        Flag::skip(&["--teleport"]).optional(),
+        Flag::skip(&["--worktree", "-w"]).optional(),
         Flag::dropped(&["--ax-screen-reader"]),
         Flag::dropped(&["--bg", "--background"]),
         Flag::dropped(&["--brief"]),
-        Flag::dropped(&["--continue", "-c"]),
+        Flag::dropped(&["--continue", "-c"]).silent(),
         Flag::dropped(&["--desktop"]),
         Flag::dropped(&["--exclude-dynamic-system-prompt-sections"]),
-        Flag::dropped(&["--fork-session"]),
+        Flag::dropped(&["--fork-session"]).silent(),
         Flag::dropped(&["--forward-subagent-text"]),
         Flag::dropped(&["--include-hook-events"]),
         Flag::dropped(&["--include-partial-messages"]),
@@ -245,7 +246,8 @@ const CLAUDE_FLAGS: Policy = Policy {
         "upgrade",
     ],
     rejects: &["--print", "-p", "--no-session-persistence", "--help", "-h", "--version", "-v"],
-    untested: false,
+    dash_values: true,
+    ..Policy::BASE
 };
 
 /// The `-c key=value` keys Codex restores.
@@ -330,7 +332,7 @@ const CODEX_FLAGS: Policy = Policy {
         "update",
     ],
     rejects: &["--help", "-h", "--version", "-V"],
-    untested: false,
+    ..Policy::BASE
 };
 
 /// The agent with this kind, alias or program name (any case).
@@ -356,15 +358,16 @@ impl AgentSpec {
         }
     }
 
-    /// The saved launch flags that resuming passes again, and what was left out: the tokens that
-    /// pick another session go first (per `Flags`, then the agent's own resume words, resume flags
-    /// and continue flags; the session would be given twice), then only the flags in `saved` are
-    /// kept (see `domain::flags::check`). Codex's resume words are handled by `Flags::Codex` alone,
-    /// so a flag value that happens to be "resume" is kept.
+    /// The saved launch flags that resuming passes again, and what was left out: per `Flags`, the
+    /// tokens that pick another session go first (the session would be given twice; Claude Code's
+    /// are silent entries of its table instead), then only the flags in `saved` are kept (see
+    /// `domain::flags::check`). Codex's resume words are handled by `Flags::Codex` alone, so a flag
+    /// value that happens to be "resume" is kept.
     pub fn check_args(&self, args: &[String]) -> FlagCheck {
         let picked = match self.flags {
             Flags::Others => drop_resume_words(self, args),
-            Flags::Claude => drop_resume_words(self, &claude_args(args)),
+            // Claude Code's session flags are in its table (silent), read in the one parse.
+            Flags::Claude => args.to_vec(),
             Flags::Codex => codex_args(args),
         };
         flags::check(&picked, &self.saved)
@@ -442,25 +445,6 @@ fn drop_resume_words(spec: &AgentSpec, args: &[String]) -> Vec<String> {
         }
         out.push(args[i].clone());
         i += 1;
-    }
-    out
-}
-
-/// Claude Code: also `--session-id <id>` and `--fork-session` (`--resume`/`-r` and
-/// `--continue`/`-c` are its resume and continue flags; `--print`/`-p` loses the session, see
-/// `CLAUDE_FLAGS`).
-fn claude_args(args: &[String]) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter().peekable();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--fork-session" => {}
-            "--session-id" => {
-                it.next_if(|v| !v.starts_with('-'));
-            }
-            s if s.starts_with("--session-id=") => {}
-            _ => out.push(a.clone()),
-        }
     }
     out
 }
@@ -630,6 +614,52 @@ mod tests {
         // A one-shot run is not a session.
         assert_eq!(claude.resume_command(A, &strings(&["-p", "--model", "opus"])), None);
         assert_eq!(claude.resume_command(A, &strings(&["mcp", "serve"])), None);
+    }
+
+    /// Session-picking flags are read in the one parse, so the word after them is never taken as
+    /// one more value of the flag before them: a prompt there is not saved.
+    #[test]
+    fn a_prompt_after_a_session_flag_is_not_saved() {
+        let claude = find("claude").unwrap();
+        for (args, kept) in [
+            (
+                strings(&["--add-dir", "/w", "--continue", "deploy; db password is hunter2"]),
+                strings(&["--add-dir", "/w"]),
+            ),
+            (strings(&["--add-dir", "X", "-c", "keep going"]), strings(&["--add-dir", "X"])),
+            (strings(&["--mcp-config", "a.json", "--resume", A, "finish it"]), strings(&["--mcp-config", "a.json"])),
+            (strings(&["--mcp-config", "a.json", "-r", A, "finish it"]), strings(&["--mcp-config", "a.json"])),
+            (
+                strings(&["--allowedTools", "Edit", "--fork-session", "do the thing"]),
+                strings(&["--allowedTools", "Edit"]),
+            ),
+            (
+                strings(&["--disallowedTools", "Edit", "--session-id", A, "prompt words"]),
+                strings(&["--disallowedTools", "Edit"]),
+            ),
+        ] {
+            let c = claude.check_args(&args);
+            assert_eq!((c.kept, c.lost), (kept, None), "{args:?}");
+            assert_eq!(c.left_out, Vec::<String>::new(), "{args:?}");
+        }
+    }
+
+    /// Commander gives a required option the next word whatever it starts with; clap does not.
+    #[test]
+    fn claude_required_values_may_start_with_a_dash() {
+        let claude = find("claude").unwrap();
+        let c = claude.check_args(&strings(&["--append-system-prompt", "--dangerously-skip-permissions"]));
+        assert_eq!((c.kept, c.lost), (strings(&[]), None));
+        let c = claude.check_args(&strings(&["--append-system-prompt", "- never push to main", "--model", "opus"]));
+        assert_eq!((c.kept, c.lost), (strings(&["--model", "opus"]), None));
+        let c = claude.check_args(&strings(&["--name", "--verbose", "--disallowedTools", "Bash"]));
+        assert_eq!(c.kept, strings(&["--disallowedTools", "Bash"]));
+        // An optional value still stops at a flag.
+        let c = claude.check_args(&strings(&["--model", "opus", "-r", "--permission-mode", "plan"]));
+        assert_eq!(c.kept, strings(&["--model", "opus", "--permission-mode", "plan"]));
+        // Codex (clap): a dash word is a flag, so the sandbox has no value.
+        let codex = find("codex").unwrap();
+        assert!(codex.check_args(&strings(&["-s", "-m", "o3"])).lost.is_some());
     }
 
     #[test]

@@ -51,26 +51,30 @@ pub struct Flag {
     /// of its values, can't be kept, the whole session is left out rather than resumed with fewer
     /// limits.
     pub restricts: bool,
+    /// Its value is optional (`--resume [id]`): it takes the next word only when that is not a flag.
+    pub optional: bool,
+    /// Left out without a note: it picks the session, which the resume command gives anyway.
+    pub silent: bool,
 }
 
 impl Flag {
     pub const fn switch(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Switch, many: false, restricts: false }
+        Flag { names, value: Value::Switch, many: false, restricts: false, optional: false, silent: false }
     }
     pub const fn word(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Word, many: false, restricts: false }
+        Flag { names, value: Value::Word, many: false, restricts: false, optional: false, silent: false }
     }
     pub const fn words(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Word, many: true, restricts: false }
+        Flag { names, value: Value::Word, many: true, restricts: false, optional: false, silent: false }
     }
     pub const fn path(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Path, many: false, restricts: false }
+        Flag { names, value: Value::Path, many: false, restricts: false, optional: false, silent: false }
     }
     pub const fn paths(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Path, many: true, restricts: false }
+        Flag { names, value: Value::Path, many: true, restricts: false, optional: false, silent: false }
     }
     pub const fn rules(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Rules, many: true, restricts: false }
+        Flag { names, value: Value::Rules, many: true, restricts: false, optional: false, silent: false }
     }
     pub const fn config(
         names: &'static [&'static str],
@@ -78,25 +82,40 @@ impl Flag {
         restricting: &'static [&'static str],
         neutral: &'static [&'static str],
     ) -> Flag {
-        Flag { names, value: Value::ConfigKey { keys, restricting, neutral }, many: false, restricts: false }
+        Flag {
+            names,
+            value: Value::ConfigKey { keys, restricting, neutral },
+            many: false,
+            restricts: false,
+            optional: false,
+            silent: false,
+        }
     }
     /// The same flag, marked as limiting the agent (see `restricts`).
     pub const fn restricting(self) -> Flag {
         Flag { restricts: true, ..self }
     }
+    /// The same flag, with an optional value (see `optional`).
+    pub const fn optional(self) -> Flag {
+        Flag { optional: true, ..self }
+    }
+    /// The same flag, left out without a note (see `silent`).
+    pub const fn silent(self) -> Flag {
+        Flag { silent: true, ..self }
+    }
     pub const fn skip(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Skip, many: false, restricts: false }
+        Flag { names, value: Value::Skip, many: false, restricts: false, optional: false, silent: false }
     }
     pub const fn skip_many(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Skip, many: true, restricts: false }
+        Flag { names, value: Value::Skip, many: true, restricts: false, optional: false, silent: false }
     }
     pub const fn dropped(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Dropped, many: false, restricts: false }
+        Flag { names, value: Value::Dropped, many: false, restricts: false, optional: false, silent: false }
     }
 }
 
 /// An agent's flag policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Policy {
     /// Every flag the agent's command line knows (all spellings, with arities); only those that are
     /// not `Value::Skip` or `Value::Dropped` are kept. A flag not listed loses the session.
@@ -108,11 +127,24 @@ pub struct Policy {
     /// Nobody has tested sessionsnap with the agent's flags: a launch with any flag is not resumed
     /// (an unknown flag may limit the agent), only one without flags.
     pub untested: bool,
+    /// The agent's parser gives a required value the next word whatever it starts with (commander,
+    /// Claude Code), instead of reading a word that starts with `-` as a flag (clap, Codex).
+    pub dash_values: bool,
+    /// A flag and value the terminal added itself (cmux's hook settings), left out silently.
+    pub injected: fn(&str, &str) -> bool,
+}
+
+fn never(_: &str, _: &str) -> bool {
+    false
 }
 
 impl Policy {
+    /// The defaults: a clap-style parser, nothing injected. Build policies as
+    /// `Policy { flags: …, ..Policy::BASE }`.
+    pub const BASE: Policy =
+        Policy { flags: &[], commands: &[], rejects: &[], untested: false, dash_values: false, injected: never };
     /// Agents whose flags sessionsnap doesn't know: only launches without flags are resumed.
-    pub const NONE: Policy = Policy { flags: &[], commands: &[], rejects: &[], untested: true };
+    pub const NONE: Policy = Policy { untested: true, ..Policy::BASE };
 }
 
 /// Why a whole agent session is left out.
@@ -270,6 +302,10 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
                 None if flag.value.is_switch() || n != last => vec![],
                 None => {
                     let start = i;
+                    // A required value under commander: the next word, whatever it starts with.
+                    if policy.dash_values && !flag.optional && i < args.len() {
+                        i += 1;
+                    }
                     while i < args.len() && !args[i].starts_with('-') && (flag.many || i == start) {
                         i += 1;
                     }
@@ -282,6 +318,9 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
     }
     // Pass 2: keep what is allowed and fits; every restricting flag must come out as it went in.
     for o in occurrences {
+        if o.values.len() == 1 && (policy.injected)(&o.name, o.values[0]) {
+            continue;
+        }
         if let Value::ConfigKey { keys, restricting, neutral } = o.flag.value {
             for v in &o.values {
                 let key = config_key(v);
@@ -298,7 +337,9 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
         let keep_switch = o.flag.value == Value::Switch && o.values.is_empty();
         let whole = keep_switch || (!kept.is_empty() && kept.len() == o.values.len());
         if !whole {
-            note_name(&mut out, &o.name);
+            if !o.flag.silent {
+                note_name(&mut out, &o.name);
+            }
             if restricts {
                 lose(&mut out, Lost::Restriction(o.name.clone()));
             }
@@ -473,7 +514,7 @@ mod tests {
         ],
         commands: &["mcp"],
         rejects: &["--print"],
-        untested: false,
+        ..Policy::BASE
     };
 
     #[test]
@@ -640,7 +681,7 @@ mod tests {
             ],
             commands: &[],
             rejects: &[],
-            untested: false,
+            ..Policy::BASE
         };
         let ghp = format!("ghp_{}", "a1".repeat(18));
         for args in [
