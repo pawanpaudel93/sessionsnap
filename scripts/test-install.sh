@@ -141,4 +141,39 @@ mkdir -p "$T/occupied/sessionsnap"
 run Linux x86_64 bash SESSIONSNAP_INSTALL_DIR="$T/occupied" && fail "a folder named sessionsnap must be refused"
 has_out "is a folder" || fail "folder message"
 
+# A truncated download (`curl | sh` cut short) runs nothing: no download, no file written.
+size=$(($(wc -c <"$ROOT/install.sh")))
+lines=$(($(wc -l <"$ROOT/install.sh")))
+cuts=""
+n=1
+while [ "$n" -lt "$lines" ]; do
+  cuts="$cuts $(head -n "$n" "$ROOT/install.sh" | wc -c)"
+  n=$((n + 1))
+done
+n=1
+while [ "$n" -lt "$size" ]; do
+  cuts="$cuts $n"
+  n=$((n + 41))
+done
+# The last line, cut inside it (`{ main "$@"; }`: any cut leaves the brace open).
+for back in 2 3 4 5 6 8 10 12; do
+  cuts="$cuts $((size - back))"
+done
+printf '#!/bin/sh\necho called >>"$CURL_LOG"\nexit 22\n' >"$T/bin/curl-log"
+chmod 755 "$T/bin/curl-log"
+mkdir -p "$T/trunc/bin" "$T/trunc/cwd"
+cp "$T/bin/curl-log" "$T/trunc/bin/curl"
+cp "$T/bin/uname" "$T/trunc/bin/uname"
+for cut in $cuts; do
+  rm -rf "${T:?}/home" "$T/trunc/cwd" "$T/trunc/log"
+  mkdir -p "$T/home" "$T/trunc/cwd"
+  head -c "$cut" "$ROOT/install.sh" >"$T/trunc/install.sh"
+  (cd "$T/trunc/cwd" && env -i PATH="$T/trunc/bin:/usr/bin:/bin" HOME="$T/home" TMPDIR="$T/trunc/cwd" \
+    SHELL=/bin/bash CURL_LOG="$T/trunc/log" FAKE_OS=Linux FAKE_ARCH=x86_64 SESSIONSNAP_VERSION=9.9.9 \
+    sh "$T/trunc/install.sh" >/dev/null 2>&1) || true
+  [ ! -e "$T/trunc/log" ] || fail "a download cut at byte $cut of $size ran curl"
+  [ -z "$(ls -A "$T/home")" ] || fail "a download cut at byte $cut of $size wrote to HOME"
+  [ -z "$(ls -A "$T/trunc/cwd")" ] || fail "a download cut at byte $cut of $size wrote to the current folder"
+done
+
 echo "install.sh: all cases passed"
