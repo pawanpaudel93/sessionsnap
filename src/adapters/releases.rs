@@ -14,6 +14,14 @@ use crate::ports::Releases;
 /// curl exit codes that mean the network or GitHub could not be reached (not an HTTP error).
 const UNREACHABLE: [i32; 5] = [5, 6, 7, 28, 35];
 
+/// curl's exit code when `--max-time` or `--connect-timeout` runs out.
+const TIMED_OUT: i32 = 28;
+
+/// Seconds to connect, and for a whole small request (release metadata, a checksum) or archive.
+const CONNECT_SECS: &str = "10";
+const METADATA_SECS: u32 = 30;
+const ARCHIVE_SECS: u32 = 300;
+
 pub struct GitHubReleases {
     /// "owner/name".
     pub repo: String,
@@ -33,7 +41,7 @@ impl Releases for GitHubReleases {
         let (code, body) = self.curl(&[
             "-fsSL",
             "--connect-timeout",
-            "15",
+            CONNECT_SECS,
             "--max-time",
             "30",
             "-H",
@@ -50,7 +58,7 @@ impl Releases for GitHubReleases {
         let (code, url) = self.curl(&[
             "-fsSLI",
             "--connect-timeout",
-            "15",
+            CONNECT_SECS,
             "--max-time",
             "30",
             "-o",
@@ -65,13 +73,36 @@ impl Releases for GitHubReleases {
         Ok(if code == 0 { tag_from_url(&url) } else { None })
     }
 
+    /// Downloads with an overall limit: 30 s for a checksum file, 300 s for an archive, so a
+    /// connection that stalls can't hang `update`.
     fn download(&self, url: &str, dest: &Path) -> Result<()> {
         let dest = dest.to_string_lossy();
-        let (code, _) = self.curl(&["-fsSL", "--retry", "3", "--connect-timeout", "15", "-o", &dest, url])?;
-        if code != 0 {
-            bail!("download failed (curl exit {code}): {url}");
+        let secs = if url.ends_with(".sha256") { METADATA_SECS } else { ARCHIVE_SECS };
+        let max = secs.to_string();
+        // `--max-time` bounds each try; `--retry-max-time` bounds the retries together.
+        let args = [
+            "-fsSL",
+            "--retry",
+            "3",
+            "--retry-max-time",
+            &max,
+            "--connect-timeout",
+            CONNECT_SECS,
+            "--max-time",
+            &max,
+            "-o",
+            &dest,
+            url,
+        ];
+        let (code, _) = self.curl(&args)?;
+        match code {
+            0 => Ok(()),
+            TIMED_OUT => bail!(
+                "download timed out after {secs} s (or couldn't connect within {CONNECT_SECS} s): {url}; check \
+                 your connection and run `sessionsnap update` again"
+            ),
+            _ => bail!("download failed (curl exit {code}): {url}"),
         }
-        Ok(())
     }
 
     fn sha256(&self, path: &Path) -> Result<String> {
@@ -190,6 +221,32 @@ mod checksum_tests {
         // No network.
         let err = tag(("", 6), ("", 6)).unwrap_err();
         assert!(err.contains("can't reach GitHub"), "{err}");
+    }
+
+    /// Every curl call has an overall time limit, so a stalled connection can't hang `update`.
+    #[test]
+    fn downloads_have_a_time_limit() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("args");
+        let script = d.path().join("curl");
+        std::fs::write(&script, format!("#!/bin/sh\necho \"$*\" >>'{}'\nexit 28\n", log.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let r = GitHubReleases { repo: "o/r".into(), curl: script.display().to_string() };
+        let err = r.download("https://x/y.tar.gz", &d.path().join("y")).unwrap_err().to_string();
+        assert!(err.contains("timed out after 300 s") && err.contains("https://x/y.tar.gz"), "{err}");
+        let err = r.download("https://x/y.tar.gz.sha256", &d.path().join("y")).unwrap_err().to_string();
+        assert!(err.contains("timed out after 30 s"), "{err}");
+        let err = r.latest_tag().unwrap_err().to_string();
+        assert!(err.contains("can't reach GitHub"), "{err}");
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let calls: Vec<&str> = calls.lines().collect();
+        assert_eq!(calls.len(), 4, "{calls:?}");
+        assert!(calls[0].contains("--connect-timeout 10") && calls[0].contains("--max-time 300"), "{}", calls[0]);
+        assert!(calls[1].contains("--connect-timeout 10") && calls[1].contains("--max-time 30 "), "{}", calls[1]);
+        for c in &calls[2..] {
+            assert!(c.contains("--connect-timeout 10") && c.contains("--max-time 30 "), "{c}");
+        }
     }
 
     #[test]
