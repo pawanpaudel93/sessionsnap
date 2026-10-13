@@ -65,7 +65,7 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
         return terminal();
     }
     let check = agents.check_flags(&a.kind, &a.args);
-    if let Some(n) = check.note() {
+    if let Some(n) = check.note(&agents.display_name(&a.kind)) {
         note(&n);
     }
     if check.lost.is_some() {
@@ -165,9 +165,9 @@ mod tests {
                 alt_session_id: None,
             }),
         };
-        open.workspaces[1].tabs = vec![tab("codex", B, &["-a", "on-request"]), tab("aider", C, &["--x"])];
+        open.workspaces[1].tabs = vec![tab("codex", B, &["-a", "on-request"]), tab("aider", C, &[])];
         let (ws, notes) = capture(&open, &history, &["Beta".into()]).unwrap();
-        assert_eq!(notes, ["Beta › aider tab: left out flags it does not restore: --x"]);
+        assert_eq!(notes, Vec::<String>::new());
         assert_eq!(
             ws[0].tabs,
             [
@@ -296,10 +296,10 @@ mod tests {
         }
     }
 
-    /// A deny rule that cannot be saved leaves out the whole agent session: resuming without it
-    /// would allow what the user denied.
+    /// A restricting flag that cannot be saved leaves out the whole agent session: resuming
+    /// without it would allow more than the user did.
     #[test]
-    fn a_deny_rule_that_cannot_be_saved_leaves_out_the_session() {
+    fn a_restricting_flag_that_cannot_be_saved_leaves_out_the_session() {
         // Built at runtime so secret scanners don't flag the source.
         let ghp = format!("ghp_{}", "a1".repeat(18));
         for flag in ["--disallowedTools", "--disallowed-tools"] {
@@ -308,11 +308,33 @@ mod tests {
             assert_eq!(tab, Tab::Terminal { title: "t".into(), cwd: "/w/b".into(), command: None });
             assert_eq!(
                 notes,
-                ["Beta › t: left out its agent session (a deny rule could not be saved; resume it by hand)"]
+                [format!(
+                    "Beta › t: left out its agent session: a restricting flag ({flag}) could not be saved; resume it by hand"
+                )]
             );
             let (tab, notes) = capture_one("claude", A, &[format!("{flag}=Bash(x {ghp})")]);
             assert!(matches!(tab, Tab::Terminal { .. }) && notes.len() == 1, "{notes:?}");
         }
+        // Codex: a sandbox or approval value, or a restricting `-c` key, of an unexpected shape.
+        for (args, name) in [
+            (words(&["--sandbox", "read only"]), "--sandbox"),
+            (words(&["-s", "read-only", "-a"]), "-a"),
+            (words(&["-c", "sandbox_mode=[\"read-only\"]"]), "-c"),
+            (words(&["-c", "sandbox_workspace_write.writable_roots=[\"/a\"]"]), "-c"),
+            (words(&["--profile", "{x}"]), "--profile"),
+        ] {
+            let (tab, notes) = capture_one("codex", B, &args);
+            assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
+            assert!(notes[0].contains(&format!("a restricting flag ({name})")), "{notes:?}");
+        }
+        let fine = words(&["-s", "read-only", "-c", "sandbox_mode=read-only", "-c", "approval_policy=\"never\""]);
+        assert_eq!(saved_args(&capture_one("codex", B, &fine).0), fine);
+        // A neutral flag that cannot be saved is only noted: the session still resumes.
+        let (tab, notes) = capture_one("codex", B, &words(&["--model", "a b", "-s", "read-only"]));
+        assert_eq!(
+            (saved_args(&tab), notes),
+            (words(&["-s", "read-only"]), vec!["Beta › t: left out flags it does not restore: --model".to_string()])
+        );
         // An allow rule that cannot be saved only makes the resumed session stricter.
         let args = vec!["--allowedTools".into(), "Edit".into(), format!("Bash(curl -H {ghp}:*)")];
         let (tab, notes) = capture_one("claude", A, &args);
@@ -334,7 +356,7 @@ mod tests {
             assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
             assert_eq!(
                 notes,
-                [format!("Beta › t: left out its agent session ({what} is not a session that can be resumed)")]
+                [format!("Beta › t: left out its agent session: {what} is not a session that can be resumed")]
             );
         }
         // A prompt that happens to be a command's name, after a flag's value, is a prompt.
@@ -342,17 +364,23 @@ mod tests {
         assert_eq!(saved_args(&tab), words(&["--model", "opus"]));
     }
 
+    /// Agents whose flags are untested resume only a launch without flags.
     #[test]
-    fn resume_only_and_unknown_agents_keep_no_flags() {
-        for (kind, id) in [("gemini", "g-1"), ("opencode", "s1"), ("aider", "x1")] {
-            let (tab, notes) = capture_one(kind, id, &words(&["--model", "pro", "--yolo"]));
-            assert_eq!(saved_args(&tab), Vec::<String>::new(), "{kind}");
-            // Their flags' arities are unknown, so `pro` counts as another argument.
+    fn resume_only_and_unknown_agents_with_flags_are_left_out() {
+        for (kind, id, name) in
+            [("gemini", "g-1", "Gemini CLI"), ("opencode", "s1", "OpenCode"), ("aider", "x1", "aider")]
+        {
+            let (tab, notes) = capture_one(kind, id, &words(&["--sandbox"]));
+            assert!(matches!(tab, Tab::Terminal { .. }), "{kind}");
             assert_eq!(
                 notes,
-                ["Beta › t: left out flags it does not restore: --model, --yolo (and 1 other argument)"],
+                [format!(
+                    "Beta › t: left out its agent session: sessionsnap can't restore {name}'s launch flags yet; resume it by hand"
+                )],
                 "{kind}"
             );
+            let (tab, notes) = capture_one(kind, id, &[]);
+            assert_eq!((saved_args(&tab), notes), (vec![], vec![]), "{kind}");
         }
     }
 

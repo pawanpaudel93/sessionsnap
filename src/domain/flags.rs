@@ -17,8 +17,10 @@ pub enum Value {
     Path,
     /// Permission rules (`Bash(git:*)`, `Edit`).
     Rules,
-    /// `key=value` for one of these keys only, the value `Word`-shaped (optionally in double quotes).
-    ConfigKey(&'static [&'static str]),
+    /// `key=value` for the listed keys only, the value `Word`-shaped (optionally in double quotes).
+    /// A key ending in `.` stands for every key under it (`features.`). `restricting` keys limit
+    /// the agent: one that can't be saved leaves out the session.
+    ConfigKey { keys: &'static [&'static str], restricting: &'static [&'static str] },
     /// Not restored, but known to take a value: the value goes with the flag (and is never read as
     /// a prompt or a subcommand).
     Skip,
@@ -31,40 +33,47 @@ pub struct Flag {
     pub value: Value,
     /// Takes one or more values (`--add-dir a b`).
     pub many: bool,
-    /// A deny rule: when one of its values can't be kept, the whole session is left out.
-    pub deny: bool,
+    /// Limits what the agent may do (a deny rule, a sandbox, a permission mode): when it, or any
+    /// of its values, can't be kept, the whole session is left out rather than resumed with fewer
+    /// limits.
+    pub restricts: bool,
 }
 
 impl Flag {
     pub const fn switch(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Switch, many: false, deny: false }
+        Flag { names, value: Value::Switch, many: false, restricts: false }
     }
     pub const fn word(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Word, many: false, deny: false }
+        Flag { names, value: Value::Word, many: false, restricts: false }
     }
     pub const fn words(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Word, many: true, deny: false }
+        Flag { names, value: Value::Word, many: true, restricts: false }
     }
     pub const fn path(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Path, many: false, deny: false }
+        Flag { names, value: Value::Path, many: false, restricts: false }
     }
     pub const fn paths(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Path, many: true, deny: false }
+        Flag { names, value: Value::Path, many: true, restricts: false }
     }
     pub const fn rules(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Rules, many: true, deny: false }
+        Flag { names, value: Value::Rules, many: true, restricts: false }
     }
-    pub const fn deny_rules(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Rules, many: true, deny: true }
+    pub const fn config(
+        names: &'static [&'static str],
+        keys: &'static [&'static str],
+        restricting: &'static [&'static str],
+    ) -> Flag {
+        Flag { names, value: Value::ConfigKey { keys, restricting }, many: false, restricts: false }
     }
-    pub const fn config(names: &'static [&'static str], keys: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::ConfigKey(keys), many: false, deny: false }
+    /// The same flag, marked as limiting the agent (see `restricts`).
+    pub const fn restricting(self) -> Flag {
+        Flag { restricts: true, ..self }
     }
     pub const fn skip(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Skip, many: false, deny: false }
+        Flag { names, value: Value::Skip, many: false, restricts: false }
     }
     pub const fn skip_many(names: &'static [&'static str]) -> Flag {
-        Flag { names, value: Value::Skip, many: true, deny: false }
+        Flag { names, value: Value::Skip, many: true, restricts: false }
     }
 }
 
@@ -77,18 +86,24 @@ pub struct Policy {
     pub commands: &'static [&'static str],
     /// Flags that make a launch one that can't be resumed (`--print`).
     pub rejects: &'static [&'static str],
+    /// Nobody has tested sessionsnap with the agent's flags: a launch with any flag is not resumed
+    /// (an unknown flag may limit the agent), only one without flags.
+    pub untested: bool,
 }
 
 impl Policy {
-    /// Keeps no flag: agents nobody has tested sessionsnap with.
-    pub const NONE: Policy = Policy { flags: &[], commands: &[], rejects: &[] };
+    /// Agents whose flags sessionsnap doesn't know: only launches without flags are resumed.
+    pub const NONE: Policy = Policy { flags: &[], commands: &[], rejects: &[], untested: true };
 }
 
 /// Why a whole agent session is left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lost {
-    /// A value of a deny flag could not be kept: resuming without it would allow what was denied.
-    DenyRule,
+    /// A flag that limits the agent (named here) could not be kept: resuming without it would allow
+    /// more than the user did.
+    Restriction(String),
+    /// The agent's flags are untested, and the launch has some.
+    UntestedFlags,
     /// The launch is a subcommand or a one-shot run (named here), not a session.
     NotASession(String),
 }
@@ -106,18 +121,21 @@ pub struct FlagCheck {
 }
 
 impl FlagCheck {
-    /// Why the session is left out, in words, when it is.
-    pub fn lost_reason(&self) -> Option<String> {
+    /// Why the session is left out, in words, when it is; `agent` names the agent.
+    pub fn lost_reason(&self, agent: &str) -> Option<String> {
         self.lost.as_ref().map(|l| match l {
-            Lost::DenyRule => "a deny rule could not be saved; resume it by hand".to_string(),
+            Lost::Restriction(name) => {
+                format!("a restricting flag ({name}) could not be saved; resume it by hand")
+            }
+            Lost::UntestedFlags => format!("sessionsnap can't restore {agent}'s launch flags yet; resume it by hand"),
             Lost::NotASession(what) => format!("{what} is not a session that can be resumed"),
         })
     }
 
     /// What was left out, for `save`'s notes: flag names only, never a value.
-    pub fn note(&self) -> Option<String> {
-        if let Some(why) = self.lost_reason() {
-            return Some(format!("left out its agent session ({why})"));
+    pub fn note(&self, agent: &str) -> Option<String> {
+        if let Some(why) = self.lost_reason(agent) {
+            return Some(format!("left out its agent session: {why}"));
         }
         let others = match self.other_words {
             0 => String::new(),
@@ -136,11 +154,16 @@ impl FlagCheck {
 }
 
 /// `args` filtered through `policy`: listed flags whose values pass their checks are kept (in their
-/// saved form, `--flag value` or `--flag=value`); everything else is left out. A dropped value of a
-/// deny flag, a subcommand in `policy.commands` or a flag in `policy.rejects` loses the session.
+/// saved form, `--flag value`, `--flag=value` or `-svalue`); everything else is left out. The
+/// session is lost (see `Lost`) when a restricting flag or value can't be kept, when an untested
+/// agent's launch has any flag, or for a subcommand in `policy.commands` or a flag in
+/// `policy.rejects`.
 pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
     let mut out = FlagCheck::default();
     let find = |name: &str| policy.flags.iter().find(|f| f.names.contains(&name));
+    let lose = |out: &mut FlagCheck, lost: Lost| {
+        out.lost.get_or_insert(lost);
+    };
     let mut seen_word = false;
     let mut i = 0;
     while i < args.len() {
@@ -152,18 +175,18 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
         }
         if !a.starts_with('-') || a == "-" {
             if !seen_word && policy.commands.contains(&a) {
-                out.lost = Some(Lost::NotASession(format!("the `{a}` command")));
+                lose(&mut out, Lost::NotASession(format!("the `{a}` command")));
             }
             seen_word = true;
             out.other_words += 1;
             continue;
         }
-        let (name, inline) = match a.split_once('=') {
-            Some((n, v)) => (n, Some(v)),
-            None => (a, None),
-        };
+        if policy.untested {
+            lose(&mut out, Lost::UntestedFlags);
+        }
+        let (name, inline) = split_flag(a, |n| find(n).is_some_and(|f| f.value != Value::Switch));
         if policy.rejects.contains(&name) {
-            out.lost = Some(Lost::NotASession(format!("a launch with {name}")));
+            lose(&mut out, Lost::NotASession(format!("a launch with {name}")));
         }
         let Some(flag) = find(name) else {
             note_name(&mut out, name);
@@ -172,7 +195,12 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
         if flag.value == Value::Switch {
             match inline {
                 None => out.kept.push(a.to_string()),
-                Some(_) => note_name(&mut out, name),
+                Some(_) => {
+                    note_name(&mut out, name);
+                    if flag.restricts {
+                        lose(&mut out, Lost::Restriction(name.to_string()));
+                    }
+                }
             }
             continue;
         }
@@ -190,11 +218,18 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
             note_name(&mut out, name);
             continue;
         }
-        let good: Vec<&str> = values.iter().copied().filter(|v| fits(flag.value, v) && !holds_credential(v)).collect();
+        let mut good = vec![];
+        for v in &values {
+            if fits(flag.value, v) && !holds_credential(v) {
+                good.push(*v);
+            } else if flag.restricts || restricting_key(flag.value, v) {
+                lose(&mut out, Lost::Restriction(name.to_string()));
+            }
+        }
         if good.len() < values.len() || values.is_empty() {
             note_name(&mut out, name);
-            if flag.deny && good.len() < values.len() {
-                out.lost = Some(Lost::DenyRule);
+            if values.is_empty() && flag.restricts {
+                lose(&mut out, Lost::Restriction(name.to_string()));
             }
         }
         if good.is_empty() {
@@ -209,6 +244,35 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
         }
     }
     out
+}
+
+/// A flag word's name and inline value: `--name=value`, `-n=value`, or `-nvalue` when `-n` is a
+/// known flag that takes a value (`takes_value`).
+fn split_flag(a: &str, takes_value: impl Fn(&str) -> bool) -> (&str, Option<&str>) {
+    if !a.starts_with("--") && a.len() > 2 && a.is_char_boundary(2) && takes_value(&a[..2]) {
+        let rest = &a[2..];
+        return (&a[..2], Some(rest.strip_prefix('=').unwrap_or(rest)));
+    }
+    match a.split_once('=') {
+        Some((n, v)) => (n, Some(v)),
+        None => (a, None),
+    }
+}
+
+/// `v` is a `key=value` (or a bare key) of a restricting config key.
+fn restricting_key(kind: Value, v: &str) -> bool {
+    match kind {
+        Value::ConfigKey { restricting, .. } => {
+            let key = v.split_once('=').map_or(v, |(k, _)| k).trim();
+            key_in(restricting, key)
+        }
+        _ => false,
+    }
+}
+
+/// `key` is one of `keys`, or under one ending in `.`.
+fn key_in(keys: &[&str], key: &str) -> bool {
+    keys.iter().any(|k| *k == key || (k.ends_with('.') && key.starts_with(k) && key.len() > k.len()))
 }
 
 /// Records a left-out flag by its name, never by anything that could be a value: a short flag by
@@ -241,9 +305,9 @@ fn fits(kind: Value, v: &str) -> bool {
             !t.is_empty() && !t.starts_with('{') && !t.starts_with('[')
         }
         Value::Rules => true,
-        Value::ConfigKey(keys) => v.split_once('=').is_some_and(|(k, value)| {
+        Value::ConfigKey { keys, restricting } => v.split_once('=').is_some_and(|(k, value)| {
             let unquoted = value.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(value);
-            keys.contains(&k) && is_word(unquoted)
+            (key_in(keys, k) || key_in(restricting, k)) && is_word(unquoted)
         }),
     }
 }
@@ -316,12 +380,15 @@ mod tests {
             Flag::path(&["--settings"]),
             Flag::paths(&["--add-dir"]),
             Flag::rules(&["--allowedTools"]),
-            Flag::deny_rules(&["--disallowedTools"]),
-            Flag::config(&["-c"], &["model"]),
+            Flag::rules(&["--disallowedTools"]).restricting(),
+            Flag::word(&["--sandbox", "-s"]).restricting(),
+            Flag::switch(&["--strict"]).restricting(),
+            Flag::config(&["-c"], &["model"], &["sandbox_mode", "features."]),
             Flag::skip(&["--name"]),
         ],
         commands: &["mcp"],
         rejects: &["--print"],
+        untested: false,
     };
 
     #[test]
@@ -374,7 +441,7 @@ mod tests {
     fn notes_name_flags_never_values() {
         let c = check(&words(&["--token=abc", "-kSECRET", "--x", "y"]), &POLICY);
         assert_eq!(c.left_out, ["--token", "-k", "--x"]);
-        assert_eq!(c.note().unwrap(), "left out flags it does not restore: --token, -k, --x (and 1 other argument)");
+        assert_eq!(c.note("x").unwrap(), "left out flags it does not restore: --token, -k, --x (and 1 other argument)");
         let ghp = format!("--ghp_{}", "a1".repeat(18));
         assert_eq!(check(&[ghp], &POLICY).left_out, ["a flag"]);
         assert_eq!(check(&words(&["--a b=1"]), &POLICY).left_out, ["a flag"]);
@@ -384,7 +451,11 @@ mod tests {
     fn lost_sessions() {
         let ghp = format!("ghp_{}", "a1".repeat(18));
         let c = check(&words(&["--disallowedTools", "Edit", &format!("Bash({ghp})")]), &POLICY);
-        assert_eq!(c.lost, Some(Lost::DenyRule));
+        assert_eq!(c.lost, Some(Lost::Restriction("--disallowedTools".into())));
+        assert_eq!(
+            c.note("Claude Code").unwrap(),
+            "left out its agent session: a restricting flag (--disallowedTools) could not be saved; resume it by hand"
+        );
         let c = check(&words(&["--allowedTools", "Edit", &format!("Bash({ghp})")]), &POLICY);
         assert_eq!((c.lost, c.kept), (None, words(&["--allowedTools", "Edit"])));
         assert_eq!(
@@ -395,9 +466,59 @@ mod tests {
         assert_eq!(check(&words(&["fix", "mcp"]), &POLICY).lost, None);
         assert_eq!(check(&words(&["--print"]), &POLICY).lost, Some(Lost::NotASession("a launch with --print".into())));
         assert_eq!(
-            check(&words(&["--print=1"]), &POLICY).lost_reason().unwrap(),
+            check(&words(&["--print=1"]), &POLICY).lost_reason("x").unwrap(),
             "a launch with --print is not a session that can be resumed"
         );
+    }
+
+    /// A restricting flag that can't be kept, for any reason, loses the session.
+    #[test]
+    fn restricting_flags_fail_closed() {
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        for (args, name) in [
+            (words(&["--sandbox", "read only"]), "--sandbox"),
+            (words(&["-s", &ghp]), "-s"),
+            (words(&["--sandbox"]), "--sandbox"),
+            (words(&["-s", "--model", "o3"]), "-s"),
+            (words(&["--sandbox={}"]), "--sandbox"),
+            (words(&["--strict=1"]), "--strict"),
+            (words(&["-c", "sandbox_mode=[\"x\"]"]), "-c"),
+            (words(&["-c", "sandbox_mode"]), "-c"),
+            (words(&["-c=features.web_search={a=1}"]), "-c"),
+            (words(&["--disallowedTools", "Edit", &format!("Bash(x {ghp})")]), "--disallowedTools"),
+        ] {
+            assert_eq!(check(&args, &POLICY).lost, Some(Lost::Restriction(name.into())), "{args:?}");
+        }
+        // Kept when they fit, in every form.
+        for args in [
+            words(&["--sandbox", "read-only"]),
+            words(&["-sread-only"]),
+            words(&["-s=read-only"]),
+            words(&["--strict"]),
+            words(&["-c", "sandbox_mode=read-only"]),
+            words(&["-c", "features.web_search=false"]),
+        ] {
+            assert_eq!(check(&args, &POLICY), FlagCheck { kept: args.clone(), ..Default::default() }, "{args:?}");
+        }
+        // Neutral flags and config keys are only noted.
+        for args in [words(&["--model", "a b"]), words(&["-c", "other.x={}"]), words(&["--add-dir", "[x]"])] {
+            let c = check(&args, &POLICY);
+            assert_eq!((c.lost, c.left_out.len()), (None, 1), "{args:?}");
+        }
+    }
+
+    /// An untested agent resumes only a launch without flags.
+    #[test]
+    fn untested_agents_resume_only_launches_without_flags() {
+        let c = check(&words(&["--sandbox", "x"]), &Policy::NONE);
+        assert_eq!(c.lost, Some(Lost::UntestedFlags));
+        assert_eq!(
+            c.note("Gemini CLI").unwrap(),
+            "left out its agent session: sessionsnap can't restore Gemini CLI's launch flags yet; resume it by hand"
+        );
+        let c = check(&words(&["fix it"]), &Policy::NONE);
+        assert_eq!((c.lost, c.kept, c.other_words), (None, vec![], 1));
+        assert_eq!(check(&[], &Policy::NONE), FlagCheck::default());
     }
 
     #[test]

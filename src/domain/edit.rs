@@ -311,7 +311,9 @@ pub fn warnings(workspaces: &[Workspace], agents: &dyn AgentCatalog) -> Vec<Stri
             if let Some(s) = t.session() {
                 let status = resume_status(agents, &s);
                 let lost = match t {
-                    Tab::Agent { agent, args, .. } => agents.check_flags(agent, args).lost_reason(),
+                    Tab::Agent { agent, args, .. } => {
+                        agents.check_flags(agent, args).lost_reason(&agents.display_name(agent))
+                    }
                     Tab::Terminal { .. } => None,
                 };
                 let why = lost.or_else(|| (status != Resume::Ready).then(|| problem(agents, &s, status)));

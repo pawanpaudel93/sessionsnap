@@ -136,30 +136,34 @@ pub const AGENTS: &[AgentSpec] = &[
 
 // The flags Claude Code and Codex resume with, checked against `claude --help` (2.1.296) and
 // `codex --help` / `codex resume --help` (0.160.0). Arities and the launches that are not sessions
-// follow cmux's `AgentLaunchSanitizer` policies. To restore another flag, add one line here. `skip`
-// lines are flags that are left out but take a value, so the value is never read as a prompt or a
-// subcommand.
+// follow cmux's `AgentLaunchSanitizer` policies. To restore another flag, add one line here. Mark
+// `.restricting()` every flag that limits the agent (rules, sandboxes, modes, settings): when one
+// can't be kept, the session is left out rather than resumed with fewer limits. `skip` lines are
+// flags that are left out but take a value, so the value is never read as a prompt or a subcommand.
 const CLAUDE_FLAGS: Policy = Policy {
     flags: &[
         Flag::word(&["--model"]),
         Flag::word(&["--fallback-model"]),
-        Flag::word(&["--permission-mode"]),
-        Flag::word(&["--agent"]),
+        Flag::word(&["--permission-mode"]).restricting(),
+        Flag::word(&["--agent"]).restricting(),
         Flag::word(&["--effort"]),
-        Flag::word(&["--setting-sources"]),
-        Flag::word(&["--max-budget-usd"]),
+        Flag::word(&["--setting-sources"]).restricting(),
+        Flag::word(&["--max-budget-usd"]).restricting(),
         Flag::words(&["--betas"]),
         Flag::rules(&["--allowedTools", "--allowed-tools"]),
-        Flag::rules(&["--tools"]),
-        Flag::deny_rules(&["--disallowedTools", "--disallowed-tools"]),
+        Flag::rules(&["--tools"]).restricting(),
+        Flag::rules(&["--disallowedTools", "--disallowed-tools"]).restricting(),
         Flag::paths(&["--add-dir"]),
         Flag::paths(&["--mcp-config"]),
-        Flag::path(&["--settings"]),
+        Flag::path(&["--settings"]).restricting(),
         Flag::path(&["--agents"]),
         Flag::path(&["--plugin-dir"]),
         Flag::path(&["--append-system-prompt-file"]),
         Flag::path(&["--system-prompt-file"]),
-        Flag::switch(&["--strict-mcp-config"]),
+        Flag::switch(&["--strict-mcp-config"]).restricting(),
+        Flag::switch(&["--restricted"]).restricting(),
+        Flag::switch(&["--safe-mode"]).restricting(),
+        Flag::switch(&["--disable-slash-commands"]).restricting(),
         Flag::switch(&["--dangerously-skip-permissions"]),
         Flag::switch(&["--allow-dangerously-skip-permissions"]),
         Flag::switch(&["--ide"]),
@@ -212,29 +216,33 @@ const CLAUDE_FLAGS: Policy = Policy {
         "upgrade",
     ],
     rejects: &["--print", "-p", "--no-session-persistence"],
+    untested: false,
 };
 
 /// The `-c key=value` keys Codex restores.
-const CODEX_CONFIG_KEYS: &[&str] = &[
-    "model",
-    "model_provider",
-    "model_reasoning_effort",
-    "model_reasoning_summary",
-    "model_verbosity",
+const CODEX_CONFIG_KEYS: &[&str] =
+    &["model", "model_provider", "model_reasoning_effort", "model_reasoning_summary", "model_verbosity"];
+
+/// The `-c` keys that limit Codex, also restored; one that can't be kept loses the session. A key
+/// ending in `.` stands for every key under it.
+const CODEX_RESTRICTING_KEYS: &[&str] = &[
     "approval_policy",
     "sandbox_mode",
+    "sandbox_workspace_write.",
     "profile",
+    "features.",
+    "shell_environment_policy.",
 ];
 
 const CODEX_FLAGS: Policy = Policy {
     flags: &[
         Flag::word(&["--model", "-m"]),
-        Flag::word(&["--sandbox", "-s"]),
-        Flag::word(&["--ask-for-approval", "-a"]),
-        Flag::word(&["--profile", "-p"]),
+        Flag::word(&["--sandbox", "-s"]).restricting(),
+        Flag::word(&["--ask-for-approval", "-a"]).restricting(),
+        Flag::word(&["--profile", "-p"]).restricting(),
         Flag::word(&["--enable"]),
-        Flag::word(&["--disable"]),
-        Flag::config(&["--config", "-c"], CODEX_CONFIG_KEYS),
+        Flag::word(&["--disable"]).restricting(),
+        Flag::config(&["--config", "-c"], CODEX_CONFIG_KEYS, CODEX_RESTRICTING_KEYS),
         Flag::path(&["--cd", "-C"]),
         Flag::path(&["--add-dir"]),
         Flag::switch(&["--dangerously-bypass-approvals-and-sandbox"]),
@@ -247,6 +255,7 @@ const CODEX_FLAGS: Policy = Policy {
     ],
     commands: &[],
     rejects: &[],
+    untested: false,
 };
 
 /// The agent with this kind, alias or program name (any case).
@@ -545,7 +554,7 @@ mod tests {
         ]);
         assert_eq!(claude.kept_args(&args), strings(&["--model", "opus", "--add-dir", "/a", "--verbose"]));
         // Session-picking flags are not reported as left out.
-        assert_eq!(claude.check_args(&args).note(), None);
+        assert_eq!(claude.check_args(&args).note("Claude Code"), None);
         // A one-shot run is not a session.
         assert_eq!(claude.resume_command(A, &strings(&["-p", "--model", "opus"])), None);
         assert_eq!(claude.resume_command(A, &strings(&["mcp", "serve"])), None);
@@ -558,7 +567,7 @@ mod tests {
         assert_eq!(codex.kept_args(&flags), flags);
         let resumed = strings(&["resume", A, "-C", "/w", "-m", "o3"]);
         assert_eq!(codex.kept_args(&resumed), strings(&["-C", "/w", "-m", "o3"]));
-        assert_eq!(codex.check_args(&resumed).note(), None);
+        assert_eq!(codex.check_args(&resumed).note("Codex"), None);
         let late = strings(&["-m", "o3", "resume", A, "-s", "x"]);
         assert_eq!(codex.kept_args(&late), strings(&["-m", "o3", "-s", "x"]));
         let last = strings(&["-m", "gpt-5", "fork", "--last"]);
@@ -607,14 +616,18 @@ mod tests {
         }
     }
 
-    /// Resume-only agents are untested with sessionsnap: they resume without any saved flag.
+    /// Resume-only agents are untested with sessionsnap: only a launch without flags resumes (an
+    /// unknown flag such as gemini's `--sandbox` may limit the agent), and nothing else changes.
     #[test]
-    fn resume_only_agents_restore_no_flags() {
+    fn resume_only_agents_resume_only_launches_without_flags() {
         for spec in AGENTS.iter().filter(|s| s.flags == Flags::Others) {
-            let args = strings(&["--model", "m", "--yolo", "-x"]);
-            let check = spec.check_args(&args);
-            assert!(check.kept.is_empty(), "{}", spec.kind);
-            assert_eq!(check.left_out, ["--model", "--yolo", "-x"], "{}", spec.kind);
+            for args in [strings(&["--sandbox"]), strings(&["--model", "m"]), strings(&["-x"])] {
+                assert_eq!(spec.check_args(&args).lost, Some(flags::Lost::UntestedFlags), "{}", spec.kind);
+                assert_eq!(spec.resume_command("s-1", &args), None, "{}", spec.kind);
+            }
+            // Their own resume words are not flags of the launch.
+            let mut args: Vec<String> = spec.resume.iter().map(|w| w.to_string()).collect();
+            args.push("old-1".into());
             assert_eq!(
                 spec.resume_command("s-1", &args).unwrap(),
                 spec.usage().replace("<id>", "s-1"),
@@ -631,9 +644,11 @@ mod tests {
         let claude = find("claude").unwrap();
         let old = strings(&["--model", "opus", "--mcp-config", r#"{"env":{"X":"y"}}"#, "--api-key", "v", "--verbose"]);
         assert_eq!(claude.resume_command(A, &old).unwrap(), format!("claude --resume {A} --model opus --verbose"));
-        // A deny rule that can't be kept loses the session: no command.
+        // A restricting flag that can't be kept loses the session: no command.
         let ghp = format!("ghp_{}", "a1".repeat(18));
         assert_eq!(claude.resume_command(A, &strings(&["--disallowedTools", &format!("Bash({ghp})")])), None);
+        assert_eq!(claude.resume_command(A, &strings(&["--settings", r#"{"permissions":{}}"#])), None);
+        assert_eq!(claude.resume_command(A, &strings(&["--permission-mode", "plan mode"])), None);
         let codex = find("codex").unwrap();
         let old = strings(&["-c", "mcp_servers.x.env={T=\"v\"}", "-m", "o3", "--remote", "ws://h:1"]);
         assert_eq!(codex.resume_command(A, &old).unwrap(), format!("codex resume {A} -m o3"));

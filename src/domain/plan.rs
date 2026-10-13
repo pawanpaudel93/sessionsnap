@@ -174,7 +174,9 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
                 continue;
             }
             let lost = match tab {
-                Tab::Agent { agent, args, .. } => agents.check_flags(agent, args).lost_reason(),
+                Tab::Agent { agent, args, .. } => {
+                    agents.check_flags(agent, args).lost_reason(&agents.display_name(agent))
+                }
                 Tab::Terminal { .. } => None,
             };
             let why = match (control, lost, resume_status(agents, &s)) {
@@ -477,16 +479,21 @@ mod tests {
     fn tabs_whose_saved_flags_lose_the_session_open_plain_shells() {
         // Built at runtime so secret scanners don't flag the source.
         let ghp = format!("ghp_{}", "a1".repeat(18));
-        let with_args = |title: &str, id: &str, args: Vec<String>| Tab::Agent {
+        let tab = |agent: &str, title: &str, id: &str, args: Vec<String>| Tab::Agent {
             title: title.into(),
             cwd: "/w/c".into(),
-            agent: "claude".into(),
+            agent: agent.into(),
             session_id: id.into(),
             args,
         };
+        let with_args = |title: &str, id: &str, args: Vec<String>| tab("claude", title, id, args);
         let deny = with_args("deny", A, vec!["--disallowedTools".into(), format!("Bash({ghp})")]);
         let print = with_args("print", B, vec!["-p".into()]);
-        let saved = vec![workspace("Gamma", "/w/c", None, vec![deny, print])];
+        let sandbox = tab("codex", "sandbox", C, vec!["--sandbox".into(), "read only".into()]);
+        let gemini = tab("gemini", "gemini", "g-1", vec!["--sandbox".into()]);
+        // A neutral flag that can't be replayed is left out, and the session resumes.
+        let model = tab("codex", "model", D, vec!["--model".into(), "a b".into(), "-s".into(), "read-only".into()]);
+        let saved = vec![workspace("Gamma", "/w/c", None, vec![deny, print, sandbox, gemini, model.clone()])];
         let b = build_actions(&saved, &OpenState::default(), &history());
         let shell = |title: &str| Tab::Terminal { title: title.into(), cwd: "/w/c".into(), command: None };
         assert_eq!(
@@ -494,16 +501,25 @@ mod tests {
             vec![Action::CreateWorkspace {
                 name: "Gamma".into(),
                 cwd: "/w/c".into(),
-                tabs: vec![shell("deny"), shell("print")]
+                tabs: vec![shell("deny"), shell("print"), shell("sandbox"), shell("gemini"), model]
             }]
         );
         assert_eq!(
             b.warnings,
             [
-                "Gamma › deny: a deny rule could not be saved; resume it by hand, opening a plain shell",
+                "Gamma › deny: a restricting flag (--disallowedTools) could not be saved; resume it by hand, opening a plain shell",
                 "Gamma › print: a launch with -p is not a session that can be resumed, opening a plain shell",
+                "Gamma › sandbox: a restricting flag (--sandbox) could not be saved; resume it by hand, opening a plain shell",
+                "Gamma › gemini: sessionsnap can't restore Gemini CLI's launch flags yet; resume it by hand, opening a plain shell",
             ]
         );
+        // Into an open workspace they are skipped, with the reason.
+        let open = OpenState { live: true, state_version: None, workspaces: vec![open_ws("G", "Gamma", "/w/c", &[])] };
+        let mut gamma = saved[0].clone();
+        gamma.cmux_workspace_id = Some("G".into());
+        let b = build_actions(&[gamma], &open, &history());
+        assert_eq!(b.skipped.len(), 4, "{:?}", b.skipped);
+        assert!(b.skipped[2].starts_with("Gamma › sandbox: a restricting flag (--sandbox)"), "{:?}", b.skipped);
     }
 
     #[test]
