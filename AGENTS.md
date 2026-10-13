@@ -2,8 +2,9 @@
 
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces and the
 coding-agent sessions in their tabs, and later reopens only what is missing, with each agent tab
-resumed with its original flags. Claude Code and Codex are fully supported (their session
-histories are read); 15 more agents are resume-only and untested. It is one Rust binary: a CLI
+resumed with its original flags (those on the agent's allow-list). Claude Code and Codex are fully
+supported (their session histories are read); 15 more agents are resume-only and untested, and
+resume without saved flags. It is one Rust binary: a CLI
 with `--json`, a web UI in the cmux Dock, cmux palette commands, and a Claude Code skill. It runs
 on macOS with cmux 0.64+. On Linux, sessionsnap installs, updates and uninstalls, but saving and
 restoring don't work yet: cmux on Linux is a different app with a different command line.
@@ -61,7 +62,10 @@ Snapshots are user-editable files whose contents end up as commands in a shell.
   runs the command `app/` built, it never builds one.
 - A command with a backslash is not typed into an open workspace (`cmux send` turns `\n` into
   Enter).
-- Never store environment variables, or flags and values that look like credentials.
+- Never store environment variables. Agent flags are saved only from each agent's allow-list
+  (`saved` in `src/adapters/agents/registry.rs`, checked by `src/domain/flags.rs`); restore filters
+  through the same list. Add a flag only after checking the agent's `--help`, with the narrowest
+  value kind, and never one that carries a credential or inline config.
 - Add a test that a hostile value never reaches the terminal with any change of this kind.
 - The web UI runs only allowlisted commands (`interfaces/web/api.rs`); `update`, `uninstall`,
   `install-cmux` and `ui` stay off that list.

@@ -189,14 +189,16 @@ def check():
     for flag in ("--check", "--keep-data", "SESSIONSNAP_VERSION", "SESSIONSNAP_INSTALL_DIR", "SESSIONSNAP_NO_CMUX"):
         require(flag in docs, f"docs.html must mention {flag}")
 
-    # The docs name every socket variable sessionsnap reads and say what the credential filter drops.
+    # The docs name every socket variable sessionsnap reads and the flags each agent restores.
     readme_text = (ROOT / "README.md").read_text()
     for doc, text in {"README.md": readme_text, "docs.html": docs}.items():
         for var in ("SESSIONSNAP_CMUX_SOCKET", "$CMUX_SOCKET_PATH", "$CMUX_SOCKET`" if doc == "README.md" else "$CMUX_SOCKET<"):
             require(var in text, f"{doc} must mention {var.strip('`<')}")
         flat = " ".join(text.split())
-        require("even in prose" in flat, f"{doc} must say a value naming a credential key is dropped even in prose")
-        require("bearer, access_key" in flat, f"{doc} must list bearer among the value keys")
+        require("allow-list" in flat, f"{doc} must say flags are saved from an allow-list")
+        for word in ("--disallowedTools", "--permission-mode", "model_reasoning_effort", "--ask-for-approval"):
+            require(word in flat, f"{doc} must list {word} among the flags restored")
+        require("even in prose" not in flat, f"{doc} still describes the old credential-guessing filter")
 
     # Linux: sessionsnap installs there, but save/restore don't work with Linux cmux yet.
     for doc, text in {**texts, "llms.txt": llms}.items():

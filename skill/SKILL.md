@@ -6,9 +6,10 @@ description: Save, edit and restore named, versioned snapshots of cmux workspace
 # sessionsnap
 
 `sessionsnap` saves what is open in cmux (workspaces, tabs, and the agent session in each tab, with
-the flags the agent was started with) as named snapshots with versions, and reopens only what is
-missing. Claude Code and Codex are fully supported (their session histories are read); 15 more
-agents are resumed with cmux's documented commands (`sessionsnap agents --json` lists them).
+the flags the agent was started with that are on its allow-list) as named snapshots with versions,
+and reopens only what is missing. Claude Code and Codex are fully supported (their session
+histories are read); 15 more agents are resumed with cmux's documented commands, without saved
+flags (`sessionsnap agents --json` lists them).
 
 ## Rules
 
@@ -27,7 +28,9 @@ agents are resumed with cmux's documented commands (`sessionsnap agents --json` 
 - Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
 - Do not start `sessionsnap ui` unless the user asks for the UI; it is for people.
 - `sessionsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
-- `save` only reads cmux. If nothing changed it writes nothing and exits 3.
+- `save` only reads cmux. If nothing changed it writes nothing and exits 3. Its `warnings` name the
+  flags it left out (only allow-listed flags are saved) and any agent session it left out (a deny
+  rule it could not save, or a launch such as `claude -p` that is not a session); tell the user.
 - A `list` row or `history` version with `"error"` (e.g. "unreadable: format 1, expected 2") is a
   file sessionsnap cannot read; tell the user, do not try to restore it.
 

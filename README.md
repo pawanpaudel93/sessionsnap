@@ -12,7 +12,7 @@ Website: <https://sessionsnap.pawanpaudel.com.np>
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces and the agent
 sessions in their tabs (Claude Code, Codex and more). Save what is open, edit it, and later reopen
 only what is missing, with each agent tab resumed in its own folder with the flags it was started
-with. It is a single Rust binary with a CLI, a web UI in the cmux Dock, and cmux palette commands.
+with that sessionsnap knows to be safe to pass again. It is a single Rust binary with a CLI, a web UI in the cmux Dock, and cmux palette commands.
 
 Nothing runs in the background: every snapshot is one you ask for.
 
@@ -37,7 +37,8 @@ Nothing runs in the background: every snapshot is one you ask for.
 - **Snapshots with history:** every `save` to an existing name is a new version; list, diff and
   restore any version.
 - **Agent-aware restore:** agent tabs come back resumed (`claude --resume <id>`,
-  `codex resume <id>`, …) with their original flags; plain tabs reopen in their folder.
+  `codex resume <id>`, …) with their original flags (the ones on the agent's allow-list); plain
+  tabs reopen in their folder.
 - **Restore only what is missing:** a restore is a plan you can preview (`--plan`) before anything
   opens; workspaces and tabs that are already open are left alone.
 - **Edit snapshots:** rename, reorder and remove workspaces, move tabs between them, add agent
@@ -130,44 +131,70 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 
 ## Supported agents
 
-| Agent | Support | Resumes with |
-|---|---|---|
-| Claude Code | Full (tested) | `claude --resume <id>` |
-| Codex | Full (tested) | `codex resume <id>` |
-| Grok | Resume only (untested) | `grok -r <id>` |
-| OpenCode | Resume only (untested) | `opencode --session <id>` |
-| Pi | Resume only (untested) | `pi --session <id>` |
-| omp | Resume only (untested) | `omp --session <id>` |
-| Campfire | Resume only (untested) | `campfire --session <id>` |
-| Amp | Resume only (untested) | `amp threads continue <id>` |
-| Cursor Agent | Resume only (untested) | `cursor-agent --resume <id>` |
-| Gemini CLI | Resume only (untested) | `gemini --resume <id>` |
-| Antigravity | Resume only (untested) | `agy --conversation <id>` |
-| Rovo Dev | Resume only (untested) | `acli rovodev run --restore <id>` |
-| Hermes Agent | Resume only (untested) | `hermes --resume <id>` |
-| GitHub Copilot CLI | Resume only (untested) | `copilot --resume <id>` |
-| CodeBuddy | Resume only (untested) | `codebuddy --resume <id>` |
-| Factory Droid | Resume only (untested) | `droid --resume <id>` |
-| Qoder CLI | Resume only (untested) | `qodercli --resume <id>` |
+| Agent | Support | Resumes with | Flags restored |
+|---|---|---|---|
+| Claude Code | Full (tested) | `claude --resume <id>` | [listed below](#how-flags-are-restored) |
+| Codex | Full (tested) | `codex resume <id>` | [listed below](#how-flags-are-restored) |
+| Grok | Resume only (untested) | `grok -r <id>` | none |
+| OpenCode | Resume only (untested) | `opencode --session <id>` | none |
+| Pi | Resume only (untested) | `pi --session <id>` | none |
+| omp | Resume only (untested) | `omp --session <id>` | none |
+| Campfire | Resume only (untested) | `campfire --session <id>` | none |
+| Amp | Resume only (untested) | `amp threads continue <id>` | none |
+| Cursor Agent | Resume only (untested) | `cursor-agent --resume <id>` | none |
+| Gemini CLI | Resume only (untested) | `gemini --resume <id>` | none |
+| Antigravity | Resume only (untested) | `agy --conversation <id>` | none |
+| Rovo Dev | Resume only (untested) | `acli rovodev run --restore <id>` | none |
+| Hermes Agent | Resume only (untested) | `hermes --resume <id>` | none |
+| GitHub Copilot CLI | Resume only (untested) | `copilot --resume <id>` | none |
+| CodeBuddy | Resume only (untested) | `codebuddy --resume <id>` | none |
+| Factory Droid | Resume only (untested) | `droid --resume <id>` | none |
+| Qoder CLI | Resume only (untested) | `qodercli --resume <id>` | none |
 
 - **Full:** sessionsnap reads the agent's session history (titles, `sessions`, `recent`, checks that
   a saved session still exists) and resumes it.
 - **Resume only:** sessionsnap saves and resumes the session with the command cmux documents for
-  that agent; it cannot read its history. These have not been tried with sessionsnap yet.
+  that agent; it cannot read its history. These have not been tried with sessionsnap yet, so no
+  saved flag is restored for them: the session resumes with the agent's defaults.
 - cmux records which agent runs in a tab. For agents other than Claude Code it does so only after
   `cmux hooks setup <agent>`.
 
 ### How flags are restored
 
 A restored tab runs the agent's resume command with the flags it was started with (from cmux's
-record, which holds only flags, never the prompt). Flags are kept as saved except the exact tokens
-that would pick another session:
+record). Only the flags on the agent's allow-list are saved and passed again; every other flag is
+left out when you save, and `save` names the flags it left out (never their values). Supporting
+another flag is one line in `src/adapters/agents/registry.rs`.
 
-- the agent's own resume words and resume flags with the old ID (e.g. `--session <id>`, `-s <id>`,
-  `rovodev run`, `threads continue <id>`);
-- its continue flag where `-c`/`--continue` means that (Claude Code, OpenCode);
-- for Claude Code also `--session-id <id>`, `--fork-session` and `--print`/`-p`;
-- for Codex `resume <uuid|--last>`, `fork <uuid|--last>`, and a leading `exec` run.
+| Agent | Flags kept |
+|---|---|
+| Claude Code | `--model`, `--fallback-model`, `--permission-mode`, `--agent`, `--effort`, `--setting-sources`, `--max-budget-usd`, `--betas`; `--allowedTools`/`--allowed-tools`, `--disallowedTools`/`--disallowed-tools`, `--tools`; `--add-dir`, `--mcp-config`, `--settings`, `--agents`, `--plugin-dir`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--strict-mcp-config`, `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` |
+| Codex | `--model`/`-m`, `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` only for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity`, `approval_policy`, `sandbox_mode` and `profile` |
+| Every other agent | none |
+
+Both `--flag value` and `--flag=value` work. A kept flag's values are checked too:
+
+- a name or mode (`--model`, `-s`, a `-c` value, …) must be one word of letters, digits and
+  `-_.:/@,`, at most 100 characters;
+- a path flag (`--settings`, `--mcp-config`, `--add-dir`, …) must hold a path: inline JSON
+  (a value starting with `{` or `[`) is left out;
+- no value may hold a credential in a format that can be told for certain: a token with a known
+  prefix (`sk-ant-`, `sk-proj-`, GitHub `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack
+  `xox…-`, GitLab `glpat-`, AWS `AKIA` plus 16, Google `AIza` plus 35), a JWT, or a URL with a
+  password (`scheme://user:pass@host`).
+
+A value that fails is left out; a flag left with no value goes too. A deny rule is never lost
+quietly: if any value of `--disallowedTools`/`--disallowed-tools` would be left out, the tab's agent
+session is left out (the tab is saved as a plain terminal tab and `save` says to resume it by hand),
+because resuming without the rule would allow what you denied. A launch that is not a session —
+Claude Code with `--print`/`-p` or `--no-session-persistence`, or a subcommand such as `claude mcp`
+— is left out the same way.
+
+Restore applies the same lists, so a snapshot saved by an older sessionsnap never passes a flag that
+is no longer allowed. The tokens that pick another session are also taken out before the list
+applies: the agent's own resume words and resume flags with the old ID, its continue flag, Claude
+Code's `--session-id <id>` and `--fork-session`, Codex's `resume|fork <uuid|--last>` and a leading
+`exec` run.
 
 A tab with an invalid session ID, or an agent sessionsnap does not know, reopens as a plain shell
 in its folder, with a warning.
@@ -232,24 +259,13 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 - A tab whose flags, ID, folder or command hold a control character (newline, ^C, ESC …) is never
   run, and an agent record with one is not saved. A resume command with a backslash is not typed
   into an already open workspace (`cmux send` would turn `\n` into Enter).
-- Environment variables from cmux's state are never stored, nor flags that look like credentials:
-  - a flag name or `-c` key ending in token, secret, password, passwd, credential(s), auth,
-    authorization or bearer, or holding `api_key`, `api-key` or `apikey`;
-  - a value holding, anywhere: a token with a specific prefix (`sk-ant-`, `sk-proj-`, GitHub
-    `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…`, GitLab `glpat-`); a short
-    generic prefix (`sk-`, `sk_`, AWS `AKIA`, Google `AIza`) followed by 20 or more characters with
-    a digit or both cases and an unbroken run of 16 letters and digits, or an AWS key's shape; a JWT; the word `bearer` followed by a space; a
-    URL with a password (`scheme://user:pass@host`); or a key followed by `:` or `=` (quotes and
-    backslashes allowed between) whose name ends in token, password, passwd, credential(s), auth,
-    authorization, bearer, access_key or secret_key, or holds `secret`, `private`, `api_key`,
-    `api-key` or `apikey`. That catches inline JSON or TOML for `--mcp-config` or `-c`, and headers
-    such as `x-api-key: …`. A value that names a credential key, even in prose ("never print a
-    token: …"), is dropped.
-
-  They are dropped with their values (a dropped value takes its flag with it), and `save` says so.
-  Permission rules after `--allowedTools`, `--disallowedTools` or `--tools`, such as
-  `Bash(gh auth:*)`, are kept unless they hold a credential: losing a deny rule on restore would weaken
-  your safety settings.
+- Environment variables from cmux's state are never stored. Of an agent's flags, only those on its
+  allow-list are saved; every other flag (`--api-key`, `--header`, `-c mcp_servers…`, anything
+  unknown) is left out, and `save` names what it left out. Kept values are checked for their kind
+  (inline JSON is not a path) and for known credential formats (see
+  [How flags are restored](#how-flags-are-restored)). A deny rule that can't be saved leaves out
+  the whole agent session rather than resume it with weaker settings. Restore filters old
+  snapshots through the same lists.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 
 ## Status

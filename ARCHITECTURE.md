@@ -11,7 +11,7 @@ interfaces/   cli, web          parse input, print output; call app/
 app/          use cases         save, restore, apply, edit, sessions, recent, agents, install,
                                 update, uninstall
      │
-domain/       pure logic        model (snapshot format), capture, diff, edit ops, restore plans
+domain/       pure logic        model (snapshot format), capture, flags, diff, edit ops, restore plans
      │  depends only on
 ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases
      ▲  implemented by
@@ -42,7 +42,8 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
   Implemented by `adapters/agents/claude.rs` and `codex.rs`; a shared contract test
   (`adapters/agents/contract.rs`) runs against both.
 - **`AgentCatalog`**: the agent registry seen from the core: canonical kind, display name, session-id
-  validation, histories.
+  validation, histories, and which saved flags are kept (`check_flags`, the same at save and
+  restore).
 - **`Snapshots`**: loading a snapshot version (used by edit ops that copy from another snapshot).
 - **`Releases`**: what `update` needs: the latest release tag, downloads, a SHA-256, unpacking and
   asking a binary its version. Implemented by `adapters/releases.rs` with `curl`, `shasum` or
@@ -65,14 +66,19 @@ word is shell-quoted. Keep it that way.
 1. Add an entry to `AGENTS` in `src/adapters/agents/registry.rs`: `kind` (use the name cmux reports,
    plus any `aliases`), `display`, `program`, and `resume` (the words between the program and the
    session ID). That alone gives **resume-only** support: the agent's tabs are saved and restored
-   with their original flags.
+   without any saved flag (`saved: Policy::NONE`).
 2. Add a test in `registry.rs` for its resume command, including saved flags that repeat its own
    resume words.
-3. For **full** support (titles, `sessions`, `recent`, search, adding sessions by ID): implement
+3. To restore some of its flags, give it a `saved` policy: one `Flag::…` line per flag (all its
+   spellings, and its value kind from `domain::flags::Value`: `switch`, `word`, `path`, `rules`,
+   `deny_rules`, `config`), checked against the agent's `--help`; `skip` lines for flags that are
+   not restored but take a value; and the subcommands and flags that make a launch not a session.
+   Every flag not listed is left out at save and at restore.
+4. For **full** support (titles, `sessions`, `recent`, search, adding sessions by ID): implement
    `SessionHistory` in `src/adapters/agents/<agent>.rs`, register it in `Agents::open_default`
    (`adapters/agents/mod.rs`), set `support: Support::Full` and its `ids`/`flags` rules, and add it to
    the contract test.
-4. Add it to the supported-agents table in the README.
+5. Add it to the supported-agents table in the README (with the flags it restores).
 
 ### Add a terminal
 

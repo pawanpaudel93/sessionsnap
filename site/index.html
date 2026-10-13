@@ -210,7 +210,7 @@ Restore 3 tab(s)? [y/N] y
           </div>
           <div>
             <dt>Careful with your shell</dt>
-            <dd>Every word of a restore command is shell-quoted and session IDs are checked. Credential-like flags and environment variables are never saved.</dd>
+            <dd>Every word of a restore command is shell-quoted and session IDs are checked. Only flags on each agent's allow-list are saved; environment variables never are.</dd>
           </div>
         </dl>
       </section>
@@ -219,8 +219,9 @@ Restore 3 tab(s)? [y/N] y
         <div class="section-head">
           <h2 id="agents-title">Supported agents</h2>
           <p>
-            Claude Code and Codex are fully supported and tested. The others are resumed with the
-            command cmux documents for them, but have not been tried with sessionsnap yet.
+            Claude Code and Codex are fully supported and tested, and resume with the flags on their
+            allow-lists. The others are resumed with the command cmux documents for them, without
+            saved flags, and have not been tried with sessionsnap yet.
             <code translate="no">sessionsnap agents</code> shows which are on your <code translate="no">PATH</code>.
           </p>
         </div>
