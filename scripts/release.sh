@@ -247,19 +247,28 @@ say "Writing dist/NOTES.md"
 PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
 RANGE=${PREV:+$PREV..}HEAD
 section() { # section TITLE REGEX: one bullet per matching subject, prefix stripped
+  # A breaking change (`type!:` or `type(scope)!:`) keeps a visible marker.
   lines=$(git log --no-merges --format=%s "$RANGE" | grep -E "$2" | grep -v '^chore: release' |
-    sed -E 's/^[a-z]+(\([^)]*\))?!?: /- /') || true
+    sed -E -e 's/^[a-z]+(\([^)]*\))?!: /- **Breaking:** /' -e 's/^[a-z]+(\([^)]*\))?: /- /') || true
   [ -z "$lines" ] || printf '### %s\n\n%s\n\n' "$1" "$lines"
 }
+INSTALL='curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh'
 {
-  printf 'Install or upgrade (macOS and Linux):\n\n```sh\ncurl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh\n```\n\n'
-  printf 'Already installed? Run `sessionsnap update`.\n\n'
-  section "Features" '^feat(\(|!|:)'
-  section "Fixes" '^fix(\(|!|:)'
-  section "Performance" '^perf(\(|!|:)'
-  section "Docs" '^docs(\(|!|:)'
-  section "Other" '^(refactor|build|ci|test|chore|style)(\(|!|:)'
-  [ -z "$PREV" ] || printf '**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
+  if [ -z "$PREV" ]; then
+    # The first release: its history is the pre-release work, so a short summary instead.
+    printf 'First release.\n\n'
+    printf 'sessionsnap saves named, versioned snapshots of cmux workspaces and the coding-agent sessions in their tabs (Claude Code, Codex and more), and reopens only what is missing, each agent tab resumed in its folder with its saved flags.\n\n'
+    printf 'Install (macOS and Linux):\n\n```sh\n%s\n```\n' "$INSTALL"
+  else
+    printf 'Install or upgrade (macOS and Linux):\n\n```sh\n%s\n```\n\n' "$INSTALL"
+    printf 'Already installed? Run `sessionsnap update`.\n\n'
+    section "Features" '^feat(\(|!|:)'
+    section "Fixes" '^fix(\(|!|:)'
+    section "Performance" '^perf(\(|!|:)'
+    section "Docs" '^docs(\(|!|:)'
+    section "Other" '^(refactor|build|ci|test|chore|style)(\(|!|:)'
+    printf '**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
+  fi
 } >"$DIST/NOTES.md"
 
 # --- publish ---------------------------------------------------------------
