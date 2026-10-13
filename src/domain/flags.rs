@@ -130,19 +130,12 @@ pub struct Policy {
     /// The agent's parser gives a required value the next word whatever it starts with (commander,
     /// Claude Code), instead of reading a word that starts with `-` as a flag (clap, Codex).
     pub dash_values: bool,
-    /// A flag and value the terminal added itself (cmux's hook settings), left out silently.
-    pub injected: fn(&str, &str) -> bool,
-}
-
-fn never(_: &str, _: &str) -> bool {
-    false
 }
 
 impl Policy {
     /// The defaults: a clap-style parser, nothing injected. Build policies as
     /// `Policy { flags: …, ..Policy::BASE }`.
-    pub const BASE: Policy =
-        Policy { flags: &[], commands: &[], rejects: &[], untested: false, dash_values: false, injected: never };
+    pub const BASE: Policy = Policy { flags: &[], commands: &[], rejects: &[], untested: false, dash_values: false };
     /// Agents whose flags sessionsnap doesn't know: only launches without flags are resumed.
     pub const NONE: Policy = Policy { untested: true, ..Policy::BASE };
 }
@@ -318,9 +311,6 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
     }
     // Pass 2: keep what is allowed and fits; every restricting flag must come out as it went in.
     for o in occurrences {
-        if o.values.len() == 1 && (policy.injected)(&o.name, o.values[0]) {
-            continue;
-        }
         if let Value::ConfigKey { keys, restricting, neutral } = o.flag.value {
             for v in &o.values {
                 let key = config_key(v);
