@@ -133,7 +133,7 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// The defaults: a clap-style parser, nothing injected. Build policies as
+    /// The defaults: a clap-style parser. Build policies as
     /// `Policy { flags: …, ..Policy::BASE }`.
     pub const BASE: Policy = Policy { flags: &[], commands: &[], rejects: &[], untested: false, dash_values: false };
     /// Agents whose flags sessionsnap doesn't know: only launches without flags are resumed.
@@ -439,16 +439,48 @@ fn is_word(v: &str) -> bool {
     !v.is_empty() && v.len() <= 100 && v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/@,".contains(c))
 }
 
-/// Prefixes specific to one token format (Anthropic, OpenAI projects, GitHub, GitLab), taken as a
+/// Prefixes specific to one token format, with how many characters must follow (Anthropic, OpenAI projects, GitHub, GitLab), taken as a
 /// token when 8 or more characters follow. Slack's `xox?-` is checked in `holds_credential`.
-const TOKEN_PREFIXES: &[&str] =
-    &["sk-ant-", "sk-proj-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-"];
+const TOKEN_PREFIXES: &[(&str, usize)] = &[
+    ("sk-ant-", 8),
+    ("sk-proj-", 8),
+    ("sk-svcacct-", 8),
+    ("sk-admin-", 8),
+    ("sk_live_", 16),
+    ("rk_live_", 16),
+    ("ghp_", 8),
+    ("gho_", 8),
+    ("ghu_", 8),
+    ("ghs_", 8),
+    ("ghr_", 8),
+    ("github_pat_", 8),
+    ("glpat-", 8),
+    ("xapp-", 8),
+    // Short prefixes ordinary names start with too: only with a token's length after them.
+    ("hf_", 30),
+    ("npm_", 30),
+];
 
 /// `v` holds, anywhere, a credential in a format that can be told apart for certain: a token with
-/// a specific prefix (see `TOKEN_PREFIXES`, Slack `xox?-`, AWS `AKIA` plus 16, Google `AIza` plus
-/// 35), a JWT, or a URL with a password (`scheme://user:pass@host`).
+/// a specific prefix (see `TOKEN_PREFIXES`, Slack `xox?-`, AWS `AKIA`/`ASIA` plus 16, Google
+/// `AIza` plus 35), a JWT, a URL with a password (`scheme://user:pass@host`), or an HTTP credential
+/// (`Bearer <token>`, `Authorization: <value>`).
 pub fn holds_credential(v: &str) -> bool {
-    token_in(v) || url_with_password(v)
+    token_in(v) || url_with_password(v) || auth_header(v)
+}
+
+/// `v` holds an HTTP credential: `Bearer <token>` or `Authorization: <value>` (any case), the
+/// token at least 12 characters.
+fn auth_header(v: &str) -> bool {
+    let lower = v.to_ascii_lowercase();
+    let token_after = |at: usize| {
+        let rest = lower[at..].trim_start();
+        let rest = rest.strip_prefix("bearer ").map(str::trim_start).unwrap_or(rest);
+        let rest = rest.strip_prefix("token ").map(str::trim_start).unwrap_or(rest);
+        rest.chars().take_while(|c| c.is_ascii_alphanumeric() || "._~+/=-".contains(*c)).count() >= 12
+    };
+    lower.match_indices("bearer ").any(|(i, m)| token_after(i + m.len()))
+        || lower.match_indices("authorization:").any(|(i, m)| token_after(i + m.len()))
 }
 
 fn token_in(v: &str) -> bool {
@@ -458,13 +490,13 @@ fn token_in(v: &str) -> bool {
         let lower = plain.to_ascii_lowercase();
         let b = plain.as_bytes();
         // A prefix counts at the word's start or after a `-` or `_` in it (`opus-ghp_…`).
-        let prefixed = TOKEN_PREFIXES.iter().any(|p| {
+        let prefixed = TOKEN_PREFIXES.iter().any(|(p, min)| {
             lower.match_indices(p).any(|(i, _)| {
-                (i == 0 || !lower.as_bytes()[i - 1].is_ascii_alphanumeric()) && lower.len() >= i + p.len() + 8
+                (i == 0 || !lower.as_bytes()[i - 1].is_ascii_alphanumeric()) && lower.len() >= i + p.len() + min
             })
         });
         let slack = b.len() >= 13 && lower.starts_with("xox") && b[3].is_ascii_alphabetic() && b[4] == b'-';
-        let aws = plain.starts_with("AKIA")
+        let aws = (plain.starts_with("AKIA") || plain.starts_with("ASIA"))
             && b.len() >= 20
             && b[4..20].iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
         let google = plain.starts_with("AIza")
@@ -765,11 +797,34 @@ mod tests {
             format!("AIza{}", "S".repeat(35)),
             format!("eyJ{}.eyJ{}.{}", "hbGciOi", "zdWIiOiIx", "c2ln"),
             format!("postgres://u:{}@h/db", "hunter2"),
+            format!("sk-svcacct-{}", "Ab9".repeat(10)),
+            format!("sk-admin-{}", "Ab9".repeat(10)),
+            format!("sk_live_{}", "Ab9".repeat(8)),
+            format!("rk_live_{}", "Ab9".repeat(8)),
+            format!("hf_{}", "Ab9".repeat(12)),
+            format!("npm_{}", "Ab9".repeat(12)),
+            format!("ASIA{}", "Q7".repeat(8)),
+            format!("xapp-1-{}", "A9".repeat(10)),
+            format!("Bash(curl -H 'Authorization: Bearer {}' https://x)", "q7Zr".repeat(8)),
+            format!("curl -H 'authorization: token {}'", "q7Zr".repeat(3)),
+            format!("bearer {}", "q7Zr".repeat(3)),
         ];
         for v in &found {
             assert!(holds_credential(v), "{v}");
         }
-        for v in ["/w/sk-learn-2024", "sk_test_mode", "aizawa", "/w/akiapolaau", "https://user@example.com/x", "opus"] {
+        for v in [
+            "/w/sk-learn-2024",
+            "sk_test_mode",
+            "aizawa",
+            "/w/akiapolaau",
+            "https://user@example.com/x",
+            "opus",
+            "hf_model_name",
+            "npm_scripts",
+            "Bash(gh auth:*)",
+            "bearer",
+            "the bearer of news",
+        ] {
             assert!(!holds_credential(v), "{v}");
         }
     }
