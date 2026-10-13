@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 use crate::adapters::shell_word;
+use crate::domain::flags::{self, Flag, FlagCheck, Policy};
 use crate::domain::model::{has_control, is_session_id};
 
 /// How much sessionsnap supports an agent.
@@ -25,14 +26,15 @@ pub enum Ids {
     Token,
 }
 
-/// Which saved launch flags are passed again when resuming. Saved args are kept as cmux recorded
-/// them (only flags) except exact tokens that pick a session: every agent's resume and continue
-/// flags (see `AgentSpec::kept_args`), plus, per agent:
+/// Which tokens that pick a session are taken out of saved args before the agent's allow-list
+/// (`AgentSpec::saved`) applies: every agent's resume and continue flags (see
+/// `AgentSpec::kept_args`), plus, per agent:
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flags {
-    /// Claude Code: also `--session-id <id>`, `--fork-session`, `--print`/`-p`.
+    /// Claude Code: also `--session-id <id>` and `--fork-session`.
     Claude,
-    /// Codex: also `resume|fork <uuid|--last>`, and all of a leading `exec` run.
+    /// Codex: also `resume|fork <uuid|--last>`, all of a leading `exec` run, and the hook flags
+    /// cmux puts first (`--enable hooks --dangerously-bypass-hook-trust -c hooks.…`).
     Codex,
     /// Nothing more.
     Others,
@@ -57,6 +59,8 @@ pub struct AgentSpec {
     pub continue_flags: &'static [&'static str],
     pub ids: Ids,
     pub flags: Flags,
+    /// The flags that are saved and passed again on resume; everything else is left out.
+    pub saved: Policy,
     pub support: Support,
 }
 
@@ -79,6 +83,8 @@ const fn agent(
         continue_flags,
         ids: Ids::Token,
         flags: Flags::Others,
+        // Untested with sessionsnap: no flag is restored.
+        saved: Policy::NONE,
         support: Support::ResumeOnly,
     }
 }
@@ -95,6 +101,7 @@ pub const AGENTS: &[AgentSpec] = &[
         continue_flags: &["--continue", "-c"],
         ids: Ids::Uuid,
         flags: Flags::Claude,
+        saved: CLAUDE_FLAGS,
         support: Support::Full,
     },
     AgentSpec {
@@ -107,6 +114,7 @@ pub const AGENTS: &[AgentSpec] = &[
         continue_flags: &[],
         ids: Ids::Uuid,
         flags: Flags::Codex,
+        saved: CODEX_FLAGS,
         support: Support::Full,
     },
     agent("grok", &[], "Grok", "grok", &["-r"], &["-r", "--resume"], &[]),
@@ -125,6 +133,121 @@ pub const AGENTS: &[AgentSpec] = &[
     agent("factory", &[], "Factory Droid", "droid", &["--resume"], &["--resume", "-r"], &[]),
     agent("qoder", &[], "Qoder CLI", "qodercli", &["--resume"], &["--resume", "-r"], &[]),
 ];
+
+// The flags Claude Code and Codex resume with, checked against `claude --help` (2.1.296) and
+// `codex --help` / `codex resume --help` (0.160.0). Arities and the launches that are not sessions
+// follow cmux's `AgentLaunchSanitizer` policies. To restore another flag, add one line here. `skip`
+// lines are flags that are left out but take a value, so the value is never read as a prompt or a
+// subcommand.
+const CLAUDE_FLAGS: Policy = Policy {
+    flags: &[
+        Flag::word(&["--model"]),
+        Flag::word(&["--fallback-model"]),
+        Flag::word(&["--permission-mode"]),
+        Flag::word(&["--agent"]),
+        Flag::word(&["--effort"]),
+        Flag::word(&["--setting-sources"]),
+        Flag::word(&["--max-budget-usd"]),
+        Flag::words(&["--betas"]),
+        Flag::rules(&["--allowedTools", "--allowed-tools"]),
+        Flag::rules(&["--tools"]),
+        Flag::deny_rules(&["--disallowedTools", "--disallowed-tools"]),
+        Flag::paths(&["--add-dir"]),
+        Flag::paths(&["--mcp-config"]),
+        Flag::path(&["--settings"]),
+        Flag::path(&["--agents"]),
+        Flag::path(&["--plugin-dir"]),
+        Flag::path(&["--append-system-prompt-file"]),
+        Flag::path(&["--system-prompt-file"]),
+        Flag::switch(&["--strict-mcp-config"]),
+        Flag::switch(&["--dangerously-skip-permissions"]),
+        Flag::switch(&["--allow-dangerously-skip-permissions"]),
+        Flag::switch(&["--ide"]),
+        Flag::switch(&["--verbose"]),
+        Flag::switch(&["--chrome"]),
+        Flag::switch(&["--no-chrome"]),
+        Flag::skip(&["--append-system-prompt"]),
+        Flag::skip(&["--system-prompt"]),
+        Flag::skip(&["--autocompact"]),
+        Flag::skip(&["--debug-file"]),
+        Flag::skip(&["--environment"]),
+        Flag::skip(&["--input-format"]),
+        Flag::skip(&["--json-schema"]),
+        Flag::skip(&["--name", "-n"]),
+        Flag::skip(&["--output-format"]),
+        Flag::skip(&["--permission-prompts"]),
+        Flag::skip(&["--plugin-url"]),
+        Flag::skip(&["--remote-control-session-name-prefix"]),
+        Flag::skip(&["--session-id"]),
+        Flag::skip(&["--system-prompt-snapshot"]),
+        Flag::skip(&["--teammate-mode"]),
+        Flag::skip_many(&["--file"]),
+        Flag::skip_many(&["--dangerously-load-development-channels"]),
+    ],
+    commands: &[
+        "agents",
+        "api-key",
+        "attach",
+        "auth",
+        "auto-mode",
+        "config",
+        "doctor",
+        "gateway",
+        "import",
+        "install",
+        "kill",
+        "logs",
+        "mcp",
+        "plugin",
+        "plugins",
+        "purge",
+        "rc",
+        "remote-control",
+        "respawn",
+        "rm",
+        "setup-token",
+        "stop",
+        "ultrareview",
+        "update",
+        "upgrade",
+    ],
+    rejects: &["--print", "-p", "--no-session-persistence"],
+};
+
+/// The `-c key=value` keys Codex restores.
+const CODEX_CONFIG_KEYS: &[&str] = &[
+    "model",
+    "model_provider",
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "model_verbosity",
+    "approval_policy",
+    "sandbox_mode",
+    "profile",
+];
+
+const CODEX_FLAGS: Policy = Policy {
+    flags: &[
+        Flag::word(&["--model", "-m"]),
+        Flag::word(&["--sandbox", "-s"]),
+        Flag::word(&["--ask-for-approval", "-a"]),
+        Flag::word(&["--profile", "-p"]),
+        Flag::word(&["--enable"]),
+        Flag::word(&["--disable"]),
+        Flag::config(&["--config", "-c"], CODEX_CONFIG_KEYS),
+        Flag::path(&["--cd", "-C"]),
+        Flag::path(&["--add-dir"]),
+        Flag::switch(&["--dangerously-bypass-approvals-and-sandbox"]),
+        Flag::switch(&["--search"]),
+        Flag::switch(&["--oss"]),
+        Flag::skip(&["--remote"]),
+        Flag::skip(&["--remote-auth-token-env"]),
+        Flag::skip(&["--local-provider"]),
+        Flag::skip_many(&["--image", "-i"]),
+    ],
+    commands: &[],
+    rejects: &[],
+};
 
 /// The agent with this kind, alias or program name (any case).
 pub fn find(name: &str) -> Option<&'static AgentSpec> {
@@ -149,28 +272,41 @@ impl AgentSpec {
         }
     }
 
-    /// The saved launch flags that resuming passes again: all of them except the tokens that pick
-    /// another session (the session would be given twice): per `Flags`, then the agent's own resume
-    /// words, resume flags and continue flags. Codex's resume words are handled by `Flags::Codex`
-    /// alone, so a flag value that happens to be "resume" is kept.
-    pub fn kept_args(&self, args: &[String]) -> Vec<String> {
-        match self.flags {
+    /// The saved launch flags that resuming passes again, and what was left out: the tokens that
+    /// pick another session go first (per `Flags`, then the agent's own resume words, resume flags
+    /// and continue flags; the session would be given twice), then only the flags in `saved` are
+    /// kept (see `domain::flags::check`). Codex's resume words are handled by `Flags::Codex` alone,
+    /// so a flag value that happens to be "resume" is kept.
+    pub fn check_args(&self, args: &[String]) -> FlagCheck {
+        let picked = match self.flags {
             Flags::Others => drop_resume_words(self, args),
             Flags::Claude => drop_resume_words(self, &claude_args(args)),
             Flags::Codex => codex_args(args),
-        }
+        };
+        flags::check(&picked, &self.saved)
     }
 
-    /// `[program, resume…, id, kept flags…]`, or None when `id` is not a valid ID for this agent or a
-    /// flag has a control character (it would act on the terminal the command is typed into).
+    /// The flags `check_args` keeps.
+    pub fn kept_args(&self, args: &[String]) -> Vec<String> {
+        self.check_args(args).kept
+    }
+
+    /// `[program, resume…, id, kept flags…]`, or None when `id` is not a valid ID for this agent, a
+    /// flag has a control character (it would act on the terminal the command is typed into), or
+    /// the saved flags lose the session (a deny rule that can't be kept, a launch that is not a
+    /// session).
     pub fn resume_argv(&self, id: &str, args: &[String]) -> Option<Vec<String>> {
         if !self.valid_id(id) || args.iter().any(|a| has_control(a)) {
+            return None;
+        }
+        let check = self.check_args(args);
+        if check.lost.is_some() {
             return None;
         }
         let mut argv: Vec<String> =
             std::iter::once(self.program).chain(self.resume.iter().copied()).map(String::from).collect();
         argv.push(id.to_string());
-        argv.extend(self.kept_args(args));
+        argv.extend(check.kept);
         Some(argv)
     }
 
@@ -226,14 +362,15 @@ fn drop_resume_words(spec: &AgentSpec, args: &[String]) -> Vec<String> {
     out
 }
 
-/// Claude Code: also `--session-id <id>`, `--fork-session` and `--print`/`-p`
-/// (`--resume`/`-r` and `--continue`/`-c` are its resume and continue flags).
+/// Claude Code: also `--session-id <id>` and `--fork-session` (`--resume`/`-r` and
+/// `--continue`/`-c` are its resume and continue flags; `--print`/`-p` loses the session, see
+/// `CLAUDE_FLAGS`).
 fn claude_args(args: &[String]) -> Vec<String> {
     let mut out = vec![];
     let mut it = args.iter().peekable();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--fork-session" | "--print" | "-p" => {}
+            "--fork-session" => {}
             "--session-id" => {
                 it.next_if(|v| !v.starts_with('-'));
             }
@@ -251,6 +388,7 @@ fn codex_args(args: &[String]) -> Vec<String> {
     if args.first().is_some_and(|a| a == "exec") {
         return vec![];
     }
+    let args = without_cmux_hooks(args);
     let mut out = vec![];
     let mut i = 0;
     while i < args.len() {
@@ -264,6 +402,27 @@ fn codex_args(args: &[String]) -> Vec<String> {
         i += 1;
     }
     out
+}
+
+/// `args` without the hook flags cmux's Codex wrapper puts first: `--enable hooks` (or
+/// `codex_hooks`), `--dangerously-bypass-hook-trust`, then each `-c hooks.<event>=…`.
+fn without_cmux_hooks(args: &[String]) -> &[String] {
+    let enable = match args {
+        [e, f, ..] if e == "--enable" && (f == "hooks" || f == "codex_hooks") => 2,
+        [e, ..] if e == "--enable=hooks" || e == "--enable=codex_hooks" => 1,
+        _ => return args,
+    };
+    if args.get(enable).is_none_or(|a| a != "--dangerously-bypass-hook-trust") {
+        return args;
+    }
+    let mut i = enable + 1;
+    loop {
+        match (args.get(i).map(String::as_str), args.get(i + 1)) {
+            (Some("-c" | "--config"), Some(v)) if v.starts_with("hooks.") => i += 2,
+            (Some(a), _) if a.starts_with("-c=hooks.") || a.starts_with("--config=hooks.") => i += 1,
+            _ => return &args[i..],
+        }
+    }
 }
 
 #[cfg(test)]
@@ -339,26 +498,28 @@ mod tests {
         let codex = find("codex").unwrap();
         for bad in ["\u{3}touch /tmp/pwned\r", "a\nb", "x\u{1b}[200~", "\u{7f}", "tab\there"] {
             assert_eq!(codex.resume_command(A, &strings(&["-m", bad])), None, "{bad:?}");
+            // Even in a flag that would be left out.
+            assert_eq!(codex.resume_command(A, &strings(&["--x", bad])), None, "{bad:?}");
         }
         // A backslash is no control character: quoted like any other word.
         assert_eq!(
-            codex.resume_command(A, &strings(&["-c", r"k=a\nb"])).unwrap(),
-            format!(r"codex resume {A} -c 'k=a\nb'")
+            codex.resume_command(A, &strings(&["-C", r"/w/a\nb"])).unwrap(),
+            format!(r"codex resume {A} -C '/w/a\nb'")
         );
     }
 
     #[test]
     fn saved_flags_are_quoted_for_the_shell() {
         let codex = find("codex").unwrap();
-        let args = strings(&["-a", "on-request", "-c", "model=\"o3\"; rm -rf ~", "-C", "/my dir"]);
+        let args = strings(&["-a", "on-request", "-C", "/my dir; rm -rf ~", "--add-dir", "$(id)"]);
         assert_eq!(
             codex.resume_command(A, &args).unwrap(),
-            format!(r#"codex resume {A} -a on-request -c 'model="o3"; rm -rf ~' -C '/my dir'"#)
+            format!(r#"codex resume {A} -a on-request -C '/my dir; rm -rf ~' --add-dir '$(id)'"#)
         );
-        let opencode = find("opencode").unwrap();
+        let claude = find("claude").unwrap();
         assert_eq!(
-            opencode.resume_command("s1", &strings(&["--model", "$(id)"])).unwrap(),
-            "opencode --session s1 --model '$(id)'"
+            claude.resume_command(A, &strings(&["--allowedTools", "Bash(echo 'x'; id)"])).unwrap(),
+            format!(r#"claude --resume {A} --allowedTools 'Bash(echo '"'"'x'"'"'; id)'"#)
         );
     }
 
@@ -373,74 +534,109 @@ mod tests {
             "-c",
             "--session-id",
             "x",
-            "-p",
             "--fork-session",
             "--resume=y",
             "--session-id=z",
             "--continue",
-            "--print",
             "--add-dir",
             "/a",
             "--resume",
             "--verbose",
         ]);
         assert_eq!(claude.kept_args(&args), strings(&["--model", "opus", "--add-dir", "/a", "--verbose"]));
-        // Everything else stays as saved, values included.
-        let args = strings(&["--effort", "high", "-w", "tree", "--debug", "api"]);
-        assert_eq!(claude.kept_args(&args), args);
+        // Session-picking flags are not reported as left out.
+        assert_eq!(claude.check_args(&args).note(), None);
+        // A one-shot run is not a session.
+        assert_eq!(claude.resume_command(A, &strings(&["-p", "--model", "opus"])), None);
+        assert_eq!(claude.resume_command(A, &strings(&["mcp", "serve"])), None);
     }
 
     #[test]
     fn codex_drops_only_session_picking_tokens() {
         let codex = find("codex").unwrap();
-        let flags = strings(&["-a", "on-request", "-s", "workspace-write", "--remote", "ws://h:1"]);
+        let flags = strings(&["-a", "on-request", "-s", "workspace-write", "--search"]);
         assert_eq!(codex.kept_args(&flags), flags);
         let resumed = strings(&["resume", A, "-C", "/w", "-m", "o3"]);
         assert_eq!(codex.kept_args(&resumed), strings(&["-C", "/w", "-m", "o3"]));
+        assert_eq!(codex.check_args(&resumed).note(), None);
         let late = strings(&["-m", "o3", "resume", A, "-s", "x"]);
         assert_eq!(codex.kept_args(&late), strings(&["-m", "o3", "-s", "x"]));
         let last = strings(&["-m", "gpt-5", "fork", "--last"]);
         assert_eq!(codex.kept_args(&last), strings(&["-m", "gpt-5"]));
         // A profile named "resume" is a flag value, not the subcommand.
-        let profile = strings(&["-p", "resume", "x"]);
+        let profile = strings(&["-p", "resume"]);
         assert_eq!(codex.kept_args(&profile), profile);
         // A one-shot `exec` run keeps nothing.
         assert_eq!(codex.kept_args(&strings(&["exec", "fix it", "--json"])), strings(&[]));
-        assert_eq!(codex.kept_args(&strings(&["--json", "exec"])), strings(&["--json", "exec"]));
+        // The hook flags cmux's wrapper puts first go without a note.
+        let hooked = strings(&[
+            "--enable",
+            "hooks",
+            "--dangerously-bypass-hook-trust",
+            "-c",
+            "hooks.Stop=[{hooks=[]}]",
+            "-c=hooks.SessionStart=[]",
+            "-m",
+            "o3",
+        ]);
+        assert_eq!(codex.check_args(&hooked), FlagCheck { kept: strings(&["-m", "o3"]), ..Default::default() });
+        // Without the hook-trust flag that is the user's own `--enable`.
+        assert_eq!(
+            codex.kept_args(&strings(&["--enable", "hooks", "-m", "o3"])),
+            strings(&["--enable", "hooks", "-m", "o3"])
+        );
     }
 
     #[test]
     fn every_agent_drops_its_own_resume_words() {
         for spec in AGENTS {
             let id = if spec.ids == Ids::Uuid { A } else { "old-1" };
-            let mut args = strings(&["--keep"]);
+            // A flag each agent keeps (none for resume-only agents).
+            let keep: &[&str] = match spec.kind {
+                "claude" => &["--verbose"],
+                "codex" => &["--search"],
+                _ => &[],
+            };
+            let mut args = strings(keep);
             args.extend(spec.resume.iter().map(|w| w.to_string()));
             args.push(id.to_string());
-            args.push("--also".into());
-            assert_eq!(spec.kept_args(&args), strings(&["--keep", "--also"]), "{}", spec.kind);
+            assert_eq!(spec.kept_args(&args), strings(keep), "{}", spec.kind);
             let new = if spec.ids == Ids::Uuid { B } else { "new-1" };
-            let want = format!("{} {new} --keep --also", spec.usage().trim_end_matches(" <id>"));
-            assert_eq!(spec.resume_command(new, &args).unwrap(), want, "{}", spec.kind);
+            let want = [spec.usage().replace("<id>", new)].into_iter().chain(keep.iter().map(|k| k.to_string()));
+            assert_eq!(spec.resume_command(new, &args).unwrap(), want.collect::<Vec<_>>().join(" "), "{}", spec.kind);
         }
-        let rovodev = find("rovodev").unwrap();
-        assert_eq!(rovodev.kept_args(&strings(&["rovodev", "run", "--yolo"])), strings(&["--yolo"]));
-        assert_eq!(
-            rovodev.resume_command("r1", &strings(&["rovodev", "run", "--yolo"])).unwrap(),
-            "acli rovodev run --restore r1 --yolo"
-        );
-        let amp = find("amp").unwrap();
-        assert_eq!(amp.kept_args(&strings(&["threads", "continue", "T-1"])), strings(&[]));
-        let gemini = find("gemini").unwrap();
-        assert_eq!(gemini.kept_args(&strings(&["--resume", "x", "-m", "pro"])), strings(&["-m", "pro"]));
-        assert_eq!(gemini.kept_args(&strings(&["--resume=x", "--resume", "-m", "pro"])), strings(&["-m", "pro"]));
-        let opencode = find("opencode").unwrap();
-        assert_eq!(opencode.kept_args(&strings(&["--session", "s0", "--model", "m"])), strings(&["--model", "m"]));
-        assert_eq!(opencode.kept_args(&strings(&["-s", "old", "-c", "--model", "m"])), strings(&["--model", "m"]));
-        assert_eq!(gemini.kept_args(&strings(&["-r", "old", "-m", "pro"])), strings(&["-m", "pro"]));
-        // `-c` means something else for most agents: kept.
-        assert_eq!(gemini.kept_args(&strings(&["-c"])), strings(&["-c"]));
-        let grok = find("grok").unwrap();
-        assert_eq!(grok.kept_args(&strings(&["--resume", "old", "-x"])), strings(&["-x"]));
+    }
+
+    /// Resume-only agents are untested with sessionsnap: they resume without any saved flag.
+    #[test]
+    fn resume_only_agents_restore_no_flags() {
+        for spec in AGENTS.iter().filter(|s| s.flags == Flags::Others) {
+            let args = strings(&["--model", "m", "--yolo", "-x"]);
+            let check = spec.check_args(&args);
+            assert!(check.kept.is_empty(), "{}", spec.kind);
+            assert_eq!(check.left_out, ["--model", "--yolo", "-x"], "{}", spec.kind);
+            assert_eq!(
+                spec.resume_command("s-1", &args).unwrap(),
+                spec.usage().replace("<id>", "s-1"),
+                "{}",
+                spec.kind
+            );
+        }
+        assert_eq!(AGENTS.iter().filter(|s| s.flags == Flags::Others).count(), 15);
+    }
+
+    /// An old snapshot may hold flags saved before the allow-list: restore filters them the same way.
+    #[test]
+    fn restoring_old_snapshots_drops_flags_now_left_out() {
+        let claude = find("claude").unwrap();
+        let old = strings(&["--model", "opus", "--mcp-config", r#"{"env":{"X":"y"}}"#, "--api-key", "v", "--verbose"]);
+        assert_eq!(claude.resume_command(A, &old).unwrap(), format!("claude --resume {A} --model opus --verbose"));
+        // A deny rule that can't be kept loses the session: no command.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        assert_eq!(claude.resume_command(A, &strings(&["--disallowedTools", &format!("Bash({ghp})")])), None);
+        let codex = find("codex").unwrap();
+        let old = strings(&["-c", "mcp_servers.x.env={T=\"v\"}", "-m", "o3", "--remote", "ws://h:1"]);
+        assert_eq!(codex.resume_command(A, &old).unwrap(), format!("codex resume {A} -m o3"));
     }
 
     #[test]

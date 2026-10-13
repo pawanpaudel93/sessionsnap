@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::domain::flags::{self, FlagCheck, Policy};
 use crate::ports::{AgentCatalog, SessionHistory};
 use claude::Claude;
 use codex::Codex;
@@ -87,6 +88,13 @@ impl AgentCatalog for Agents {
 
     fn histories(&self) -> Vec<&dyn SessionHistory> {
         self.histories.iter().map(|h| h.as_ref()).collect()
+    }
+
+    fn check_flags(&self, name: &str, args: &[String]) -> FlagCheck {
+        match Agents::spec(name) {
+            Some(spec) => spec.check_args(args),
+            None => flags::check(args, &Policy::NONE),
+        }
     }
 }
 

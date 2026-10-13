@@ -1,5 +1,5 @@
-//! Pure domain logic: snapshots, diffs, edits, restore plans, capture and which agent sessions can
-//! be resumed.
+//! Pure domain logic: snapshots, diffs, edits, restore plans, capture, which saved flags are kept
+//! and which agent sessions can be resumed.
 //!
 //! Layer rule: nothing here touches files, processes, the environment, cmux or an agent's data
 //! directory. The domain may depend on `crate::ports` (and `crate::error`), never on `adapters`, `app`
@@ -9,5 +9,6 @@ pub mod agents;
 pub mod capture;
 pub mod diff;
 pub mod edit;
+pub mod flags;
 pub mod model;
 pub mod plan;

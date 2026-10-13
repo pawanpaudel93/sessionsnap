@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use crate::domain::flags::FlagCheck;
 use crate::domain::model::{SessionRef, Version};
 use anyhow::Result;
 
@@ -170,6 +171,10 @@ pub trait AgentCatalog {
     fn history(&self, kind: &str) -> Option<&dyn SessionHistory>;
     /// Every session history, in registry order.
     fn histories(&self) -> Vec<&dyn SessionHistory>;
+    /// The saved flags of agent `name` that resuming passes again, and what is left out: only the
+    /// agent's allowed flags are kept (none for unknown agents). The same check runs at save and at
+    /// restore.
+    fn check_flags(&self, name: &str, args: &[String]) -> FlagCheck;
 }
 
 /// Read access to saved snapshots, for edits that copy from another snapshot.

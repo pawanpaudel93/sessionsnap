@@ -254,8 +254,8 @@ mod launch_tests {
         };
         let cmd = |t: &Tab| launch_tab(&agents, t).command;
         assert_eq!(
-            cmd(&tab("codex", A, &["-a", "on-request", "-m", "it's"])),
-            Some(format!(r#"codex resume {A} -a on-request -m 'it'"'"'s'"#))
+            cmd(&tab("codex", A, &["-a", "on-request", "-C", "/w/it's"])),
+            Some(format!(r#"codex resume {A} -a on-request -C '/w/it'"'"'s'"#))
         );
         assert_eq!(
             cmd(&tab("claude", A, &["--resume", "old", "--model", "opus"])),

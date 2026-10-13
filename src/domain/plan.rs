@@ -173,10 +173,15 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
                 b.skipped.push(format!("{label}: same session listed earlier"));
                 continue;
             }
-            let why = match (control, resume_status(agents, &s)) {
-                (Some(field), _) => Some(format!("its {field} has control characters")),
-                (None, Resume::Ready) => None,
-                (None, status) => Some(problem(agents, &s, status)),
+            let lost = match tab {
+                Tab::Agent { agent, args, .. } => agents.check_flags(agent, args).lost_reason(),
+                Tab::Terminal { .. } => None,
+            };
+            let why = match (control, lost, resume_status(agents, &s)) {
+                (Some(field), _, _) => Some(format!("its {field} has control characters")),
+                (None, Some(lost), _) => Some(lost),
+                (None, None, Resume::Ready) => None,
+                (None, None, status) => Some(problem(agents, &s, status)),
             };
             match why {
                 None => {
@@ -462,6 +467,41 @@ mod tests {
             [
                 "Gamma › unknown agent: sessionsnap doesn't know how to resume aider yet, opening a plain shell",
                 "Gamma › bad id: 'x; rm -rf ~' is not a Claude Code session ID, opening a plain shell",
+            ]
+        );
+    }
+
+    /// An old snapshot may hold a deny rule that can no longer be kept, or a launch that is not a
+    /// session: restoring opens a plain shell instead of resuming without the rule.
+    #[test]
+    fn tabs_whose_saved_flags_lose_the_session_open_plain_shells() {
+        // Built at runtime so secret scanners don't flag the source.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        let with_args = |title: &str, id: &str, args: Vec<String>| Tab::Agent {
+            title: title.into(),
+            cwd: "/w/c".into(),
+            agent: "claude".into(),
+            session_id: id.into(),
+            args,
+        };
+        let deny = with_args("deny", A, vec!["--disallowedTools".into(), format!("Bash({ghp})")]);
+        let print = with_args("print", B, vec!["-p".into()]);
+        let saved = vec![workspace("Gamma", "/w/c", None, vec![deny, print])];
+        let b = build_actions(&saved, &OpenState::default(), &history());
+        let shell = |title: &str| Tab::Terminal { title: title.into(), cwd: "/w/c".into(), command: None };
+        assert_eq!(
+            b.actions,
+            vec![Action::CreateWorkspace {
+                name: "Gamma".into(),
+                cwd: "/w/c".into(),
+                tabs: vec![shell("deny"), shell("print")]
+            }]
+        );
+        assert_eq!(
+            b.warnings,
+            [
+                "Gamma › deny: a deny rule could not be saved; resume it by hand, opening a plain shell",
+                "Gamma › print: a launch with -p is not a session that can be resumed, opening a plain shell",
             ]
         );
     }

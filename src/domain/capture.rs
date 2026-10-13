@@ -52,256 +52,35 @@ fn unique_name(name: &str, used: &mut Vec<String>) -> String {
     candidate
 }
 
-/// An agent the catalog does not know is kept as it is, so a later sessionsnap can resume it. An
-/// agent record with a control character in its kind, ID or flags is left out (`note` says so):
-/// the tab is saved as a plain terminal.
+/// An agent tab keeps only the flags its agent allows (see `AgentCatalog::check_flags`; an agent
+/// the catalog does not know keeps none), and `note` names the flags left out. An agent record
+/// with a control character in its kind, ID or flags, a deny rule that can't be kept, or a launch
+/// that is not a session leaves out the agent session (`note` says so): the tab is saved as a
+/// plain terminal.
 fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) -> Tab {
-    let agent = t.agent.as_ref().filter(|a| {
-        let bad = has_control(&a.kind) || has_control(&a.session_id) || a.args.iter().any(|x| has_control(x));
-        if bad {
-            note("left out its agent session (control characters in its kind, ID or flags)");
-        }
-        !bad
-    });
-    match agent {
-        Some(a) => {
-            let (args, dropped) = without_credentials(&a.args);
-            if dropped {
-                note("dropped a flag that looked like a credential");
-            }
-            Tab::Agent {
-                title: agents
-                    .history(&a.kind)
-                    .and_then(|h| h.title_for(&t.cwd, &a.session_id))
-                    .unwrap_or_else(|| t.title.clone()),
-                cwd: t.cwd.clone(),
-                agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
-                session_id: a.session_id.clone(),
-                args,
-            }
-        }
-        None => Tab::Terminal { title: t.title.clone(), cwd: t.cwd.clone(), command: None },
+    let terminal = || Tab::Terminal { title: t.title.clone(), cwd: t.cwd.clone(), command: None };
+    let Some(a) = t.agent.as_ref() else { return terminal() };
+    if has_control(&a.kind) || has_control(&a.session_id) || a.args.iter().any(|x| has_control(x)) {
+        note("left out its agent session (control characters in its kind, ID or flags)");
+        return terminal();
     }
-}
-
-/// Last key segments that mark a credential.
-const SECRET_ENDINGS: &[&str] =
-    &["token", "secret", "password", "passwd", "credential", "credentials", "auth", "authorization", "bearer"];
-
-/// A flag name or config key that names a credential: its last segment (split on `.`, `_`, `-`)
-/// is one of `SECRET_ENDINGS`, or it contains an API key (`api_key`, `apikey`, `api-key`).
-/// `model_auto_compact_token_limit` or `--remote-auth-token-env` are not.
-fn looks_secret(name: &str) -> bool {
-    let name = name.trim_start_matches('-').to_ascii_lowercase();
-    if ["api_key", "apikey", "api-key"].iter().any(|k| name.contains(k)) {
-        return true;
+    let check = agents.check_flags(&a.kind, &a.args);
+    if let Some(n) = check.note() {
+        note(&n);
     }
-    let last = name.rsplit(['.', '_', '-']).next().unwrap_or("");
-    SECRET_ENDINGS.contains(&last)
-}
-
-/// Prefixes specific to one token format (Anthropic, OpenAI projects, GitHub, Slack, GitLab):
-/// followed by 8 or more characters, a word is taken as a token.
-const SECRET_PREFIXES: &[&str] = &[
-    "sk-ant-",
-    "sk-proj-",
-    "ghp_",
-    "gho_",
-    "ghu_",
-    "ghs_",
-    "ghr_",
-    "github_pat_",
-    "xoxb-",
-    "xoxp-",
-    "xoxa-",
-    "glpat-",
-];
-
-/// Short prefixes that ordinary words also start with (OpenAI and others `sk-`/`sk_`, AWS `AKIA`,
-/// Google `AIza`): a token only when the rest looks random (see `random_rest`).
-const GENERIC_PREFIXES: &[&str] = &["sk-", "sk_", "akia", "aiza"];
-
-/// `rest` (what follows a generic prefix in `word`, original case) looks like a key: 20 or more
-/// characters with a digit or with both upper and lower case, and an unbroken run of 16 or more
-/// letters and digits (a year in a folder name is not a key); or an AWS key's 16 upper-case
-/// letters and digits after `AKIA`.
-fn random_rest(word: &str, rest: &str) -> bool {
-    let aws = word.starts_with("AKIA")
-        && rest.len() == 16
-        && rest.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-    let has = |f: fn(&char) -> bool| rest.chars().any(|c| f(&c));
-    let random = has(char::is_ascii_digit) || (has(char::is_ascii_uppercase) && has(char::is_ascii_lowercase));
-    let longest_run = rest.split(|c: char| !c.is_ascii_alphanumeric()).map(str::len).max().unwrap_or(0);
-    aws || (rest.len() >= 20 && random && longest_run >= 16)
-}
-
-/// A value that looks like a credential whatever flag it follows: a known token or a JWT anywhere
-/// in it, a `Bearer` header, or a credential-named key followed by `:` or `=` anywhere in it
-/// (`NAME=value`, inline JSON or TOML such as `{"GITHUB_TOKEN":"…"}`, `x-api-key: …`).
-fn looks_secret_value(v: &str) -> bool {
-    token_like(v) || names_a_credential(v) || url_with_password(v)
-}
-
-/// `v` holds a URL with a password: `scheme://user:pass@host` (or `scheme://:pass@host`).
-fn url_with_password(v: &str) -> bool {
-    v.match_indices("://").any(|(i, _)| {
-        let rest = &v[i + 3..];
-        let authority = rest.split(|c: char| "/?#\"' \\".contains(c) || c.is_whitespace()).next().unwrap_or("");
-        authority
-            .rsplit_once('@')
-            .and_then(|(userinfo, _)| userinfo.split_once(':'))
-            .is_some_and(|(_, password)| !password.is_empty())
-    })
-}
-
-/// A known token prefix or a JWT at the start of any word of `v`, or a Bearer header.
-fn token_like(v: &str) -> bool {
-    let words = v.split(|c: char| !(c.is_ascii_alphanumeric() || "_-.".contains(c)));
-    for word in words {
-        // A word may run on into a dot ("ghp_….", a sentence's end); prefixes hold none.
-        let plain = word.split('.').next().unwrap_or("");
-        let lower = plain.to_ascii_lowercase();
-        if SECRET_PREFIXES.iter().any(|p| lower.starts_with(p) && lower.len() >= p.len() + 8) {
-            return true;
-        }
-        if GENERIC_PREFIXES.iter().any(|p| lower.starts_with(p) && random_rest(plain, &plain[p.len()..])) {
-            return true;
-        }
-        let parts: Vec<&str> = word.split('.').collect();
-        if word.to_ascii_lowercase().starts_with("eyj") && parts.len() == 3 && parts.iter().all(|p| !p.is_empty()) {
-            return true;
-        }
+    if check.lost.is_some() {
+        return terminal();
     }
-    v.to_ascii_lowercase().contains("bearer ")
-}
-
-/// Key endings that name a credential in a value's `key: …` or `key=…`.
-const SECRET_KEY_ENDINGS: &[&str] =
-    &["token", "password", "passwd", "credential", "credentials", "auth", "authorization", "access_key", "secret_key"];
-/// Key parts that name a credential wherever they appear in the key.
-const SECRET_KEY_PARTS: &[&str] =
-    &["api_key", "api-key", "apikey", "x-api-key", "secret", "private_key", "private-key", "privatekey"];
-
-/// Last key segments (split on `_`, `-`, `.`) that name a password: `DB_PASS`, `MYSQL_PWD`.
-const SECRET_KEY_SEGMENTS: &[&str] = &["pass", "pwd"];
-
-/// `key` (as written) names a credential: see `SECRET_KEY_ENDINGS`, `SECRET_KEY_PARTS` and
-/// `SECRET_KEY_SEGMENTS`, or an upper-case name ending in `_KEY` (`OPENAI_KEY`; `sort_key` is not).
-/// A key ending in `helper` (`apiKeyHelper`) names a script that prints a credential, not one.
-fn credential_key(key: &str) -> bool {
-    let lower = key.to_ascii_lowercase();
-    if lower.ends_with("helper") {
-        return false;
+    Tab::Agent {
+        title: agents
+            .history(&a.kind)
+            .and_then(|h| h.title_for(&t.cwd, &a.session_id))
+            .unwrap_or_else(|| t.title.clone()),
+        cwd: t.cwd.clone(),
+        agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
+        session_id: a.session_id.clone(),
+        args: check.kept,
     }
-    let last = lower.rsplit(['.', '_', '-']).next().unwrap_or("");
-    let upper_key = key.ends_with("_KEY") && !key.chars().any(|c| c.is_ascii_lowercase());
-    SECRET_KEY_ENDINGS.iter().any(|e| lower.ends_with(e))
-        || SECRET_KEY_PARTS.iter().any(|p| lower.contains(p))
-        || SECRET_KEY_SEGMENTS.contains(&last)
-        || upper_key
-        || looks_secret(&lower)
-}
-
-/// `v` holds a key that names a credential, followed by `:` or `=` (after an optional closing
-/// quote and spaces), ignoring case: `GITHUB_TOKEN=`, `"X-API-Key":`, `x-api-key: `.
-fn names_a_credential(v: &str) -> bool {
-    let key_char = |c: char| c.is_ascii_alphanumeric() || "_-.".contains(c);
-    let chars: Vec<char> = v.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if !key_char(chars[i]) {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < chars.len() && key_char(chars[i]) {
-            i += 1;
-        }
-        let key: String = chars[start..i].iter().collect();
-        let mut j = i;
-        // Closing quotes, also escaped ones in JSON inside JSON (`\"TOKEN\":`).
-        while j < chars.len() && (chars[j] == '"' || chars[j] == '\'' || chars[j] == '\\') {
-            j += 1;
-        }
-        while j < chars.len() && chars[j].is_whitespace() {
-            j += 1;
-        }
-        let assigned = j < chars.len() && (chars[j] == ':' || chars[j] == '=') && !rule_tail(&chars, j);
-        if assigned && credential_key(&key) {
-            return true;
-        }
-    }
-    false
-}
-
-/// The `:` at `colon` ends a permission rule (`Bash(gh auth:*)`), not a value: it is inside an
-/// open `(`, and followed by `*` and `)` (spaces allowed around the `*`) or directly by `)`.
-fn rule_tail(chars: &[char], colon: usize) -> bool {
-    let depth = chars[..colon].iter().fold(0i32, |d, c| match c {
-        '(' => d + 1,
-        ')' => d - 1,
-        _ => d,
-    });
-    if depth <= 0 || chars[colon] != ':' {
-        return false;
-    }
-    let rest = &chars[colon + 1..];
-    if rest.first() == Some(&')') {
-        return true;
-    }
-    let mut it = rest.iter().skip_while(|c| c.is_whitespace());
-    it.next() == Some(&'*') && it.find(|c| !c.is_whitespace()) == Some(&')')
-}
-
-/// Launch flags without those that look like credentials (`--api-key x`, `--token=x`,
-/// `-c openai_api_key=x`), with their values; and whether any was dropped. Snapshots are plain
-/// files, shown in the UI.
-fn without_credentials(args: &[String]) -> (Vec<String>, bool) {
-    let mut out = vec![];
-    let mut dropped = false;
-    let mut it = args.iter().peekable();
-    while let Some(a) = it.next() {
-        let config = a == "-c" || a == "--config";
-        let (name, inline) = match a.split_once('=') {
-            Some((n, _)) if a.starts_with('-') => (n, true),
-            _ => (a.as_str(), false),
-        };
-        if a.starts_with('-') && !config && looks_secret(name) {
-            dropped = true;
-            if !inline {
-                it.next_if(|v| !v.starts_with('-'));
-            }
-            continue;
-        }
-        if config && it.peek().is_some_and(|v| looks_secret(v.split('=').next().unwrap_or(""))) {
-            dropped = true;
-            it.next();
-            continue;
-        }
-        if let Some(kv) = a.strip_prefix("--config=").or_else(|| a.strip_prefix("-c="))
-            && looks_secret(kv.split('=').next().unwrap_or(""))
-        {
-            dropped = true;
-            continue;
-        }
-        out.push(a.clone());
-    }
-    // A credential-looking value goes, with the bare flag right before it (`--auth sk-…`).
-    let mut kept: Vec<String> = Vec::with_capacity(out.len());
-    // Permission rules (`--allowedTools "Bash(gh auth:*)"`) get the same check: `rule_tail` keeps
-    // their `name:*)` tails, and a credential written inside one still goes.
-    for a in out {
-        let secret = looks_secret_value(&a);
-        if secret {
-            dropped = true;
-            if kept.last().is_some_and(|p| p.starts_with('-') && !p.contains('=')) {
-                kept.pop();
-            }
-            continue;
-        }
-        kept.push(a);
-    }
-    (kept, dropped)
 }
 
 /// Replaces same-named workspaces of `base` with `captured` (keeping their color); appends new ones.
@@ -387,7 +166,8 @@ mod tests {
             }),
         };
         open.workspaces[1].tabs = vec![tab("codex", B, &["-a", "on-request"]), tab("aider", C, &["--x"])];
-        let ws = capture(&open, &history, &["Beta".into()]).unwrap().0;
+        let (ws, notes) = capture(&open, &history, &["Beta".into()]).unwrap();
+        assert_eq!(notes, ["Beta › aider tab: left out flags it does not restore: --x"]);
         assert_eq!(
             ws[0].tabs,
             [
@@ -398,13 +178,14 @@ mod tests {
                     session_id: B.into(),
                     args: vec!["-a".into(), "on-request".into()],
                 },
-                // Unknown to sessionsnap: kept as cmux reported it, titled from the tab.
+                // Unknown to sessionsnap: kept as cmux reported it, titled from the tab, without
+                // flags (it has no allow-list).
                 Tab::Agent {
                     title: "aider tab".into(),
                     cwd: "/w/a".into(),
                     agent: "aider".into(),
                     session_id: C.into(),
-                    args: vec!["--x".into()],
+                    args: vec![],
                 },
             ]
         );
@@ -431,373 +212,148 @@ mod tests {
         assert!(notes[0].starts_with("Beta › bad: left out its agent session"), "{notes:?}");
     }
 
-    #[test]
-    fn drops_values_that_look_like_credentials_whatever_the_flag() {
-        // Built at runtime so secret scanners don't flag the source.
-        let github_token = format!("GH=ghp_{}", "a1".repeat(18));
-        let args: Vec<String> = [
-            "--auth",
-            "sk-proj-abc123",
-            "--header",
-            "Authorization: Bearer abc",
-            "--env",
-            "OPENAI_API_KEY=x",
-            "-e",
-            github_token.as_str(),
-            "--bearer",
-            "b",
-            "--authorization",
-            "a",
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
-            "--model",
-            "o3",
-            "--sort-key",
-            "name",
-        ]
-        .map(String::from)
-        .to_vec();
-        let (kept, dropped) = without_credentials(&args);
-        assert!(dropped);
-        assert_eq!(kept, ["--model", "o3", "--sort-key", "name"].map(String::from).to_vec());
-    }
-
-    /// Credentials inside a flag's value (inline JSON or TOML, a header) go with their flag.
-    #[test]
-    fn drops_values_holding_credentials_anywhere() {
-        // Built at runtime so secret scanners don't flag the source.
-        let ghp = format!("ghp_{}", "a1".repeat(18));
-        let jwt = format!("eyJ{}.eyJ{}.{}", "hbGciOi", "zdWIiOiIx", "c2lnbmF0dXJl");
-        let secret = [
-            ("--mcp-config", format!(r#"{{"mcpServers":{{"gh":{{"env":{{"GITHUB_TOKEN":"{ghp}"}}}}}}}}"#)),
-            (
-                "--mcp-config",
-                r#"{"mcpServers":{"x":{"url":"https://x","headers":{"X-API-Key":"abc123"}}}}"#.to_string(),
-            ),
-            ("-c", format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)),
-            ("-c", r#"mcp_servers.x.http_headers={"X-API-Key"="abc123"}"#.to_string()),
-            ("--header", "x-api-key: abc123".to_string()),
-            // A known token or a JWT anywhere in the value, not only at its start.
-            ("--mcp-config", format!(r#"{{"args":["--key","{ghp}"]}}"#)),
-            ("--note", format!("use {jwt} here")),
-            ("-c", "mcp_servers.db.env={DB_PASSWORD='p'}".to_string()),
-            ("--mcp-config", r#"{"env":{"PRIVATE_KEY_PATH" : "x", "Authorization":"Basic x"}}"#.to_string()),
-        ];
-        for (flag, value) in &secret {
-            let args = vec!["-m".to_string(), "o3".to_string(), flag.to_string(), value.clone()];
-            let (kept, dropped) = without_credentials(&args);
-            assert!(dropped, "{flag} {value}");
-            assert_eq!(kept, ["-m", "o3"], "{flag} {value}");
-            // Written as one word too.
-            let (kept, dropped) = without_credentials(&[format!("{flag}={value}")]);
-            assert!(dropped && kept.is_empty(), "{flag}={value}");
-        }
-        let fine = [
-            "--model",
-            "o3",
-            "--sort-key",
-            "name",
-            "--max-tokens",
-            "100",
-            "-c",
-            "model=o3",
-            "-c",
-            "model_auto_compact_token_limit=5000",
-            "--allowedTools",
-            "Bash(git:*)",
-            "--mcp-config",
-            r#"{"mcpServers":{"gh":{"command":"npx","args":["-y","@modelcontextprotocol/server-github"]}}}"#,
-            "--append-system-prompt",
-            "Keep answers short: one line.",
-            "--add-dir",
-            "/w/task-runner",
-        ]
-        .map(String::from)
-        .to_vec();
-        assert_eq!(without_credentials(&fine), (fine.clone(), false));
-    }
-
-    /// Permission rules name commands, not credentials: a deny rule lost on restore weakens the
-    /// user's safety, so `Bash(gh auth:*)` stays. A credential inside one still goes.
-    #[test]
-    fn keeps_permission_rules_that_name_credential_commands() {
-        let rules = ["Bash(gh auth:*)", "Bash(op secret:*)", "Bash(npm run auth:*)"];
-        for flag in ["--disallowedTools", "--allowedTools", "--allowed-tools", "--disallowed-tools", "--tools"] {
-            for rule in rules {
-                let args = vec![flag.to_string(), rule.to_string()];
-                assert_eq!(without_credentials(&args), (args.clone(), false), "{flag} {rule}");
-                let inline = vec![format!("{flag}={rule}")];
-                assert_eq!(without_credentials(&inline), (inline.clone(), false), "{flag}={rule}");
-            }
-            // Several rules after one flag.
-            let args: Vec<String> = [flag, "Edit", "Bash(gh token:*)", "-m", "o3"].map(String::from).to_vec();
-            assert_eq!(without_credentials(&args), (args.clone(), false), "{flag}");
-        }
-        // `key:*` and `key:)` are rule syntax wherever they appear.
-        for rule in rules {
-            let args = vec!["--permission-rule".to_string(), rule.to_string()];
-            assert_eq!(without_credentials(&args), (args.clone(), false), "{rule}");
-        }
-        // A token inside a rule still goes.
-        let ghp = format!("ghp_{}", "a1".repeat(18));
-        let (kept, dropped) = without_credentials(&["--allowedTools".to_string(), format!("Bash(curl -H {ghp}:*)")]);
-        assert!(dropped && kept.is_empty(), "{kept:?}");
-    }
-
-    /// The short generic prefixes (`sk-`, `sk_`, `akia`, `aiza`) count only before something
-    /// random-looking, so paths and names that start with them stay.
-    #[test]
-    fn short_token_prefixes_need_a_random_looking_rest() {
-        for value in ["/Users/me/src/sk-learn-experiments", "aizawa_takeshi", "/w/akiapolaau-notes", "sk_test_mode"] {
-            let args = vec!["--add-dir".to_string(), value.to_string()];
-            assert_eq!(without_credentials(&args), (args.clone(), false), "{value}");
-        }
-        // Built at runtime so secret scanners don't flag the source.
-        let tokens = [
-            format!("sk-{}", "a1b2c3d4e5".repeat(3)),
-            format!("sk_live_{}", "x9".repeat(12)),
-            format!("AKIA{}", "Q7".repeat(8)),
-            format!("AIza{}", "Sy9".repeat(12)),
-            format!("sk-ant-{}", "abcdefgh"),
-            format!("sk-proj-{}", "abcdefgh"),
-        ];
-        for t in &tokens {
-            let args = vec!["--add-dir".to_string(), format!("/w/{t}/x")];
-            let (kept, dropped) = without_credentials(&args);
-            assert!(dropped && kept.is_empty(), "{t}");
-        }
-    }
-
-    /// More secret key names, connection strings with a password, and escaped JSON.
-    #[test]
-    fn drops_secret_keys_urls_with_passwords_and_escaped_json() {
-        let ghp = format!("ghp_{}", "a1".repeat(18));
-        let pw = "hunter2";
-        let secret = [
-            r#"{"env":{"SECRET_KEY":"abc"}}"#.to_string(),
-            r#"{"env":{"AWS_SECRET_ACCESS_KEY":"abc"}}"#.to_string(),
-            r#"{"env":{"AWS_ACCESS_KEY":"abc"}}"#.to_string(),
-            r#"{"env":{"CLIENT_PRIVATE_KEY":"abc"}}"#.to_string(),
-            format!(r#"{{"env":{{"DATABASE_URL":"postgres://u:{pw}@h/db"}}}}"#),
-            format!("redis://:{pw}@cache:6379"),
-            format!(r#"{{\"env\":{{\"GITHUB_TOKEN\":\"{ghp}\"}}}}"#).replace(&ghp, "x"),
-        ];
-        for value in &secret {
-            let args = vec!["--mcp-config".to_string(), value.clone()];
-            let (kept, dropped) = without_credentials(&args);
-            assert!(dropped && kept.is_empty(), "{value}");
-        }
-        let fine = [
-            "--mcp-config",
-            r#"{"env":{"DATABASE_URL":"postgres://h/db","HOME_URL":"https://user@example.com/x"}}"#,
-            "-c",
-            "mcp_servers.x.bearer_token_env_var=GH_PAT",
-            "--add-dir",
-            "/w/a",
-        ]
-        .map(String::from)
-        .to_vec();
-        assert_eq!(without_credentials(&fine), (fine.clone(), false));
-    }
-
-    /// Only rule-shaped values after a rule flag skip the key rule, and `key:*)` is rule syntax
-    /// only as the tail of an open `Tool(…`.
-    #[test]
-    fn rule_exemptions_are_narrow() {
-        // A prompt-like value after a rule flag is checked as usual; the rule and flag stay.
-        let args: Vec<String> = ["--allowedTools", "Edit", "DB password=hunter2"].map(String::from).to_vec();
-        assert_eq!(without_credentials(&args), (vec!["--allowedTools".to_string(), "Edit".to_string()], true));
-        // After the inline form nothing is exempt.
-        let args: Vec<String> = ["--allowedTools=Edit", "SECRET_KEY=abc"].map(String::from).to_vec();
-        assert_eq!(without_credentials(&args), (vec!["--allowedTools=Edit".to_string()], true));
-        // An inline value that is not rule-shaped is checked as usual.
-        let (kept, dropped) = without_credentials(&["--allowedTools=API_KEY=x".to_string()]);
-        assert!(dropped && kept.is_empty(), "{kept:?}");
-        // Lists of rules stay.
-        for rules in ["Edit,Bash(gh auth:*)", "Edit Bash(gh auth:*) mcp__gh__get_issue", "Bash(op secret: * )"] {
-            let args = vec!["--allowedTools".to_string(), rules.to_string()];
-            assert_eq!(without_credentials(&args), (args.clone(), false), "{rules}");
-        }
-        let args = vec!["--note".to_string(), "Bash(op secret: * )".to_string()];
-        assert_eq!(without_credentials(&args), (args.clone(), false));
-        for value in ["api_key: *s3cretvalue", "x-api-key: *abc123def", "password:)x", "token:)x"] {
-            let args = vec!["--header".to_string(), value.to_string()];
-            let (kept, dropped) = without_credentials(&args);
-            assert!(dropped && kept.is_empty(), "{value}: {kept:?}");
-        }
-    }
-
-    /// `private` counts only as a private key, and a `*Helper` key holds a script path.
-    #[test]
-    fn private_means_a_private_key_and_helpers_are_paths() {
-        for json in [
-            r#"{"env":{"SSH_PRIVATE_KEY":"abc"}}"#,
-            r#"{"privateKey":"abc"}"#,
-            r#"{"private-key":"abc"}"#,
-            r#"{"tls":{"private_key":"abc"}}"#,
-        ] {
-            let (kept, dropped) = without_credentials(&["--mcp-config".to_string(), json.to_string()]);
-            assert!(dropped && kept.is_empty(), "{json}");
-        }
-        let fine = [
-            "--settings",
-            r#"{"private":true}"#,
-            "--settings",
-            r#"{"apiKeyHelper":"~/bin/key.sh","awsAuthHelper":"~/bin/aws.sh"}"#,
-            "--mcp-config",
-            r#"{"env":{"CLIENT_PRIVATE_PEM_PATH":"/k/c.pem"}}"#,
-        ]
-        .map(String::from)
-        .to_vec();
-        assert_eq!(without_credentials(&fine), (fine.clone(), false));
-    }
-
-    /// Short password keys and upper-case `*_KEY` names are credentials; `sort_key` is not.
-    #[test]
-    fn drops_pass_pwd_and_upper_case_key_names() {
-        for json in [
-            r#"{"env":{"DB_PASS":"abc"}}"#,
-            r#"{"env":{"MYSQL_PWD":"abc"}}"#,
-            r#"{"env":{"OPENAI_KEY":"abc"}}"#,
-            r#"{"env":{"STRIPE_KEY":"abc"}}"#,
-        ] {
-            let (kept, dropped) = without_credentials(&["--mcp-config".to_string(), json.to_string()]);
-            assert!(dropped && kept.is_empty(), "{json}");
-        }
-        let fine =
-            ["-c", "sort_key=name", "-c", "sandbox_bypass=1", "--mcp-config", r#"{"compass":"n","primary_key":"id"}"#]
-                .map(String::from)
-                .to_vec();
-        assert_eq!(without_credentials(&fine), (fine.clone(), false));
-    }
-
-    /// A credential written inside a permission rule is dropped like anywhere else: rule flags get
-    /// the full check, and only `rule_tail` keeps rules such as `Bash(gh auth:*)`.
-    #[test]
-    fn credentials_inside_permission_rules_are_dropped() {
-        // Built at runtime so secret scanners don't flag the source.
-        let pw = format!("pw{}", "7x".repeat(6));
-        let key = "k3y9".repeat(6);
-        let token = "a1b2c3d4e5".repeat(3);
-        let rules = [
-            format!("Bash(PGPASSWORD={pw} psql:*)"),
-            format!("Bash(mysql -u root --password={pw} db:*)"),
-            format!("Bash(curl -H 'x-api-key: {key}' https://api.x.com/*)"),
-            format!("Bash(export GITHUB_TOKEN={token})"),
-            format!("Bash(psql postgres://u:{pw}@db/x)"),
-        ];
-        for flag in ["--allowedTools", "--disallowedTools", "--tools"] {
-            for rule in &rules {
-                let (kept, dropped) = without_credentials(&[flag.to_string(), rule.clone()]);
-                assert!(dropped && kept.is_empty(), "{flag} {rule}: {kept:?}");
-                let (kept, dropped) = without_credentials(&[format!("{flag}={rule}")]);
-                assert!(dropped && kept.is_empty(), "{flag}={rule}: {kept:?}");
-            }
-        }
-        // A later rule-shaped argument is checked too.
-        let args: Vec<String> =
-            ["--tools", "Edit", "Read", &format!("Fix(the password: {pw})")].map(String::from).to_vec();
-        assert_eq!(without_credentials(&args), (["--tools", "Edit", "Read"].map(String::from).to_vec(), true));
-    }
-
-    /// A key whose rest is long and mixed-case counts even without a digit.
-    #[test]
-    fn mixed_case_rest_after_a_short_prefix_is_a_token() {
-        let letters: String = ('A'..='Z').zip('a'..='z').flat_map(|(u, l)| [u, l]).take(22).collect();
-        let (kept, dropped) = without_credentials(&["--x".to_string(), format!("sk-{letters}")]);
-        assert!(dropped && kept.is_empty(), "{kept:?}");
-        let args = vec!["--add-dir".to_string(), "/w/sk-learn-experiments-and-more-notes".to_string()];
-        assert_eq!(without_credentials(&args), (args.clone(), false));
-    }
-
-    /// A year or version in a folder name is not a key: the rest needs an unbroken run of 16 or
-    /// more letters and digits.
-    #[test]
-    fn short_prefix_words_need_a_long_unbroken_run() {
-        for dir in [
-            "/Users/me/sk-learn-experiments-2024",
-            "/w/akiapolaau-notes-2024-and-more-stuff",
-            "/w/sk_v2_test_data_2024_q3",
-        ] {
-            let args = vec!["--add-dir".to_string(), dir.to_string()];
-            assert_eq!(without_credentials(&args), (args.clone(), false), "{dir}");
-        }
-        // Built at runtime so secret scanners don't flag the source.
-        for t in [
-            format!("sk_live_{}", "x9".repeat(12)),
-            format!("sk-{}", "a1".repeat(24)),
-            format!("AKIA{}", "Q7".repeat(8)),
-        ] {
-            let (kept, dropped) = without_credentials(&["--x".to_string(), t.clone()]);
-            assert!(dropped && kept.is_empty(), "{t}");
-        }
-    }
-
-    #[test]
-    fn drops_flags_that_look_like_credentials() {
-        let args: Vec<String> = [
-            "-m",
-            "o3",
-            "--api-key",
-            "sk-1",
-            "--Auth-Token=t",
-            "-c",
-            "openai_api_key=k",
-            "-c",
-            "model=o3",
-            "--config=github_token=g",
-            "--password",
-            "--verbose",
-            "--SECRET-file",
-            "/s",
-            "--credentials",
-            "-c",
-            "model_auto_compact_token_limit=5000",
-            "-c",
-            "github_token=x",
-            "--remote-auth-token-env",
-            "OPENAI_KEY",
-            "--token",
-            "t",
-            "-c",
-            "mcp.server.API_KEY=z",
-        ]
-        .map(String::from)
-        .to_vec();
-        let (kept, dropped) = without_credentials(&args);
-        assert!(dropped);
-        assert_eq!(
-            kept,
-            [
-                "-m",
-                "o3",
-                "-c",
-                "model=o3",
-                "--verbose",
-                "--SECRET-file",
-                "/s",
-                "-c",
-                "model_auto_compact_token_limit=5000",
-                "--remote-auth-token-env",
-                "OPENAI_KEY",
-            ]
-        );
-        assert_eq!(without_credentials(&["-m".into(), "o3".into()]), (vec!["-m".to_string(), "o3".to_string()], false));
+    /// Captures one agent tab in workspace "Beta" and returns it with the notes.
+    fn capture_one(kind: &str, id: &str, args: &[String]) -> (Tab, Vec<String>) {
         let history = agents(vec![]);
         let mut open = open_state();
         open.workspaces[1].tabs = vec![OpenTab {
             reference: None,
-            title: "codex".into(),
+            title: "t".into(),
             cwd: "/w/b".into(),
             agent: Some(AgentRef {
-                kind: "codex".into(),
-                session_id: B.into(),
-                args: vec!["--api-key".into(), "sk-1".into()],
+                kind: kind.into(),
+                session_id: id.into(),
+                args: args.to_vec(),
                 alt_session_id: None,
             }),
         }];
-        let (ws, notes) = capture(&open, &history, &[]).unwrap();
-        assert!(matches!(&ws[1].tabs[0], Tab::Agent { args, .. } if args.is_empty()));
-        assert_eq!(notes, ["Beta › codex: dropped a flag that looked like a credential"]);
+        let (ws, notes) = capture(&open, &history, &["Beta".into()]).unwrap();
+        (ws[0].tabs[0].clone(), notes)
+    }
+
+    fn saved_args(tab: &Tab) -> Vec<String> {
+        match tab {
+            Tab::Agent { args, .. } => args.clone(),
+            Tab::Terminal { .. } => panic!("not an agent tab: {tab:?}"),
+        }
+    }
+
+    fn words(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn keeps_the_flags_each_agent_allows() {
+        let claude = words(&[
+            "--model",
+            "opus",
+            "--permission-mode",
+            "plan",
+            "--allowedTools",
+            "Bash(git:*)",
+            "--disallowedTools",
+            "Bash(gh auth:*)",
+            "--add-dir",
+            "/w/sk-learn-2024",
+            "--settings",
+            "~/s.json",
+        ]);
+        let (tab, notes) = capture_one("claude", A, &claude);
+        assert_eq!((saved_args(&tab), notes), (claude, vec![]));
+        let codex =
+            words(&["-m", "o3", "-s", "workspace-write", "-a", "on-request", "-c", "model_reasoning_effort=high"]);
+        let (tab, notes) = capture_one("codex", B, &codex);
+        assert_eq!((saved_args(&tab), notes), (codex, vec![]));
+        // `--flag=value` forms and long names too.
+        let inline = words(&["--model=o3", "--sandbox=read-only", "--config=model=o3", "--cd", "/w"]);
+        let (tab, notes) = capture_one("codex", B, &inline);
+        assert_eq!((saved_args(&tab), notes), (inline, vec![]));
+    }
+
+    /// Everything else is left out, and the note names the flag but never its value.
+    #[test]
+    fn leaves_out_other_flags_with_a_note_naming_them() {
+        // Built at runtime so secret scanners don't flag the source.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        let cases: Vec<(&str, Vec<String>, &str, &str)> = vec![
+            ("claude", words(&["--mcp-config", r#"{"env":{"X":"y"}}"#]), "--mcp-config", "env"),
+            ("claude", words(&["--header", "x-api-key: v"]), "--header", "x-api-key"),
+            ("codex", vec!["-c".into(), format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)], "-c", "GITHUB"),
+            ("codex", words(&["--api-key", "v"]), "--api-key", "v"),
+            ("claude", words(&["--foo", "bar"]), "--foo", "bar"),
+            ("claude", vec!["--model".into(), format!("opus-{ghp}")], "--model", "ghp_"),
+            ("codex", vec!["-m".into(), ghp.clone()], "-m", "ghp_"),
+        ];
+        for (kind, mut args, name, value) in cases {
+            let id = if kind == "claude" { A } else { B };
+            args.extend(words(&["--verbose"]).into_iter().filter(|_| kind == "claude"));
+            let (tab, notes) = capture_one(kind, id, &args);
+            let want: Vec<String> = if kind == "claude" { words(&["--verbose"]) } else { vec![] };
+            assert_eq!(saved_args(&tab), want, "{args:?}");
+            assert_eq!(notes.len(), 1, "{notes:?}");
+            assert!(notes[0].contains(name), "{notes:?}");
+            assert!(!notes[0].contains(value) || name.contains(value), "{notes:?} shows {value}");
+        }
+    }
+
+    /// A deny rule that cannot be saved leaves out the whole agent session: resuming without it
+    /// would allow what the user denied.
+    #[test]
+    fn a_deny_rule_that_cannot_be_saved_leaves_out_the_session() {
+        // Built at runtime so secret scanners don't flag the source.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        for flag in ["--disallowedTools", "--disallowed-tools"] {
+            let args = vec![flag.to_string(), "Edit".into(), format!("Bash(curl -H {ghp}:*)")];
+            let (tab, notes) = capture_one("claude", A, &args);
+            assert_eq!(tab, Tab::Terminal { title: "t".into(), cwd: "/w/b".into(), command: None });
+            assert_eq!(
+                notes,
+                ["Beta › t: left out its agent session (a deny rule could not be saved; resume it by hand)"]
+            );
+            let (tab, notes) = capture_one("claude", A, &[format!("{flag}=Bash(x {ghp})")]);
+            assert!(matches!(tab, Tab::Terminal { .. }) && notes.len() == 1, "{notes:?}");
+        }
+        // An allow rule that cannot be saved only makes the resumed session stricter.
+        let args = vec!["--allowedTools".into(), "Edit".into(), format!("Bash(curl -H {ghp}:*)")];
+        let (tab, notes) = capture_one("claude", A, &args);
+        assert_eq!(saved_args(&tab), words(&["--allowedTools", "Edit"]));
+        assert_eq!(notes, ["Beta › t: left out flags it does not restore: --allowedTools"]);
+    }
+
+    /// A Claude Code launch that is a subcommand or a one-shot run is not a session to resume.
+    #[test]
+    fn launches_that_are_not_sessions_are_left_out() {
+        for (args, what) in [
+            (words(&["-p", "--model", "opus"]), "a launch with -p"),
+            (words(&["--print"]), "a launch with --print"),
+            (words(&["--no-session-persistence"]), "a launch with --no-session-persistence"),
+            (words(&["--model", "opus", "mcp", "list"]), "the `mcp` command"),
+            (words(&["setup-token"]), "the `setup-token` command"),
+        ] {
+            let (tab, notes) = capture_one("claude", A, &args);
+            assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
+            assert_eq!(
+                notes,
+                [format!("Beta › t: left out its agent session ({what} is not a session that can be resumed)")]
+            );
+        }
+        // A prompt that happens to be a command's name, after a flag's value, is a prompt.
+        let (tab, _) = capture_one("claude", A, &words(&["--model", "opus", "fix the mcp config"]));
+        assert_eq!(saved_args(&tab), words(&["--model", "opus"]));
+    }
+
+    #[test]
+    fn resume_only_and_unknown_agents_keep_no_flags() {
+        for (kind, id) in [("gemini", "g-1"), ("opencode", "s1"), ("aider", "x1")] {
+            let (tab, notes) = capture_one(kind, id, &words(&["--model", "pro", "--yolo"]));
+            assert_eq!(saved_args(&tab), Vec::<String>::new(), "{kind}");
+            // Their flags' arities are unknown, so `pro` counts as another argument.
+            assert_eq!(
+                notes,
+                ["Beta › t: left out flags it does not restore: --model, --yolo (and 1 other argument)"],
+                "{kind}"
+            );
+        }
     }
 
     #[test]

@@ -310,14 +310,15 @@ pub fn warnings(workspaces: &[Workspace], agents: &dyn AgentCatalog) -> Vec<Stri
             }
             if let Some(s) = t.session() {
                 let status = resume_status(agents, &s);
-                if status != Resume::Ready && t.control_field().is_none() {
-                    out.push(format!(
-                        "{}#{} '{}': {}, restores as a plain shell",
-                        w.name,
-                        i + 1,
-                        t.title(),
-                        problem(agents, &s, status)
-                    ));
+                let lost = match t {
+                    Tab::Agent { agent, args, .. } => agents.check_flags(agent, args).lost_reason(),
+                    Tab::Terminal { .. } => None,
+                };
+                let why = lost.or_else(|| (status != Resume::Ready).then(|| problem(agents, &s, status)));
+                if let Some(why) = why
+                    && t.control_field().is_none()
+                {
+                    out.push(format!("{}#{} '{}': {why}, restores as a plain shell", w.name, i + 1, t.title()));
                 }
                 *seen.entry(s).or_default() += 1;
             }
@@ -516,11 +517,17 @@ mod tests {
         let (_, history, mut ws) = setup();
         ws[0].tabs.push(agent_tab("aider", "x", "/w/a", A));
         ws[0].tabs.push(agent_tab("claude", "gone", "/w/a", "44444444-4444-4444-8444-444444444444"));
+        let mut print = agent_tab("claude", "print", "/w/a", "55555555-5555-4555-8555-555555555555");
+        if let Tab::Agent { args, .. } = &mut print {
+            *args = vec!["--print".into()];
+        }
+        ws[0].tabs.push(print);
         assert_eq!(
             warnings(&ws, &history),
             [
                 "Alpha#3 'x': sessionsnap doesn't know how to resume aider yet, restores as a plain shell",
                 "Alpha#4 'gone': transcript not found, restores as a plain shell",
+                "Alpha#5 'print': a launch with --print is not a session that can be resumed, restores as a plain shell",
             ]
         );
     }
