@@ -366,9 +366,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               A value that fails is left out; a flag left with no value goes too, with a note. A flag
               that limits the agent (the restricting column) is never lost quietly: if it, or any of
-              its values, can't be saved, the tab's agent session is left out (saved as a plain
-              terminal tab, and <code translate="no">save</code> says to resume it by hand): resuming
-              without it would allow more than you did. An untested agent's session started with any
+              its values, can't be saved, the tab's agent session is left out: it is saved with its
+              session ID but none of its flags, and the reason in <code translate="no">leftOut</code>;
+              <code translate="no">save</code> says to resume it by hand, and restore warns and opens a
+              plain shell (or skips the tab while its session is open): resuming without the flag
+              would allow more than you did. An untested agent's session started with any
               flag is left out the same way. <strong>Caveat:</strong> cmux 0.65, the version
               checked, usually records a Claude Code launch without your
               <code translate="no">--settings</code> when it can merge your settings file into its own

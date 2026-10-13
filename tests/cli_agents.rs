@@ -379,3 +379,59 @@ fn every_read_of_a_snapshot_filters_its_flags() {
     assert!(shown[1].get("args").is_none());
     assert_eq!(shown[1]["leftOut"], "its flags have control characters; resume it by hand");
 }
+
+/// A save keeps a lost session the way a load does: its ID, no flags, and the reason. Restore then
+/// warns and opens a shell, or skips the tab while its session is open.
+#[test]
+fn save_keeps_a_lost_session_with_its_reason() {
+    let env = setup();
+    // Built at runtime so secret scanners don't flag the source.
+    let ghp = format!("ghp_{}", "a1".repeat(18));
+    let deny = format!("Bash(x {ghp})");
+    let mut tab = codex_tab("t", X, &[]);
+    if let Some(a) = tab.agent.as_mut() {
+        a.kind = "claude".into();
+        a.session_id = C.into();
+        a.args = vec!["--disallowedTools".into(), deny];
+    }
+    env.fake.state.borrow_mut().workspaces.push(open_ws("WG", "Gamma", "/w/g", &[]));
+    env.fake.state.borrow_mut().workspaces[2].tabs.push(tab);
+    let o = env.run(&["save", "work"]).unwrap();
+    let reason = "a restricting flag (--disallowedTools) could not be saved; resume it by hand";
+    assert!(o.json["warnings"].to_string().contains(reason), "{}", o.json);
+    let shown = env.run(&["show", "work", "--json"]).unwrap();
+    assert!(!shown.json.to_string().contains(&ghp));
+    let t = &shown.json["version"]["workspaces"][2]["tabs"][0];
+    assert_eq!(
+        (t["type"].as_str(), t["sessionId"].as_str(), t["leftOut"].as_str()),
+        (Some("agent"), Some(C), Some(reason))
+    );
+    assert!(t.get("args").is_none());
+    // Still open in cmux: skipped.
+    let plan = env.run(&["restore", "work", "--plan"]).unwrap();
+    assert_eq!(plan.exit, Exit::NothingToDo, "{}", plan.json);
+    // Closed: a new workspace with a plain shell, and the reason.
+    env.fake.state.borrow_mut().workspaces.pop();
+    let plan = env.run(&["restore", "work", "--plan"]).unwrap().json["plan"].clone();
+    assert!(plan["warnings"].to_string().contains(&format!("Gamma › t: {reason}, opening a plain shell")), "{plan}");
+    assert_eq!(plan["actions"][0]["tabs"][0]["type"], "terminal", "{plan}");
+}
+
+/// A `leftOut` reason edited by hand is shown only as one short plain line.
+#[test]
+fn a_hand_edited_reason_is_sanitized() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let dir = env.dir.path().join("store/snapshots/work");
+    let file = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let ghp = format!("ghp_{}", "a1".repeat(18));
+    for odd in ["\u{1b}[2Jgone".to_string(), "x".repeat(500), format!("token {ghp}")] {
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        v["workspaces"][1]["tabs"][0]["leftOut"] = serde_json::json!(odd);
+        std::fs::write(&file, serde_json::to_string(&v).unwrap()).unwrap();
+        let shown = env.run(&["show", "work", "--json"]).unwrap();
+        let t = &shown.json["version"]["workspaces"][1]["tabs"][0];
+        assert_eq!(t["leftOut"], "its flags were left out; resume it by hand", "{odd:?}");
+        assert!(!shown.json.to_string().contains(&ghp));
+    }
+}

@@ -29,7 +29,13 @@ pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
         } else {
             check.lost_reason(&agents.display_name(agent))
         };
-        match left_out.clone().or(why) {
+        // A reason written by hand is shown and typed nowhere, but keep it to one short line of
+        // names: control characters, a long text or a token-like word get a plain reason instead.
+        let stored = left_out.clone().map(|r| {
+            let odd = has_control(&r) || r.chars().count() > 200 || crate::domain::flags::holds_credential(&r);
+            if odd { "its flags were left out; resume it by hand".to_string() } else { r }
+        });
+        match stored.or(why) {
             Some(reason) => {
                 args.clear();
                 *left_out = Some(reason);

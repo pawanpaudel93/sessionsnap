@@ -53,10 +53,12 @@ fn unique_name(name: &str, used: &mut Vec<String>) -> String {
 }
 
 /// An agent tab keeps only the flags its agent allows (see `AgentCatalog::check_flags`; an agent
-/// the catalog does not know keeps none), and `note` names the flags left out. An agent record
-/// with a control character in its kind, ID or flags, a deny rule that can't be kept, or a launch
-/// that is not a session leaves out the agent session (`note` says so): the tab is saved as a
-/// plain terminal.
+/// the catalog does not know keeps none), and `note` names the flags left out. When its flags lose
+/// the session (a restricting flag that can't be kept, an unknown flag, a launch that is not a
+/// session), the tab keeps its session ID but no flags, with the reason in `left_out` (as loading
+/// does), so restore gives the reason and opens a plain shell. An agent record with a control
+/// character in its kind, ID or flags is not saved at all (its ID can't be trusted): the tab is
+/// saved as a plain terminal, and `note` says so.
 fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) -> Tab {
     let terminal = || Tab::Terminal { title: t.title.clone(), cwd: t.cwd.clone(), command: None };
     let Some(a) = t.agent.as_ref() else { return terminal() };
@@ -65,12 +67,11 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
         return terminal();
     }
     let check = agents.check_flags(&a.kind, &a.args);
-    if let Some(n) = check.note(&agents.display_name(&a.kind)) {
+    let display = agents.display_name(&a.kind);
+    if let Some(n) = check.note(&display) {
         note(&n);
     }
-    if check.lost.is_some() {
-        return terminal();
-    }
+    let left_out = check.lost_reason(&display);
     Tab::Agent {
         title: agents
             .history(&a.kind)
@@ -79,8 +80,8 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
         cwd: t.cwd.clone(),
         agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
         session_id: a.session_id.clone(),
-        args: check.kept,
-        left_out: None,
+        args: if left_out.is_some() { vec![] } else { check.kept },
+        left_out,
     }
 }
 
@@ -241,6 +242,11 @@ mod tests {
         }
     }
 
+    /// The session is kept, without its flags, with the reason they were left out.
+    fn is_lost(tab: &Tab) -> bool {
+        matches!(tab, Tab::Agent { args, left_out: Some(_), .. } if args.is_empty())
+    }
+
     fn words(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
     }
@@ -310,7 +316,7 @@ mod tests {
             ("codex", B, words(&["--sandb", "read-only"]), "--sandb"),
         ] {
             let (tab, notes) = capture_one(kind, id, &args);
-            assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
+            assert!(is_lost(&tab), "{args:?}");
             assert_eq!(
                 notes,
                 [format!("Beta › t: left out its agent session: an unknown flag {name}; resume it by hand")],
@@ -325,7 +331,7 @@ mod tests {
         let ghp = format!("ghp_{}", "a1".repeat(18));
         let (tab, notes) =
             capture_one("codex", B, &["-c".into(), format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)]);
-        assert!(matches!(tab, Tab::Terminal { .. }));
+        assert!(is_lost(&tab));
         assert_eq!(
             notes,
             ["Beta › t: left out its agent session: an unlisted Codex -c key mcp_servers.*; resume it by hand"]
@@ -341,7 +347,9 @@ mod tests {
         for flag in ["--disallowedTools", "--disallowed-tools"] {
             let args = vec![flag.to_string(), "Edit".into(), format!("Bash(curl -H {ghp}:*)")];
             let (tab, notes) = capture_one("claude", A, &args);
-            assert_eq!(tab, Tab::Terminal { title: "t".into(), cwd: "/w/b".into(), command: None });
+            assert!(is_lost(&tab), "{tab:?}");
+            assert!(matches!(&tab, Tab::Agent { session_id, left_out: Some(why), .. }
+                if session_id == A && why == &format!("a restricting flag ({flag}) could not be saved; resume it by hand")));
             assert_eq!(
                 notes,
                 [format!(
@@ -349,7 +357,7 @@ mod tests {
                 )]
             );
             let (tab, notes) = capture_one("claude", A, &[format!("{flag}=Bash(x {ghp})")]);
-            assert!(matches!(tab, Tab::Terminal { .. }) && notes.len() == 1, "{notes:?}");
+            assert!(is_lost(&tab) && notes.len() == 1, "{notes:?}");
         }
         // Codex: a sandbox or approval value, or a restricting `-c` key, of an unexpected shape.
         for (args, name) in [
@@ -360,7 +368,7 @@ mod tests {
             (words(&["--profile", "{x}"]), "--profile"),
         ] {
             let (tab, notes) = capture_one("codex", B, &args);
-            assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
+            assert!(is_lost(&tab), "{args:?}");
             assert!(notes[0].contains(&format!("a restricting flag ({name})")), "{notes:?}");
         }
         let fine = words(&["-s", "read-only", "-c", "sandbox_mode=read-only", "-c", "approval_policy=\"never\""]);
@@ -389,7 +397,7 @@ mod tests {
             (words(&["setup-token"]), "the `setup-token` command"),
         ] {
             let (tab, notes) = capture_one("claude", A, &args);
-            assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
+            assert!(is_lost(&tab), "{args:?}");
             assert_eq!(
                 notes,
                 [format!("Beta › t: left out its agent session: {what} is not a session that can be resumed")]
@@ -407,7 +415,7 @@ mod tests {
             [("gemini", "g-1", "Gemini CLI"), ("opencode", "s1", "OpenCode"), ("aider", "x1", "aider")]
         {
             let (tab, notes) = capture_one(kind, id, &words(&["--sandbox"]));
-            assert!(matches!(tab, Tab::Terminal { .. }), "{kind}");
+            assert!(is_lost(&tab), "{kind}");
             assert_eq!(
                 notes,
                 [format!(

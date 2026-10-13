@@ -204,9 +204,13 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
 A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
 the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
 saved (a value of the wrong shape, a credential in it, a missing value, a `-c` key of a restricting
-family with an unexpected value), the tab's agent session is left out. The tab is saved as a plain
-terminal tab and `save` says "left out its agent session: a restricting flag (`<name>`) could not
-be saved; resume it by hand", because resuming without it would allow more than you did. A launch
+family with an unexpected value), the tab's agent session is left out: the tab is saved with its
+session ID but none of its flags, and the reason in `leftOut`, and `save` says "left out its agent
+session: a restricting flag (`<name>`) could not be saved; resume it by hand". Restore then never
+resumes it: it warns with the reason and opens a plain shell, or skips the tab while its session is
+open, because resuming without the flag would allow more than you did. The reason names flags,
+never their values. (An agent record with a control character in its kind, ID or flags is saved as
+a plain terminal tab: its ID can't be trusted.) A launch
 that is not a session (Claude Code with `--print`/`-p` or `--no-session-persistence`, or a
 subcommand such as `claude mcp`) is left out the same way.
 
