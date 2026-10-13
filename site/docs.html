@@ -369,19 +369,23 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               its values, can't be saved, the tab's agent session is left out (saved as a plain
               terminal tab, and <code translate="no">save</code> says to resume it by hand): resuming
               without it would allow more than you did. An untested agent's session started with any
-              flag is left out the same way. <strong>Caveat (cmux 0.65 and later):</strong> cmux's
-              Claude Code wrapper records the launch without your <code translate="no">--settings</code>,
-              so restrictions in a settings file are not restored; resume such sessions by hand, or
-              pass the restrictions with other flags. A
-              launch that is not a session (Claude Code with <code translate="no">--print</code>/<code translate="no">-p</code> or
+              flag is left out the same way. <strong>Caveat:</strong> cmux 0.65, the version
+              checked, usually records a Claude Code launch without your
+              <code translate="no">--settings</code> when it can merge your settings file into its own
+              (that needs Node), so restrictions in that file are not restored; resume such sessions
+              by hand, or pass the restrictions with other flags. Other cmux versions are unverified.
+              A launch that is not a session (Claude Code with <code translate="no">--print</code>/<code translate="no">-p</code> or
               <code translate="no">--no-session-persistence</code>, or a subcommand such as <code translate="no">claude mcp</code>) is left out
               the same way.
             </p>
             <p>
               Loading a snapshot applies the same lists and rules, so an older snapshot never shows
-              or passes a flag that is no longer allowed, and a tab whose restricting flag can't be passed again is not
-              resumed: it opens as a plain shell in a new workspace, or is skipped in an open one,
-              with the reason. The tokens that pick another session are taken out first: the agent's
+              or passes a flag that is no longer allowed. A tab whose saved flags can't be passed
+              again keeps its session ID but none of its flags, with the reason
+              (<code translate="no">leftOut</code>): restore opens a plain shell in a new workspace,
+              or skips the tab in an open one, with the reason. Versions written before the
+              allow-list may still hold their flags on disk until you prune or delete them; they are
+              never shown or replayed. The tokens that pick another session are taken out first: the agent's
               own resume words and resume flags with the old ID, its continue flag, Claude Code's
               <code translate="no">--session-id &lt;id&gt;</code> and <code translate="no">--fork-session</code>, Codex's
               <code translate="no">resume|fork &lt;uuid|--last&gt;</code>. A Codex launch that is a subcommand (<code translate="no">codex exec</code>, <code translate="no">codex review</code>, …) is not a session and is left out.

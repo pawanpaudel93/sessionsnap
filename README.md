@@ -206,22 +206,24 @@ the agent (the "restricting" column) is never lost quietly: if it, or any of its
 saved (a value of the wrong shape, a credential in it, a missing value, a `-c` key of a restricting
 family with an unexpected value), the tab's agent session is left out. The tab is saved as a plain
 terminal tab and `save` says "left out its agent session: a restricting flag (`<name>`) could not
-be saved; resume it by hand", because resuming without it would allow more than you did.
+be saved; resume it by hand", because resuming without it would allow more than you did. A launch
+that is not a session (Claude Code with `--print`/`-p` or `--no-session-persistence`, or a
+subcommand such as `claude mcp`) is left out the same way.
 
-**Caveat (cmux 0.65 and later):** cmux's Claude Code wrapper records the launch without your
-`--settings` (it merges that file into its own hook settings), so sessionsnap never sees it, and
-restrictions in a settings file are not restored. Resume such sessions by hand, or pass the
-restrictions with other flags (`--disallowedTools`, `--permission-mode`). Codex launches are
-recorded as you typed them. A launch
-that is not a session —
-Claude Code with `--print`/`-p` or `--no-session-persistence`, or a subcommand such as `claude mcp`
-— is left out the same way.
+**Caveat (Claude Code `--settings` under cmux):** cmux 0.65, the version checked, usually records a
+Claude Code launch without your `--settings`, when it can merge your settings file into its own hook
+settings (that needs Node). sessionsnap then never sees the flag, and restrictions in that settings
+file are not restored. Resume such sessions by hand, or pass the restrictions with other flags
+(`--disallowedTools`, `--permission-mode`). When the merge can't run, cmux records your
+`--settings` as given, and the rules above apply. Other cmux versions are unverified. Codex launches
+are recorded as you typed them.
 
 Loading a snapshot applies the same lists and rules (for `show`, the web UI, diffs, saves and
 restore), so a snapshot saved by an older sessionsnap never shows or passes a flag that is no longer
-allowed, and a tab whose restricting flag can't be passed again (or an
-untested agent's tab with flags) is not resumed: it opens as a plain shell in a new workspace, or is
-skipped in an open one, with the reason.
+allowed. A tab whose saved flags can't be passed again (a restricting flag that can't be kept, or an
+untested agent's tab with flags) keeps its session ID but none of its flags, with the reason
+(`leftOut`): `show` gives it, and restore opens a plain shell in a new workspace, or skips the tab
+in an open one, with the reason.
 
 The tokens that pick another session are taken out before the list applies: the agent's own resume
 words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and
@@ -300,6 +302,10 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   sandbox, permission mode, settings) that can't be saved exactly as given leaves out the whole
   agent session rather than resume it with fewer limits; so does any flag of an agent whose flags
   are untested. Restore filters old snapshots through the same rules.
+- Snapshot versions written by an earlier sessionsnap (before the allow-list) may still hold the
+  flags they saved, on disk, until you remove them: save again, then `sessionsnap prune <name>
+  --keep 1`, or `sessionsnap delete <name>`. They are never shown or replayed, but the files keep
+  them.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 
 ## Status
