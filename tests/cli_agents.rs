@@ -264,11 +264,11 @@ fn save_names_the_flags_it_leaves_out() {
     env.fake.state.borrow_mut().workspaces[0].tabs.push(codex_tab(
         "codex",
         X,
-        &["-m", "o3", "--api-key", value, "-c", "mcp_servers.x.env={T=1}"],
+        &["-m", "o3", "--remote-auth-token-env", value, "-c", "mcp_servers.x.env={T=1}"],
     ));
     let o = env.run(&["save", "work"]).unwrap();
     let warnings = o.json["warnings"].to_string();
-    assert!(warnings.contains("left out flags it does not restore: --api-key, -c"), "{warnings}");
+    assert!(warnings.contains("left out flags it does not restore: --remote-auth-token-env, -c"), "{warnings}");
     assert!(!warnings.contains(value) && !warnings.contains("mcp_servers"), "{warnings}");
     let shown = env.run(&["show", "work", "--json"]).unwrap();
     let tabs = shown.json["version"]["workspaces"][0]["tabs"].as_array().unwrap().clone();

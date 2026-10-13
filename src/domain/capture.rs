@@ -277,10 +277,9 @@ mod tests {
         let ghp = format!("ghp_{}", "a1".repeat(18));
         let cases: Vec<(&str, Vec<String>, &str, &str)> = vec![
             ("claude", words(&["--mcp-config", r#"{"env":{"X":"y"}}"#]), "--mcp-config", "env"),
-            ("claude", words(&["--header", "x-api-key: v"]), "--header", "x-api-key"),
             ("codex", vec!["-c".into(), format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)], "-c", "GITHUB"),
-            ("codex", words(&["--api-key", "v"]), "--api-key", "v"),
-            ("claude", words(&["--foo", "bar"]), "--foo", "bar"),
+            ("claude", words(&["--append-system-prompt", "secret plan"]), "--append-system-prompt", "secret"),
+            ("codex", words(&["--remote-auth-token-env", "MY_TOKEN"]), "--remote-auth-token-env", "MY_"),
             ("claude", vec!["--model".into(), format!("opus-{ghp}")], "--model", "ghp_"),
             ("codex", vec!["-m".into(), ghp.clone()], "-m", "ghp_"),
         ];
@@ -293,6 +292,28 @@ mod tests {
             assert_eq!(notes.len(), 1, "{notes:?}");
             assert!(notes[0].contains(name), "{notes:?}");
             assert!(!notes[0].contains(value) || name.contains(value), "{notes:?} shows {value}");
+        }
+    }
+
+    /// A flag the agent's table doesn't know leaves out the session: its arity is unknown, so what
+    /// follows it can't be read for certain.
+    #[test]
+    fn unknown_flags_leave_out_the_session() {
+        for (kind, id, args, name) in [
+            ("claude", A, words(&["--header", "x-api-key: v"]), "--header"),
+            ("codex", B, words(&["--api-key", "v"]), "--api-key"),
+            ("claude", A, words(&["--foo", "bar", "--verbose"]), "--foo"),
+            ("codex", B, words(&["-vs", "read-only"]), "-v"),
+            ("codex", B, words(&["--sandb", "read-only"]), "--sandb"),
+        ] {
+            let (tab, notes) = capture_one(kind, id, &args);
+            assert!(matches!(tab, Tab::Terminal { .. }), "{args:?}");
+            assert_eq!(
+                notes,
+                [format!("Beta › t: left out its agent session: an unknown flag {name}; resume it by hand")],
+                "{args:?}"
+            );
+            assert!(!notes[0].contains("x-api-key") && !notes[0].contains("bar"), "{notes:?}");
         }
     }
 

@@ -136,7 +136,10 @@ pub const AGENTS: &[AgentSpec] = &[
 
 // The flags Claude Code and Codex resume with, checked against `claude --help` (2.1.296) and
 // `codex --help` / `codex resume --help` (0.160.0). Arities and the launches that are not sessions
-// follow cmux's `AgentLaunchSanitizer` policies. To restore another flag, add one line here. Mark
+// follow cmux's `AgentLaunchSanitizer` policies. Each table lists every flag of the agent's command
+// line (`dropped` and `skip` lines are known but not restored); a flag missing from it leaves out the
+// session, since what follows it can't be read for certain. To restore another flag, add or change
+// one line here. Mark
 // `.restricting()` every flag that limits the agent (rules, sandboxes, modes, settings): when one
 // can't be kept, the session is left out rather than resumed with fewer limits. `skip` lines are
 // flags that are left out but take a value, so the value is never read as a prompt or a subcommand.
@@ -164,6 +167,7 @@ const CLAUDE_FLAGS: Policy = Policy {
         Flag::switch(&["--restricted"]).restricting(),
         Flag::switch(&["--safe-mode"]).restricting(),
         Flag::switch(&["--disable-slash-commands"]).restricting(),
+        Flag::switch(&["--bare"]).restricting(),
         Flag::switch(&["--dangerously-skip-permissions"]),
         Flag::switch(&["--allow-dangerously-skip-permissions"]),
         Flag::switch(&["--ide"]),
@@ -187,6 +191,31 @@ const CLAUDE_FLAGS: Policy = Policy {
         Flag::skip(&["--teammate-mode"]),
         Flag::skip_many(&["--file"]),
         Flag::skip_many(&["--dangerously-load-development-channels"]),
+        // An optional value: the next word when it is not a flag.
+        Flag::skip(&["--cloud"]),
+        Flag::skip(&["--debug", "-d"]),
+        Flag::skip(&["--from-pr"]),
+        Flag::skip(&["--prompt-suggestions"]),
+        Flag::skip(&["--remote-control"]),
+        Flag::skip(&["--resume", "-r"]),
+        Flag::skip(&["--teleport"]),
+        Flag::skip(&["--worktree", "-w"]),
+        Flag::dropped(&["--ax-screen-reader"]),
+        Flag::dropped(&["--bg", "--background"]),
+        Flag::dropped(&["--brief"]),
+        Flag::dropped(&["--continue", "-c"]),
+        Flag::dropped(&["--desktop"]),
+        Flag::dropped(&["--exclude-dynamic-system-prompt-sections"]),
+        Flag::dropped(&["--fork-session"]),
+        Flag::dropped(&["--forward-subagent-text"]),
+        Flag::dropped(&["--include-hook-events"]),
+        Flag::dropped(&["--include-partial-messages"]),
+        Flag::dropped(&["--replay-user-messages"]),
+        Flag::dropped(&["--tmux"]),
+        Flag::dropped(&["--print", "-p"]),
+        Flag::dropped(&["--no-session-persistence"]),
+        Flag::dropped(&["--help", "-h"]),
+        Flag::dropped(&["--version", "-v"]),
     ],
     commands: &[
         "agents",
@@ -215,7 +244,7 @@ const CLAUDE_FLAGS: Policy = Policy {
         "update",
         "upgrade",
     ],
-    rejects: &["--print", "-p", "--no-session-persistence"],
+    rejects: &["--print", "-p", "--no-session-persistence", "--help", "-h", "--version", "-v"],
     untested: false,
 };
 
@@ -252,6 +281,17 @@ const CODEX_FLAGS: Policy = Policy {
         Flag::skip(&["--remote-auth-token-env"]),
         Flag::skip(&["--local-provider"]),
         Flag::skip_many(&["--image", "-i"]),
+        Flag::switch(&["--approve-for-me"]).restricting(),
+        Flag::dropped(&["--strict-config"]),
+        Flag::dropped(&["--dangerously-bypass-hook-trust"]),
+        Flag::dropped(&["--worktree"]),
+        Flag::dropped(&["--no-alt-screen"]),
+        Flag::dropped(&["--no-daemon"]),
+        Flag::dropped(&["--last"]),
+        Flag::dropped(&["--all"]),
+        Flag::dropped(&["--include-non-interactive"]),
+        Flag::dropped(&["--help", "-h"]),
+        Flag::dropped(&["--version", "-V"]),
     ],
     // `codex --help`'s subcommands other than `resume` and `fork` (taken out with their session).
     commands: &[
@@ -284,7 +324,7 @@ const CODEX_FLAGS: Policy = Policy {
         "unarchive",
         "update",
     ],
-    rejects: &[],
+    rejects: &["--help", "-h", "--version", "-V"],
     untested: false,
 };
 
@@ -675,14 +715,18 @@ mod tests {
     #[test]
     fn restoring_old_snapshots_drops_flags_now_left_out() {
         let claude = find("claude").unwrap();
-        let old = strings(&["--model", "opus", "--mcp-config", r#"{"env":{"X":"y"}}"#, "--api-key", "v", "--verbose"]);
+        let old = strings(&["--model", "opus", "--mcp-config", r#"{"env":{"X":"y"}}"#, "--name", "n", "--verbose"]);
         assert_eq!(claude.resume_command(A, &old).unwrap(), format!("claude --resume {A} --model opus --verbose"));
+        // A flag the table doesn't know, or a cluster hiding a restriction: not resumed.
+        assert_eq!(claude.resume_command(A, &strings(&["--api-key", "v"])), None);
+        let codex = find("codex").unwrap();
+        assert_eq!(codex.resume_command(A, &strings(&["-vs", "read-only"])), None);
+        assert_eq!(codex.resume_command(A, &strings(&["--sandbox="])), None);
         // A restricting flag that can't be kept loses the session: no command.
         let ghp = format!("ghp_{}", "a1".repeat(18));
         assert_eq!(claude.resume_command(A, &strings(&["--disallowedTools", &format!("Bash({ghp})")])), None);
         assert_eq!(claude.resume_command(A, &strings(&["--settings", r#"{"permissions":{}}"#])), None);
         assert_eq!(claude.resume_command(A, &strings(&["--permission-mode", "plan mode"])), None);
-        let codex = find("codex").unwrap();
         let old = strings(&["-c", "mcp_servers.x.env={T=\"v\"}", "-m", "o3", "--remote", "ws://h:1"]);
         assert_eq!(codex.resume_command(A, &old).unwrap(), format!("codex resume {A} -m o3"));
     }

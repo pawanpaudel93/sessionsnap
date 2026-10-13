@@ -1,9 +1,12 @@
-//! Which saved launch flags are kept: each agent lists the flags it allows (in the agent registry,
-//! `adapters::agents::registry`), and every other flag is left out. A kept flag's values are still
-//! checked: by their kind, and for the few credential formats that can be told apart for certain.
+//! Which saved launch flags are kept. Each agent's policy (in the agent registry,
+//! `adapters::agents::registry`) lists every flag its command line knows, with its arity, and marks
+//! the few that are saved; every other flag is left out. A kept flag's values are still checked: by
+//! their kind, and for the few credential formats that can be told apart for certain.
 //!
-//! Flag arities and the launches that can't be resumed follow cmux's `AgentLaunchSanitizer`
-//! policies, checked against `claude --help` and `codex --help`.
+//! The parser never guesses: a flag outside the table (its arity unknown, so whatever follows is
+//! ambiguous), or a flag that limits the agent and can't be kept exactly as given, leaves out the
+//! whole session. Flag arities and the launches that can't be resumed follow cmux's
+//! `AgentLaunchSanitizer` policies, checked against `claude --help` and `codex --help`.
 
 /// What a listed flag takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,15 +18,24 @@ pub enum Value {
     Word,
     /// A file or folder path; a value starting with `{` or `[` (inline JSON) is refused.
     Path,
-    /// Permission rules (`Bash(git:*)`, `Edit`).
+    /// Permission rules (`Bash(git:*)`, `Edit`), not empty.
     Rules,
     /// `key=value` for the listed keys only, the value `Word`-shaped (optionally in double quotes).
     /// A key ending in `.` stands for every key under it (`features.`). `restricting` keys limit
     /// the agent: one that can't be saved leaves out the session.
     ConfigKey { keys: &'static [&'static str], restricting: &'static [&'static str] },
-    /// Not restored, but known to take a value: the value goes with the flag (and is never read as
-    /// a prompt or a subcommand).
+    /// Not restored, but known to take a value (or an optional one): the value goes with the flag,
+    /// and is never read as a prompt, a subcommand or another flag.
     Skip,
+    /// Not restored, and takes no value.
+    Dropped,
+}
+
+impl Value {
+    /// The flag never takes the next word as its value.
+    fn is_switch(self) -> bool {
+        matches!(self, Value::Switch | Value::Dropped)
+    }
 }
 
 /// One flag an agent knows: its spellings, what it takes and whether it is restored.
@@ -75,12 +87,16 @@ impl Flag {
     pub const fn skip_many(names: &'static [&'static str]) -> Flag {
         Flag { names, value: Value::Skip, many: true, restricts: false }
     }
+    pub const fn dropped(names: &'static [&'static str]) -> Flag {
+        Flag { names, value: Value::Dropped, many: false, restricts: false }
+    }
 }
 
 /// An agent's flag policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Policy {
-    /// The flags it knows; only those that are not `Value::Skip` are kept.
+    /// Every flag the agent's command line knows (all spellings, with arities); only those that are
+    /// not `Value::Skip` or `Value::Dropped` are kept. A flag not listed loses the session.
     pub flags: &'static [Flag],
     /// Subcommands that are not a session (`claude mcp …`): such a launch is not resumed.
     pub commands: &'static [&'static str],
@@ -104,6 +120,8 @@ pub enum Lost {
     Restriction(String),
     /// The agent's flags are untested, and the launch has some.
     UntestedFlags,
+    /// A flag outside the agent's table (named here): what follows it can't be read for certain.
+    UnknownFlag(String),
     /// The launch is a subcommand or a one-shot run (named here), not a session.
     NotASession(String),
 }
@@ -128,6 +146,7 @@ impl FlagCheck {
                 format!("a restricting flag ({name}) could not be saved; resume it by hand")
             }
             Lost::UntestedFlags => format!("sessionsnap can't restore {agent}'s launch flags yet; resume it by hand"),
+            Lost::UnknownFlag(name) => format!("an unknown flag {name}; resume it by hand"),
             Lost::NotASession(what) => format!("{what} is not a session that can be resumed"),
         })
     }
@@ -153,19 +172,28 @@ impl FlagCheck {
     }
 }
 
+/// One flag as given: its flag, the name it was written with, its values, and how to write it
+/// again (`whole`: the original word, when the flag and an inline value were one word of their own).
+struct Occurrence<'a> {
+    flag: &'static Flag,
+    name: String,
+    values: Vec<&'a str>,
+    whole: Option<&'a str>,
+}
+
 /// `args` filtered through `policy`: listed flags whose values pass their checks are kept (in their
-/// saved form, `--flag value`, `--flag=value` or `-svalue`); everything else is left out. The
-/// session is lost (see `Lost`) when a restricting flag or value can't be kept, when an untested
-/// agent's launch has any flag, or for a subcommand in `policy.commands` or a flag in
+/// saved form, `--flag value`, `--flag=value` or `-svalue`; a flag from a cluster such as `-xs v`
+/// as `-s v`); everything else is left out. The session is lost (see `Lost`) when a restricting
+/// flag or value is not kept exactly as given, when a flag is not in the agent's table, when an
+/// untested agent's launch has any flag, or for a subcommand in `policy.commands` or a flag in
 /// `policy.rejects`.
 pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
     let mut out = FlagCheck::default();
     let find = |name: &str| policy.flags.iter().find(|f| f.names.contains(&name));
-    let lose = |out: &mut FlagCheck, lost: Lost| {
-        out.lost.get_or_insert(lost);
-    };
+    let mut occurrences: Vec<Occurrence> = vec![];
     let mut seen_word = false;
     let mut i = 0;
+    // Pass 1: read the words as the agent's parser would (clap and commander agree on these rules).
     while i < args.len() {
         let a = args[i].as_str();
         i += 1;
@@ -183,80 +211,106 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
         }
         if policy.untested {
             lose(&mut out, Lost::UntestedFlags);
-        }
-        let (name, inline) = split_flag(a, |n| find(n).is_some_and(|f| f.value != Value::Switch));
-        if policy.rejects.contains(&name) {
-            lose(&mut out, Lost::NotASession(format!("a launch with {name}")));
-        }
-        let Some(flag) = find(name) else {
-            note_name(&mut out, name);
+            note_name(&mut out, a.split('=').next().unwrap_or(a));
             continue;
-        };
-        if flag.value == Value::Switch {
-            match inline {
-                None => out.kept.push(a.to_string()),
-                Some(_) => {
+        }
+        // The flags in this word, each with the value written into the word, if any.
+        let mut parts: Vec<(&'static Flag, String, Option<&str>)> = vec![];
+        if a.starts_with("--") {
+            let (name, inline) = match a.split_once('=') {
+                Some((n, v)) => (n, Some(v)),
+                None => (a, None),
+            };
+            if policy.rejects.contains(&name) {
+                lose(&mut out, Lost::NotASession(format!("a launch with {name}")));
+            }
+            match find(name) {
+                Some(f) => parts.push((f, name.to_string(), inline)),
+                None => {
+                    lose(&mut out, Lost::UnknownFlag(shown_name(name)));
                     note_name(&mut out, name);
-                    if flag.restricts {
-                        lose(&mut out, Lost::Restriction(name.to_string()));
+                }
+            }
+        } else {
+            // `-x`, `-xvalue`, `-x=value`, or a cluster of short flags `-abc` / `-abvalue`.
+            let mut rest = &a[1..];
+            while let Some(c) = rest.chars().next() {
+                let name = format!("-{c}");
+                rest = &rest[c.len_utf8()..];
+                if policy.rejects.contains(&name.as_str()) {
+                    lose(&mut out, Lost::NotASession(format!("a launch with {name}")));
+                }
+                let Some(f) = find(&name) else {
+                    lose(&mut out, Lost::UnknownFlag(shown_name(&name)));
+                    note_name(&mut out, &name);
+                    break;
+                };
+                if f.value.is_switch() {
+                    parts.push((f, name, None));
+                    continue;
+                }
+                let attached = rest.strip_prefix('=').unwrap_or(rest);
+                parts.push((f, name, (!rest.is_empty()).then_some(attached)));
+                break;
+            }
+        }
+        let alone = parts.len() == 1;
+        let last = parts.len().saturating_sub(1);
+        for (n, (flag, name, inline)) in parts.into_iter().enumerate() {
+            let values: Vec<&str> = match inline {
+                Some(v) => vec![v],
+                None if flag.value.is_switch() || n != last => vec![],
+                None => {
+                    let start = i;
+                    while i < args.len() && !args[i].starts_with('-') && (flag.many || i == start) {
+                        i += 1;
                     }
+                    args[start..i].iter().map(String::as_str).collect()
                 }
-            }
-            continue;
+            };
+            let whole = (alone && (inline.is_some() || flag.value.is_switch())).then_some(a);
+            occurrences.push(Occurrence { flag, name, values, whole });
         }
-        let values: Vec<&str> = match inline {
-            Some(v) => vec![v],
-            None => {
-                let start = i;
-                while i < args.len() && !args[i].starts_with('-') && (flag.many || i == start) {
-                    i += 1;
-                }
-                args[start..i].iter().map(String::as_str).collect()
-            }
+    }
+    // Pass 2: keep what is allowed and fits; every restricting flag must come out as it went in.
+    for o in occurrences {
+        let restricts = o.flag.restricts || o.values.iter().any(|v| restricting_key(o.flag.value, v));
+        let kept: Vec<&str> = match o.flag.value {
+            Value::Skip | Value::Dropped | Value::Switch => vec![],
+            kind => o.values.iter().copied().filter(|v| fits(kind, v) && !holds_credential(v)).collect(),
         };
-        if flag.value == Value::Skip {
-            note_name(&mut out, name);
-            continue;
-        }
-        let mut good = vec![];
-        for v in &values {
-            if fits(flag.value, v) && !holds_credential(v) {
-                good.push(*v);
-            } else if flag.restricts || restricting_key(flag.value, v) {
-                lose(&mut out, Lost::Restriction(name.to_string()));
+        let keep_switch = o.flag.value == Value::Switch && o.values.is_empty();
+        let whole = keep_switch || (!kept.is_empty() && kept.len() == o.values.len());
+        if !whole {
+            note_name(&mut out, &o.name);
+            if restricts {
+                lose(&mut out, Lost::Restriction(o.name.clone()));
             }
         }
-        if good.len() < values.len() || values.is_empty() {
-            note_name(&mut out, name);
-            if values.is_empty() && flag.restricts {
-                lose(&mut out, Lost::Restriction(name.to_string()));
-            }
-        }
-        if good.is_empty() {
-            continue;
-        }
-        match inline {
-            Some(_) => out.kept.push(a.to_string()),
-            None => {
-                out.kept.push(name.to_string());
-                out.kept.extend(good.iter().map(|v| v.to_string()));
+        if keep_switch {
+            out.kept.push(o.whole.unwrap_or(&o.name).to_string());
+        } else if !kept.is_empty() {
+            match o.whole {
+                Some(word) if whole => out.kept.push(word.to_string()),
+                _ => {
+                    out.kept.push(o.name.clone());
+                    out.kept.extend(kept.iter().map(|v| v.to_string()));
+                }
             }
         }
     }
     out
 }
 
-/// A flag word's name and inline value: `--name=value`, `-n=value`, or `-nvalue` when `-n` is a
-/// known flag that takes a value (`takes_value`).
-fn split_flag(a: &str, takes_value: impl Fn(&str) -> bool) -> (&str, Option<&str>) {
-    if !a.starts_with("--") && a.len() > 2 && a.is_char_boundary(2) && takes_value(&a[..2]) {
-        let rest = &a[2..];
-        return (&a[..2], Some(rest.strip_prefix('=').unwrap_or(rest)));
-    }
-    match a.split_once('=') {
-        Some((n, v)) => (n, Some(v)),
-        None => (a, None),
-    }
+fn lose(out: &mut FlagCheck, lost: Lost) {
+    out.lost.get_or_insert(lost);
+}
+
+/// How a flag's name is shown in a note: never anything that could be a value.
+fn shown_name(name: &str) -> String {
+    let mut out = FlagCheck::default();
+    note_name(&mut out, name);
+    out.left_out.pop().unwrap_or_default()
 }
 
 /// `v` is a `key=value` (or a bare key) of a restricting config key.
@@ -298,13 +352,14 @@ fn note_name(out: &mut FlagCheck, name: &str) {
 /// `v` has the shape `kind` asks for.
 fn fits(kind: Value, v: &str) -> bool {
     match kind {
-        Value::Switch | Value::Skip => false,
+        Value::Switch | Value::Skip | Value::Dropped => false,
         Value::Word => is_word(v),
         Value::Path => {
             let t = v.trim_start();
             !t.is_empty() && !t.starts_with('{') && !t.starts_with('[')
         }
-        Value::Rules => true,
+        // An empty rule (`--tools ""`, `--disallowedTools=`) can't be told from a lost value.
+        Value::Rules => !v.is_empty(),
         Value::ConfigKey { keys, restricting } => v.split_once('=').is_some_and(|(k, value)| {
             let unquoted = value.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(value);
             (key_in(keys, k) || key_in(restricting, k)) && is_word(unquoted)
@@ -385,6 +440,8 @@ mod tests {
             Flag::switch(&["--strict"]).restricting(),
             Flag::config(&["-c"], &["model"], &["sandbox_mode", "features."]),
             Flag::skip(&["--name"]),
+            Flag::dropped(&["--print"]),
+            Flag::dropped(&["-v"]),
         ],
         commands: &["mcp"],
         rejects: &["--print"],
@@ -439,9 +496,13 @@ mod tests {
 
     #[test]
     fn notes_name_flags_never_values() {
+        let c = check(&words(&["--name=abc", "--model", "a b", "y"]), &POLICY);
+        assert_eq!(c.left_out, ["--name", "--model"]);
+        assert_eq!(c.note("x").unwrap(), "left out flags it does not restore: --name, --model (and 1 other argument)");
+        // Unknown flags lose the session, and are named the same way.
         let c = check(&words(&["--token=abc", "-kSECRET", "--x", "y"]), &POLICY);
         assert_eq!(c.left_out, ["--token", "-k", "--x"]);
-        assert_eq!(c.note("x").unwrap(), "left out flags it does not restore: --token, -k, --x (and 1 other argument)");
+        assert_eq!(c.note("x").unwrap(), "left out its agent session: an unknown flag --token; resume it by hand");
         let ghp = format!("--ghp_{}", "a1".repeat(18));
         assert_eq!(check(&[ghp], &POLICY).left_out, ["a flag"]);
         assert_eq!(check(&words(&["--a b=1"]), &POLICY).left_out, ["a flag"]);
@@ -504,6 +565,87 @@ mod tests {
         for args in [words(&["--model", "a b"]), words(&["-c", "other.x={}"]), words(&["--add-dir", "[x]"])] {
             let c = check(&args, &POLICY);
             assert_eq!((c.lost, c.left_out.len()), (None, 1), "{args:?}");
+        }
+    }
+
+    /// The parser reads words as clap and commander do, and never guesses.
+    #[test]
+    fn reads_words_as_the_agent_does() {
+        // A cluster of known shorts: `-v` is left out, `-s read-only` kept.
+        let c = check(&words(&["-vs", "read-only"]), &POLICY);
+        assert_eq!((c.kept, c.left_out, c.lost), (words(&["-s", "read-only"]), words(&["-v"]), None));
+        // `-vsread-only` and `-vs=read-only` alike.
+        for w in ["-vsread-only", "-vs=read-only"] {
+            assert_eq!(check(&words(&[w]), &POLICY).kept, words(&["-s", "read-only"]), "{w}");
+        }
+        // An unknown letter: what follows can't be read for certain.
+        let c = check(&words(&["-xs", "read-only"]), &POLICY);
+        assert_eq!(c.lost, Some(Lost::UnknownFlag("-x".into())));
+        // An unknown long flag, whatever its value.
+        let c = check(&words(&["--new-flag", "value", "-s", "read-only"]), &POLICY);
+        assert_eq!(c.lost, Some(Lost::UnknownFlag("--new-flag".into())));
+        // A known flag that is left out takes its value with it: the rule after it is kept.
+        let c = check(&words(&["--name", "foo", "--disallowedTools", "X"]), &POLICY);
+        assert_eq!((c.kept, c.lost), (words(&["--disallowedTools", "X"]), None));
+        // After `--` nothing is a flag.
+        let c = check(&words(&["-m", "o3", "--", "--disallowedTools", "X", "--print", "--x"]), &POLICY);
+        assert_eq!((c.kept, c.lost, c.other_words), (words(&["-m", "o3"]), None, 4));
+        // An empty inline value of a restricting flag.
+        for w in ["--sandbox=", "-s=", "--disallowedTools="] {
+            assert!(matches!(check(&words(&[w]), &POLICY).lost, Some(Lost::Restriction(_))), "{w}");
+        }
+    }
+
+    /// Every way a restricting flag can fail to come out as it went in loses the session.
+    #[test]
+    fn every_dropped_restriction_is_lost() {
+        const P: Policy = Policy {
+            flags: &[
+                Flag::word(&["--mode", "-o"]).restricting(),
+                Flag::path(&["--settings"]).restricting(),
+                Flag::rules(&["--deny"]).restricting(),
+                Flag::switch(&["--strict"]).restricting(),
+                Flag::config(&["-c"], &["model"], &["sandbox_mode"]),
+                Flag::skip(&["--limit"]).restricting(),
+                Flag::dropped(&["--locked"]).restricting(),
+                Flag::switch(&["--verbose", "-V"]),
+            ],
+            commands: &[],
+            rejects: &[],
+            untested: false,
+        };
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        for args in [
+            words(&["--limit", "5"]),
+            words(&["--locked"]),
+            // A value that starts with `-`: no value, for every kind.
+            words(&["--mode", "--verbose"]),
+            words(&["--settings", "-V"]),
+            words(&["--deny", "--verbose"]),
+            words(&["-o"]),
+            // Some values of a many-valued flag pass, some don't.
+            words(&["--deny", "Edit", &format!("Bash({ghp})")]),
+            // A restricting config key with a value that doesn't fit.
+            words(&["-c", "sandbox_mode=a b"]),
+            words(&["-c=sandbox_mode="]),
+            // A switch written with a value.
+            words(&["--strict=false"]),
+            // The second of two copies.
+            words(&["--mode", "plan", "--mode", "two words"]),
+            // Inline JSON for a restricting path.
+            words(&["--settings={}"]),
+            // Inside a cluster.
+            words(&["-Vo"]),
+        ] {
+            assert!(matches!(check(&args, &P).lost, Some(Lost::Restriction(_))), "{args:?}: {:?}", check(&args, &P));
+        }
+        // Kept as given, they keep the session.
+        for args in [
+            words(&["--mode", "plan", "--mode=auto", "-oplan", "-Vo", "plan"]),
+            words(&["--deny", "Edit", "Bash(rm:*)", "--strict", "-c", "sandbox_mode=read-only"]),
+        ] {
+            let c = check(&args, &P);
+            assert_eq!(c.lost, None, "{args:?}");
         }
     }
 
