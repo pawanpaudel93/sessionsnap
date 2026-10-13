@@ -73,8 +73,9 @@ impl Releases for GitHubReleases {
         Ok(if code == 0 { tag_from_url(&url) } else { None })
     }
 
-    /// Downloads with an overall limit: 30 s for a checksum file, 300 s for an archive, so a
-    /// connection that stalls can't hang `update`.
+    /// Downloads with a time limit per try: 30 s for a checksum file, 300 s for an archive, so a
+    /// connection that stalls can't hang `update`. A retry starts only within that time, so the
+    /// whole wait stays under twice the limit.
     fn download(&self, url: &str, dest: &Path) -> Result<()> {
         let dest = dest.to_string_lossy();
         let secs = if url.ends_with(".sha256") { METADATA_SECS } else { ARCHIVE_SECS };
@@ -98,8 +99,8 @@ impl Releases for GitHubReleases {
         match code {
             0 => Ok(()),
             TIMED_OUT => bail!(
-                "download timed out after {secs} s (or couldn't connect within {CONNECT_SECS} s): {url}; check \
-                 your connection and run `sessionsnap update` again"
+                "download timed out (limit {secs} s per try, or {CONNECT_SECS} s to connect): {url}; check your \
+                 connection and run `sessionsnap update` again"
             ),
             _ => bail!("download failed (curl exit {code}): {url}"),
         }
@@ -234,9 +235,9 @@ mod checksum_tests {
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let r = GitHubReleases { repo: "o/r".into(), curl: script.display().to_string() };
         let err = r.download("https://x/y.tar.gz", &d.path().join("y")).unwrap_err().to_string();
-        assert!(err.contains("timed out after 300 s") && err.contains("https://x/y.tar.gz"), "{err}");
+        assert!(err.contains("timed out (limit 300 s per try") && err.contains("https://x/y.tar.gz"), "{err}");
         let err = r.download("https://x/y.tar.gz.sha256", &d.path().join("y")).unwrap_err().to_string();
-        assert!(err.contains("timed out after 30 s"), "{err}");
+        assert!(err.contains("timed out (limit 30 s per try"), "{err}");
         let err = r.latest_tag().unwrap_err().to_string();
         assert!(err.contains("can't reach GitHub"), "{err}");
         let calls = std::fs::read_to_string(&log).unwrap();
