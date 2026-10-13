@@ -330,7 +330,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               flag sessionsnap doesn't know at all (not in <code translate="no">claude --help</code>
               or <code translate="no">codex --help</code> as of Claude Code 2.1.296 and Codex 0.160.0)
               leaves out the session, since what follows it can't be read for certain. Short flags may
-              be grouped (<code translate="no">-vs read-only</code>) as the agents allow.
+              be grouped (<code translate="no">-vs read-only</code>) as the agents allow. A Codex
+              <code translate="no">-c</code> key on neither list below also leaves out the session,
+              since it may limit Codex; only <code translate="no">model_*</code>, <code translate="no">hide_agent_reasoning</code>,
+              <code translate="no">show_raw_agent_reasoning</code>, <code translate="no">file_opener</code>
+              and <code translate="no">tui.*</code> are left out with just a note.
             </p>
             <div class="table-wrap">
               <table class="data-table stack">

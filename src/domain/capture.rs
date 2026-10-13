@@ -277,7 +277,7 @@ mod tests {
         let ghp = format!("ghp_{}", "a1".repeat(18));
         let cases: Vec<(&str, Vec<String>, &str, &str)> = vec![
             ("claude", words(&["--mcp-config", r#"{"env":{"X":"y"}}"#]), "--mcp-config", "env"),
-            ("codex", vec!["-c".into(), format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)], "-c", "GITHUB"),
+            ("codex", vec!["-c".into(), format!("model_context_window={ghp}")], "-c", "ghp_"),
             ("claude", words(&["--append-system-prompt", "secret plan"]), "--append-system-prompt", "secret"),
             ("codex", words(&["--remote-auth-token-env", "MY_TOKEN"]), "--remote-auth-token-env", "MY_"),
             ("claude", vec!["--model".into(), format!("opus-{ghp}")], "--model", "ghp_"),
@@ -315,6 +315,18 @@ mod tests {
             );
             assert!(!notes[0].contains("x-api-key") && !notes[0].contains("bar"), "{notes:?}");
         }
+    }
+    /// A Codex `-c` key on no list leaves out the session too; its value is never shown.
+    #[test]
+    fn unlisted_codex_config_keys_leave_out_the_session() {
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        let (tab, notes) =
+            capture_one("codex", B, &["-c".into(), format!(r#"mcp_servers.gh.env={{GITHUB_TOKEN="{ghp}"}}"#)]);
+        assert!(matches!(tab, Tab::Terminal { .. }));
+        assert_eq!(
+            notes,
+            ["Beta › t: left out its agent session: an unlisted Codex -c key mcp_servers.gh.env; resume it by hand"]
+        );
     }
 
     /// A restricting flag that cannot be saved leaves out the whole agent session: resuming

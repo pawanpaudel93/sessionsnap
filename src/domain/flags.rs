@@ -20,10 +20,12 @@ pub enum Value {
     Path,
     /// Permission rules (`Bash(git:*)`, `Edit`), not empty.
     Rules,
-    /// `key=value` for the listed keys only, the value `Word`-shaped (optionally in double quotes).
-    /// A key ending in `.` stands for every key under it (`features.`). `restricting` keys limit
-    /// the agent: one that can't be saved leaves out the session.
-    ConfigKey { keys: &'static [&'static str], restricting: &'static [&'static str] },
+    /// `key=value`: kept for `keys` and `restricting` keys, the value `Word`-shaped (optionally in
+    /// double quotes). An entry ending in `.` or `_` stands for every key starting with it
+    /// (`features.`, `model_`). A `restricting` key limits the agent: one that can't be saved
+    /// leaves out the session. A `neutral` key is left out with a note; a key on no list leaves out
+    /// the session, since it may limit the agent.
+    ConfigKey { keys: &'static [&'static str], restricting: &'static [&'static str], neutral: &'static [&'static str] },
     /// Not restored, but known to take a value (or an optional one): the value goes with the flag,
     /// and is never read as a prompt, a subcommand or another flag.
     Skip,
@@ -74,8 +76,9 @@ impl Flag {
         names: &'static [&'static str],
         keys: &'static [&'static str],
         restricting: &'static [&'static str],
+        neutral: &'static [&'static str],
     ) -> Flag {
-        Flag { names, value: Value::ConfigKey { keys, restricting }, many: false, restricts: false }
+        Flag { names, value: Value::ConfigKey { keys, restricting, neutral }, many: false, restricts: false }
     }
     /// The same flag, marked as limiting the agent (see `restricts`).
     pub const fn restricting(self) -> Flag {
@@ -122,6 +125,8 @@ pub enum Lost {
     UntestedFlags,
     /// A flag outside the agent's table (named here): what follows it can't be read for certain.
     UnknownFlag(String),
+    /// A config flag (named first) set a key on no list (named second), which may limit the agent.
+    UnlistedConfigKey(String, String),
     /// The launch is a subcommand or a one-shot run (named here), not a session.
     NotASession(String),
 }
@@ -147,6 +152,9 @@ impl FlagCheck {
             }
             Lost::UntestedFlags => format!("sessionsnap can't restore {agent}'s launch flags yet; resume it by hand"),
             Lost::UnknownFlag(name) => format!("an unknown flag {name}; resume it by hand"),
+            Lost::UnlistedConfigKey(flag, key) => {
+                format!("an unlisted {agent} {flag} key {key}; resume it by hand")
+            }
             Lost::NotASession(what) => format!("{what} is not a session that can be resumed"),
         })
     }
@@ -274,6 +282,14 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
     }
     // Pass 2: keep what is allowed and fits; every restricting flag must come out as it went in.
     for o in occurrences {
+        if let Value::ConfigKey { keys, restricting, neutral } = o.flag.value {
+            for v in &o.values {
+                let key = config_key(v);
+                if ![keys, restricting, neutral].iter().any(|list| key_in(list, key)) {
+                    lose(&mut out, Lost::UnlistedConfigKey(o.name.clone(), shown_key(key)));
+                }
+            }
+        }
         let restricts = o.flag.restricts || o.values.iter().any(|v| restricting_key(o.flag.value, v));
         let kept: Vec<&str> = match o.flag.value {
             Value::Skip | Value::Dropped | Value::Switch => vec![],
@@ -316,17 +332,29 @@ fn shown_name(name: &str) -> String {
 /// `v` is a `key=value` (or a bare key) of a restricting config key.
 fn restricting_key(kind: Value, v: &str) -> bool {
     match kind {
-        Value::ConfigKey { restricting, .. } => {
-            let key = v.split_once('=').map_or(v, |(k, _)| k).trim();
-            key_in(restricting, key)
-        }
+        Value::ConfigKey { restricting, .. } => key_in(restricting, config_key(v)),
         _ => false,
     }
 }
 
-/// `key` is one of `keys`, or under one ending in `.`.
+/// The key of a `key=value` config value (the whole value when it has no `=`).
+fn config_key(v: &str) -> &str {
+    v.split_once('=').map_or(v, |(k, _)| k).trim()
+}
+
+/// How a config key is shown in a note: a plain dotted name, never anything that could be a value.
+fn shown_key(key: &str) -> String {
+    let plain = !key.is_empty()
+        && key.len() <= 64
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+        && !holds_credential(key);
+    if plain { key.to_string() } else { "(not shown)".to_string() }
+}
+
+/// `key` is one of `keys`, or starts with one ending in `.` or `_`.
 fn key_in(keys: &[&str], key: &str) -> bool {
-    keys.iter().any(|k| *k == key || (k.ends_with('.') && key.starts_with(k) && key.len() > k.len()))
+    keys.iter()
+        .any(|k| *k == key || ((k.ends_with('.') || k.ends_with('_')) && key.starts_with(k) && key.len() > k.len()))
 }
 
 /// Records a left-out flag by its name, never by anything that could be a value: a short flag by
@@ -360,7 +388,7 @@ fn fits(kind: Value, v: &str) -> bool {
         }
         // An empty rule (`--tools ""`, `--disallowedTools=`) can't be told from a lost value.
         Value::Rules => !v.is_empty(),
-        Value::ConfigKey { keys, restricting } => v.split_once('=').is_some_and(|(k, value)| {
+        Value::ConfigKey { keys, restricting, .. } => v.split_once('=').is_some_and(|(k, value)| {
             let unquoted = value.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(value);
             (key_in(keys, k) || key_in(restricting, k)) && is_word(unquoted)
         }),
@@ -438,7 +466,7 @@ mod tests {
             Flag::rules(&["--disallowedTools"]).restricting(),
             Flag::word(&["--sandbox", "-s"]).restricting(),
             Flag::switch(&["--strict"]).restricting(),
-            Flag::config(&["-c"], &["model"], &["sandbox_mode", "features."]),
+            Flag::config(&["-c"], &["model"], &["sandbox_mode", "features."], &["model_", "tui."]),
             Flag::skip(&["--name"]),
             Flag::dropped(&["--print"]),
             Flag::dropped(&["-v"]),
@@ -562,7 +590,7 @@ mod tests {
             assert_eq!(check(&args, &POLICY), FlagCheck { kept: args.clone(), ..Default::default() }, "{args:?}");
         }
         // Neutral flags and config keys are only noted.
-        for args in [words(&["--model", "a b"]), words(&["-c", "other.x={}"]), words(&["--add-dir", "[x]"])] {
+        for args in [words(&["--model", "a b"]), words(&["-c", "model_x={}"]), words(&["--add-dir", "[x]"])] {
             let c = check(&args, &POLICY);
             assert_eq!((c.lost, c.left_out.len()), (None, 1), "{args:?}");
         }
@@ -605,7 +633,7 @@ mod tests {
                 Flag::path(&["--settings"]).restricting(),
                 Flag::rules(&["--deny"]).restricting(),
                 Flag::switch(&["--strict"]).restricting(),
-                Flag::config(&["-c"], &["model"], &["sandbox_mode"]),
+                Flag::config(&["-c"], &["model"], &["sandbox_mode"], &[]),
                 Flag::skip(&["--limit"]).restricting(),
                 Flag::dropped(&["--locked"]).restricting(),
                 Flag::switch(&["--verbose", "-V"]),
@@ -646,6 +674,26 @@ mod tests {
         ] {
             let c = check(&args, &P);
             assert_eq!(c.lost, None, "{args:?}");
+        }
+    }
+
+    /// A `-c` key on no list loses the session (it may limit the agent); a neutral key is only
+    /// noted.
+    #[test]
+    fn unlisted_config_keys_lose_the_session() {
+        for v in ["tools.web_search=false", "sandbox_permissions=[\"x\"]", "noequals", "", "mcp_servers.x.env={T=1}"] {
+            let c = check(&words(&["-c", v]), &POLICY);
+            assert!(matches!(c.lost, Some(Lost::UnlistedConfigKey(..))), "{v}: {c:?}");
+            assert!(c.note("Codex").unwrap().contains("an unlisted Codex -c key"), "{v}");
+        }
+        let c = check(&words(&["-c", "tools.web_search=false"]), &POLICY);
+        assert_eq!(c.lost_reason("Codex").unwrap(), "an unlisted Codex -c key tools.web_search; resume it by hand");
+        // A key that could be a value is not shown.
+        let ghp = format!("ghp_{}", "a1".repeat(18));
+        assert!(!check(&words(&["-c", &format!("{ghp}=1")]), &POLICY).note("Codex").unwrap().contains("ghp_"));
+        for v in ["model_context_window=1000", "tui.theme=dark", "model_x=a b"] {
+            let c = check(&words(&["-c", v]), &POLICY);
+            assert_eq!((c.lost, c.left_out), (None, words(&["-c"])), "{v}");
         }
     }
 

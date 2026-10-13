@@ -252,6 +252,11 @@ const CLAUDE_FLAGS: Policy = Policy {
 const CODEX_CONFIG_KEYS: &[&str] =
     &["model", "model_provider", "model_reasoning_effort", "model_reasoning_summary", "model_verbosity"];
 
+/// `-c` keys that neither limit nor loosen Codex: left out with a note. Any other key leaves out the
+/// session, since it may limit Codex. An entry ending in `.` or `_` covers every key starting with it.
+const CODEX_NEUTRAL_KEYS: &[&str] =
+    &["model_", "hide_agent_reasoning", "show_raw_agent_reasoning", "file_opener", "tui."];
+
 /// The `-c` keys that limit Codex, also restored; one that can't be kept loses the session. A key
 /// ending in `.` stands for every key under it.
 const CODEX_RESTRICTING_KEYS: &[&str] = &[
@@ -271,7 +276,7 @@ const CODEX_FLAGS: Policy = Policy {
         Flag::word(&["--profile", "-p"]).restricting(),
         Flag::word(&["--enable"]),
         Flag::word(&["--disable"]).restricting(),
-        Flag::config(&["--config", "-c"], CODEX_CONFIG_KEYS, CODEX_RESTRICTING_KEYS),
+        Flag::config(&["--config", "-c"], CODEX_CONFIG_KEYS, CODEX_RESTRICTING_KEYS, CODEX_NEUTRAL_KEYS),
         Flag::path(&["--cd", "-C"]),
         Flag::path(&["--add-dir"]),
         Flag::switch(&["--dangerously-bypass-approvals-and-sandbox"]),
@@ -727,8 +732,12 @@ mod tests {
         assert_eq!(claude.resume_command(A, &strings(&["--disallowedTools", &format!("Bash({ghp})")])), None);
         assert_eq!(claude.resume_command(A, &strings(&["--settings", r#"{"permissions":{}}"#])), None);
         assert_eq!(claude.resume_command(A, &strings(&["--permission-mode", "plan mode"])), None);
-        let old = strings(&["-c", "mcp_servers.x.env={T=\"v\"}", "-m", "o3", "--remote", "ws://h:1"]);
+        let old = strings(&["-c", "hide_agent_reasoning=true", "-m", "o3", "--remote", "ws://h:1"]);
         assert_eq!(codex.resume_command(A, &old).unwrap(), format!("codex resume {A} -m o3"));
+        // A `-c` key on no list may limit Codex: not resumed.
+        for key in ["mcp_servers.x.env={T=\"v\"}", "tools.web_search=false", "sandbox_permissions=[\"x\"]"] {
+            assert_eq!(codex.resume_command(A, &strings(&["-c", key, "-m", "o3"])), None, "{key}");
+        }
     }
 
     #[test]

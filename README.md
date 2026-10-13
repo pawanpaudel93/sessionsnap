@@ -169,7 +169,9 @@ record). Only the flags on the agent's allow-list are saved and passed again; ev
 agent's command line knows is left out when you save, and `save` names the flags it left out (never
 their values). A flag sessionsnap doesn't know at all (not in `claude --help` or `codex --help` as
 of Claude Code 2.1.296 and Codex 0.160.0) leaves out the session, since what follows it can't be
-read for certain. Short flags may be grouped (`-vs read-only`) as the agents allow. Supporting
+read for certain. So does a Codex `-c` key on neither list below, since it may limit Codex; only
+`model_*`, `hide_agent_reasoning`, `show_raw_agent_reasoning`, `file_opener` and `tui.*` are left
+out with just a note. Short flags may be grouped (`-vs read-only`) as the agents allow. Supporting
 another flag is one line in `src/adapters/agents/registry.rs`.
 
 | Agent | Flags kept | Restricting (also kept, fail closed) |
