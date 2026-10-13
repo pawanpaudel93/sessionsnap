@@ -122,7 +122,7 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 | Exit code | Meaning |
 |---|---|
 | 0 | ok |
-| 1 | error |
+| 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
 | 2 | cmux unreachable |
 | 3 | nothing to do |
 | 4 | refused |
@@ -170,14 +170,18 @@ agent's command line knows is left out when you save, and `save` names the flags
 their values). A flag sessionsnap doesn't know at all (not in `claude --help` or `codex --help` as
 of Claude Code 2.1.296 and Codex 0.160.0) leaves out the session, since what follows it can't be
 read for certain. So does a Codex `-c` key on neither list below, since it may limit Codex; only
-`model_*`, `hide_agent_reasoning`, `show_raw_agent_reasoning`, `file_opener` and `tui.*` are left
-out with just a note. Short flags may be grouped (`-vs read-only`) as the agents allow. Supporting
+`model_*`, `hide_agent_reasoning`, `show_raw_agent_reasoning`, `file_opener`, `tui.*` and
+`shell_environment_policy.set.*` (environment variables, never saved) are left out with just a note.
+A note shows a `-c` key only up to its first segment (`tools.*`). Claude Code flags missing from
+`claude --help` (hidden flags such as `--permission-prompt-tool` or `--max-turns`, and the teammate
+flags cmux passes to Claude Code teams, such as `--agent-id` or `--plan-mode-required`) leave out the
+session, so teammate tabs are not restored. Short flags may be grouped (`-vs read-only`) as the agents allow. Supporting
 another flag is one line in `src/adapters/agents/registry.rs`.
 
 | Agent | Flags kept | Restricting (also kept, fail closed) |
 |---|---|---|
-| Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--agents`, `--plugin-dir`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`, `--settings` (path only), `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands`, `--bare` |
-| Codex | `--model`/`-m`, `--enable`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.*` |
+| Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`; `--settings`, `--agents`, `--plugin-dir` (paths only: inline JSON leaves out the session); `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands`, `--bare` |
+| Codex | `--model`/`-m`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `model_providers.*`, `shell_environment_policy.inherit`/`.exclude`/`.include_only`/`.ignore_default_excludes` |
 | Every other agent | none: a session started with any flag is left out | every flag |
 
 Both `--flag value` and `--flag=value` work. A kept flag's values are checked too:
@@ -187,22 +191,30 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
 - a path flag (`--settings`, `--mcp-config`, `--add-dir`, …) must hold a path: inline JSON
   (a value starting with `{` or `[`) is left out;
 - no value may hold a credential in a format that can be told for certain: a token with a known
-  prefix (`sk-ant-`, `sk-proj-`, GitHub `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack
-  `xox…-`, GitLab `glpat-`, AWS `AKIA` plus 16, Google `AIza` plus 35), a JWT, or a URL with a
-  password (`scheme://user:pass@host`).
+  prefix (`sk-ant-`, `sk-proj-`, `sk-svcacct-`, `sk-admin-`, Stripe `sk_live_`/`rk_live_`, GitHub
+  `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…-`/`xapp-`, GitLab `glpat-`, Hugging
+  Face `hf_`, npm `npm_`, AWS `AKIA`/`ASIA` plus 16, Google `AIza` plus 35), a JWT, a URL with a
+  password (`scheme://user:pass@host`), or `Bearer <token>` / `Authorization: <value>`.
 
 A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
 the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
 saved (a value of the wrong shape, a credential in it, a missing value, a `-c` key of a restricting
 family with an unexpected value), the tab's agent session is left out. The tab is saved as a plain
 terminal tab and `save` says "left out its agent session: a restricting flag (`<name>`) could not
-be saved; resume it by hand", because resuming without it would allow more than you did. A launch
+be saved; resume it by hand", because resuming without it would allow more than you did.
+
+**Caveat (cmux 0.65 and later):** cmux's Claude Code wrapper records the launch without your
+`--settings` (it merges that file into its own hook settings), so sessionsnap never sees it, and
+restrictions in a settings file are not restored. Resume such sessions by hand, or pass the
+restrictions with other flags (`--disallowedTools`, `--permission-mode`). Codex launches are
+recorded as you typed them. A launch
 that is not a session —
 Claude Code with `--print`/`-p` or `--no-session-persistence`, or a subcommand such as `claude mcp`
 — is left out the same way.
 
-Restore applies the same lists and rules, so a snapshot saved by an older sessionsnap never passes
-a flag that is no longer allowed, and a tab whose restricting flag can't be passed again (or an
+Loading a snapshot applies the same lists and rules (for `show`, the web UI, diffs, saves and
+restore), so a snapshot saved by an older sessionsnap never shows or passes a flag that is no longer
+allowed, and a tab whose restricting flag can't be passed again (or an
 untested agent's tab with flags) is not resumed: it opens as a plain shell in a new workspace, or is
 skipped in an open one, with the reason.
 

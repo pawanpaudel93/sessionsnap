@@ -333,8 +333,12 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               be grouped (<code translate="no">-vs read-only</code>) as the agents allow. A Codex
               <code translate="no">-c</code> key on neither list below also leaves out the session,
               since it may limit Codex; only <code translate="no">model_*</code>, <code translate="no">hide_agent_reasoning</code>,
-              <code translate="no">show_raw_agent_reasoning</code>, <code translate="no">file_opener</code>
-              and <code translate="no">tui.*</code> are left out with just a note.
+              <code translate="no">show_raw_agent_reasoning</code>, <code translate="no">file_opener</code>,
+              <code translate="no">tui.*</code> and <code translate="no">shell_environment_policy.set.*</code>
+              (environment variables, never saved) are left out with just a note. Claude Code flags
+              missing from <code translate="no">claude --help</code> (hidden flags, and the teammate
+              flags cmux passes to Claude Code teams) leave out the session, so teammate tabs are not
+              restored.
             </p>
             <div class="table-wrap">
               <table class="data-table stack">
@@ -342,8 +346,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><th scope="col">Agent</th><th scope="col">Flags kept</th><th scope="col">Restricting (also kept, fail closed)</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>Claude Code</td><td><code translate="no">--model</code>, <code translate="no">--fallback-model</code>, <code translate="no">--effort</code>, <code translate="no">--betas</code>, <code translate="no">--allowedTools</code>, <code translate="no">--allowed-tools</code>; <code translate="no">--add-dir</code>, <code translate="no">--mcp-config</code>, <code translate="no">--agents</code>, <code translate="no">--plugin-dir</code>, <code translate="no">--append-system-prompt-file</code>, <code translate="no">--system-prompt-file</code> (paths only); <code translate="no">--dangerously-skip-permissions</code>, <code translate="no">--allow-dangerously-skip-permissions</code>, <code translate="no">--ide</code>, <code translate="no">--verbose</code>, <code translate="no">--chrome</code>, <code translate="no">--no-chrome</code></td><td><code translate="no">--permission-mode</code>, <code translate="no">--agent</code>, <code translate="no">--setting-sources</code>, <code translate="no">--max-budget-usd</code>, <code translate="no">--disallowedTools</code>, <code translate="no">--disallowed-tools</code>, <code translate="no">--tools</code>, <code translate="no">--settings</code> (path only), <code translate="no">--strict-mcp-config</code>, <code translate="no">--restricted</code>, <code translate="no">--safe-mode</code>, <code translate="no">--disable-slash-commands</code>, <code translate="no">--bare</code></td></tr>
-                  <tr><td>Codex</td><td><code translate="no">--model</code>, <code translate="no">-m</code>, <code translate="no">--enable</code>, <code translate="no">--cd</code>, <code translate="no">-C</code>, <code translate="no">--add-dir</code>, <code translate="no">--dangerously-bypass-approvals-and-sandbox</code>, <code translate="no">--search</code>, <code translate="no">--oss</code>; <code translate="no">-c</code> for <code translate="no">model</code>, <code translate="no">model_provider</code>, <code translate="no">model_reasoning_effort</code>, <code translate="no">model_reasoning_summary</code>, <code translate="no">model_verbosity</code></td><td><code translate="no">--sandbox</code>, <code translate="no">-s</code>, <code translate="no">--ask-for-approval</code>, <code translate="no">-a</code>, <code translate="no">--profile</code>, <code translate="no">-p</code>, <code translate="no">--disable</code>, <code translate="no">--approve-for-me</code>; <code translate="no">-c</code> for <code translate="no">approval_policy</code>, <code translate="no">sandbox_mode</code>, <code translate="no">profile</code>, <code translate="no">sandbox_workspace_write.*</code>, <code translate="no">features.*</code>, <code translate="no">shell_environment_policy.*</code></td></tr>
+                  <tr><td>Claude Code</td><td><code translate="no">--model</code>, <code translate="no">--fallback-model</code>, <code translate="no">--effort</code>, <code translate="no">--betas</code>, <code translate="no">--allowedTools</code>, <code translate="no">--allowed-tools</code>; <code translate="no">--add-dir</code>, <code translate="no">--mcp-config</code>, <code translate="no">--append-system-prompt-file</code>, <code translate="no">--system-prompt-file</code> (paths only); <code translate="no">--dangerously-skip-permissions</code>, <code translate="no">--allow-dangerously-skip-permissions</code>, <code translate="no">--ide</code>, <code translate="no">--verbose</code>, <code translate="no">--chrome</code>, <code translate="no">--no-chrome</code></td><td><code translate="no">--permission-mode</code>, <code translate="no">--agent</code>, <code translate="no">--setting-sources</code>, <code translate="no">--max-budget-usd</code>, <code translate="no">--disallowedTools</code>, <code translate="no">--disallowed-tools</code>, <code translate="no">--tools</code>; <code translate="no">--settings</code>, <code translate="no">--agents</code>, <code translate="no">--plugin-dir</code> (paths only: inline JSON leaves out the session); <code translate="no">--strict-mcp-config</code>, <code translate="no">--restricted</code>, <code translate="no">--safe-mode</code>, <code translate="no">--disable-slash-commands</code>, <code translate="no">--bare</code></td></tr>
+                  <tr><td>Codex</td><td><code translate="no">--model</code>, <code translate="no">-m</code>, <code translate="no">--cd</code>, <code translate="no">-C</code>, <code translate="no">--add-dir</code>, <code translate="no">--dangerously-bypass-approvals-and-sandbox</code>, <code translate="no">--search</code>, <code translate="no">--oss</code>; <code translate="no">-c</code> for <code translate="no">model</code>, <code translate="no">model_provider</code>, <code translate="no">model_reasoning_effort</code>, <code translate="no">model_reasoning_summary</code>, <code translate="no">model_verbosity</code></td><td><code translate="no">--sandbox</code>, <code translate="no">-s</code>, <code translate="no">--ask-for-approval</code>, <code translate="no">-a</code>, <code translate="no">--profile</code>, <code translate="no">-p</code>, <code translate="no">--enable</code>, <code translate="no">--disable</code>, <code translate="no">--approve-for-me</code>; <code translate="no">-c</code> for <code translate="no">approval_policy</code>, <code translate="no">sandbox_mode</code>, <code translate="no">profile</code>, <code translate="no">sandbox_workspace_write.*</code>, <code translate="no">features.*</code>, <code translate="no">model_providers.*</code>, <code translate="no">shell_environment_policy.inherit</code>, <code translate="no">shell_environment_policy.exclude</code>, <code translate="no">shell_environment_policy.include_only</code>, <code translate="no">shell_environment_policy.ignore_default_excludes</code></td></tr>
                   <tr><td>Every other agent</td><td>none: a session started with any flag is left out</td><td>every flag</td></tr>
                 </tbody>
               </table>
@@ -355,7 +359,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <ul>
               <li>a name or mode must be one word of letters, digits and <code translate="no">-_.:/@,</code>, at most 100 characters;</li>
               <li>a path flag must hold a path: inline JSON (a value starting with <code translate="no">{</code> or <code translate="no">[</code>) is left out;</li>
-              <li>no value may hold a credential in a format that can be told for certain: a token with a known prefix (<code translate="no">sk-ant-</code>, <code translate="no">sk-proj-</code>, <code translate="no">ghp_</code>, <code translate="no">gho_</code>, <code translate="no">ghu_</code>, <code translate="no">ghs_</code>, <code translate="no">ghr_</code>, <code translate="no">github_pat_</code>, <code translate="no">xox…-</code>, <code translate="no">glpat-</code>, AWS <code translate="no">AKIA</code> plus 16, Google <code translate="no">AIza</code> plus 35), a JWT, or a URL with a password (<code translate="no">scheme://user:pass@host</code>).</li>
+              <li>no value may hold a credential in a format that can be told for certain: a token with a known prefix (<code translate="no">sk-ant-</code>, <code translate="no">sk-proj-</code>, <code translate="no">sk-svcacct-</code>, <code translate="no">sk-admin-</code>, <code translate="no">sk_live_</code>, <code translate="no">rk_live_</code>, <code translate="no">hf_</code>, <code translate="no">npm_</code>, <code translate="no">xapp-</code>, <code translate="no">ghp_</code>, <code translate="no">gho_</code>, <code translate="no">ghu_</code>, <code translate="no">ghs_</code>, <code translate="no">ghr_</code>, <code translate="no">github_pat_</code>, <code translate="no">xox…-</code>, <code translate="no">glpat-</code>, AWS <code translate="no">AKIA</code>/<code translate="no">ASIA</code> plus 16, Google <code translate="no">AIza</code> plus 35), a JWT, a URL with a password (<code translate="no">scheme://user:pass@host</code>), or <code translate="no">Bearer &lt;token&gt;</code> / <code translate="no">Authorization: &lt;value&gt;</code>.</li>
             </ul>
             <p>
               A value that fails is left out; a flag left with no value goes too, with a note. A flag
@@ -363,14 +367,17 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               its values, can't be saved, the tab's agent session is left out (saved as a plain
               terminal tab, and <code translate="no">save</code> says to resume it by hand): resuming
               without it would allow more than you did. An untested agent's session started with any
-              flag is left out the same way. A
+              flag is left out the same way. <strong>Caveat (cmux 0.65 and later):</strong> cmux's
+              Claude Code wrapper records the launch without your <code translate="no">--settings</code>,
+              so restrictions in a settings file are not restored; resume such sessions by hand, or
+              pass the restrictions with other flags. A
               launch that is not a session (Claude Code with <code translate="no">--print</code>/<code translate="no">-p</code> or
               <code translate="no">--no-session-persistence</code>, or a subcommand such as <code translate="no">claude mcp</code>) is left out
               the same way.
             </p>
             <p>
-              Restore applies the same lists and rules, so an older snapshot never passes a flag that
-              is no longer allowed, and a tab whose restricting flag can't be passed again is not
+              Loading a snapshot applies the same lists and rules, so an older snapshot never shows
+              or passes a flag that is no longer allowed, and a tab whose restricting flag can't be passed again is not
               resumed: it opens as a plain shell in a new workspace, or is skipped in an open one,
               with the reason. The tokens that pick another session are taken out first: the agent's
               own resume words and resume flags with the old ID, its continue flag, Claude Code's
@@ -434,7 +441,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               When some restore steps fail, <code translate="no">restore</code> and
               <code translate="no">apply</code> exit 1 with the normal result (<code translate="no">failed</code>
-              and <code translate="no">steps[].error</code>), not the error object. Argument errors print
+              and <code translate="no">steps[].error</code>), not the error object; so does
+              <code translate="no">uninstall</code> (a step with <code translate="no">status: "failed"</code>). Argument errors print
               plain text and exit 1.
             </p>
             <div class="table-wrap">

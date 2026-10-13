@@ -21,7 +21,7 @@ without flags (`sessionsnap agents --json` lists them).
   `sessionsnap restore <name> --json` (or `sessionsnap recent --restore --json`) without `--yes`: it starts cmux,
   saves the plan and does not apply it; show that plan, then `apply`.
 - When some steps fail, `apply`/`restore` exit 1 with the normal result JSON (`failed: n`,
-  `steps[].error`), not the `{"error": …}` shape. Argument (usage) errors print plain text and exit 1.
+  `steps[].error`), not the `{"error": …}` shape; so does `uninstall` (a step with `status: "failed"`). Argument (usage) errors print plain text and exit 1.
 - Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action.
 - `install-cmux` (the cmux palette) is macOS-only; on Linux it exits 4 and changes nothing.
 - Run `update` (it replaces the sessionsnap binary) or `uninstall` only when the user asks; `update --check` is safe.

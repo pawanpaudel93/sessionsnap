@@ -26,7 +26,7 @@ restoring don't work yet: cmux on Linux is a different app with a different comm
 | Exit code | Meaning |
 |---|---|
 | 0 | ok |
-| 1 | error (also: an `apply` where some steps failed; the result JSON lists them) |
+| 1 | error (also: an `apply`, `restore` or `uninstall` where some steps failed; the result JSON lists them, not `{"error": …}`) |
 | 2 | cmux not running or not reachable |
 | 3 | nothing to do |
 | 4 | refused (needs `--yes`, or would overwrite something) |
