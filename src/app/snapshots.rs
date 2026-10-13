@@ -60,7 +60,7 @@ pub fn commit(
     notes: Vec<String>,
 ) -> Result<Commit> {
     let mut workspaces = workspaces;
-    crate::domain::agents::normalize_kinds(&mut workspaces, &ctx.agents);
+    crate::domain::agents::normalize_tabs(&mut workspaces, &ctx.agents);
     if let Some(p) = previous
         && p.workspaces == workspaces
     {

@@ -275,3 +275,30 @@ fn save_names_the_flags_it_leaves_out() {
     assert_eq!(tabs.last().unwrap()["args"], serde_json::json!(["-m", "o3"]));
     assert!(!shown.json.to_string().contains(value));
 }
+
+/// A snapshot saved before the allow-list (or hand-edited) is filtered when it is loaded: `show`
+/// never displays a flag that is not allowed, and a later save never carries it forward.
+#[test]
+fn old_snapshots_are_filtered_on_load() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let dir = env.dir.path().join("store/snapshots/work");
+    let file = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    // Built at runtime so secret scanners don't flag the source.
+    let ghp = format!("ghp_{}", "a1".repeat(18));
+    let inline = format!(r#"{{"env":{{"T":"{ghp}"}}}}"#);
+    v["workspaces"].as_array_mut().unwrap().push(serde_json::json!({"name": "Old", "cwd": "/w/o", "tabs": [
+        {"type": "agent", "title": "a", "cwd": "/w/o", "agent": "claude", "sessionId": A,
+         "args": ["--mcp-config", inline, "--model", "opus"]},
+        {"type": "agent", "title": "b", "cwd": "/w/o", "agent": "claude", "sessionId": C,
+         "args": ["--disallowedTools", format!("Bash(x {ghp})")]},
+    ]}));
+    std::fs::write(&file, serde_json::to_string(&v).unwrap()).unwrap();
+    let shown = env.run(&["show", "work", "--json"]).unwrap();
+    assert!(!shown.json.to_string().contains(&ghp), "{}", shown.json);
+    let old = &shown.json["version"]["workspaces"][2]["tabs"];
+    assert_eq!(old[0]["args"], serde_json::json!(["--model", "opus"]));
+    // The deny rule can't be kept: the tab is a plain terminal, as a save today would make it.
+    assert_eq!(old[1]["type"], "terminal", "{old}");
+}

@@ -65,7 +65,7 @@ pub fn load_normalized(
     version: Option<u32>,
 ) -> anyhow::Result<crate::domain::model::Version> {
     let mut v = store.load(name, version)?;
-    crate::domain::agents::normalize_kinds(&mut v.workspaces, agents);
+    crate::domain::agents::normalize_tabs(&mut v.workspaces, agents);
     Ok(v)
 }
 

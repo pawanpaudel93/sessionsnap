@@ -8,14 +8,27 @@ use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, SessionInfo};
 
 /// Names every agent tab's agent by its registry kind ("Codex", "agy" → "codex", "antigravity"),
-/// so sessions compare equal however the tab was written. Unknown agents are left as they are.
-pub fn normalize_kinds(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
+/// so sessions compare equal however the tab was written (unknown agents are left as they are),
+/// and keeps only the saved flags the agent allows (`AgentCatalog::check_flags`), so a snapshot
+/// saved before the allow-list, or edited by hand, is never shown or carried forward with flags a
+/// save would leave out today. A tab whose flags lose the session becomes a plain terminal tab, as
+/// a save today makes it. A tab with a control character is left as it is (restore never runs it).
+pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
     for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        if let Tab::Agent { agent, .. } = tab
-            && let Some(kind) = agents.kind_of(agent)
+        if tab.control_field().is_some() {
+            continue;
+        }
+        let Tab::Agent { agent, args, title, cwd, .. } = tab else { continue };
+        if let Some(kind) = agents.kind_of(agent)
             && kind != agent
         {
             *agent = kind.to_string();
+        }
+        let check = agents.check_flags(agent, args);
+        if check.lost.is_some() {
+            *tab = Tab::Terminal { title: title.clone(), cwd: cwd.clone(), command: None };
+        } else {
+            *args = check.kept;
         }
     }
 }
