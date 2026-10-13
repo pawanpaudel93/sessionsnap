@@ -34,8 +34,9 @@ pub enum Flags {
     /// `--fork-session`) are silent entries of its flag table, read in the one parse, so the word
     /// after one is never taken as a value of the flag before it.
     Claude,
-    /// Codex: also `resume|fork <uuid|--last>`, and the hook flags
-    /// cmux puts first (`--enable hooks --dangerously-bypass-hook-trust -c hooks.…`).
+    /// Codex: also `resume|fork <uuid|--last>`, and the hook flags cmux puts first when they are
+    /// exactly cmux's (`--enable hooks --dangerously-bypass-hook-trust -c hooks.…`, see
+    /// `without_cmux_hooks`).
     Codex,
     /// Its resume words, resume flags and continue flags (`drop_resume_words`).
     Others,
@@ -247,6 +248,7 @@ const CLAUDE_FLAGS: Policy = Policy {
     ],
     rejects: &["--print", "-p", "--no-session-persistence", "--help", "-h", "--version", "-v"],
     dash_values: true,
+    injected: cmux_claude_settings,
     ..Policy::BASE
 };
 
@@ -482,7 +484,10 @@ fn codex_args(args: &[String]) -> Vec<String> {
 }
 
 /// `args` without the hook flags cmux's Codex wrapper puts first: `--enable hooks` (or
-/// `codex_hooks`), `--dangerously-bypass-hook-trust`, then each `-c hooks.<event>=…`.
+/// `codex_hooks`), `--dangerously-bypass-hook-trust`, then each `-c hooks.<event>=…` whose value is
+/// exactly cmux's (see `cmux_codex_hook`), as cmux's own sanitizer strips them. Nothing is stripped
+/// unless at least one such value follows; a user's own hook stops the stripping and is left to
+/// the parser (where `hooks.*` is on no list, so the session is left out).
 fn without_cmux_hooks(args: &[String]) -> &[String] {
     let enable = match args {
         [e, f, ..] if e == "--enable" && (f == "hooks" || f == "codex_hooks") => 2,
@@ -492,14 +497,81 @@ fn without_cmux_hooks(args: &[String]) -> &[String] {
     if args.get(enable).is_none_or(|a| a != "--dangerously-bypass-hook-trust") {
         return args;
     }
-    let mut i = enable + 1;
+    let start = enable + 1;
+    let mut i = start;
     loop {
-        match (args.get(i).map(String::as_str), args.get(i + 1)) {
-            (Some("-c" | "--config"), Some(v)) if v.starts_with("hooks.") => i += 2,
-            (Some(a), _) if a.starts_with("-c=hooks.") || a.starts_with("--config=hooks.") => i += 1,
-            _ => return &args[i..],
+        let one = args.get(i).and_then(|a| a.strip_prefix("-c=").or_else(|| a.strip_prefix("--config=")));
+        match (args.get(i).map(String::as_str), args.get(i + 1), one) {
+            (_, _, Some(v)) if cmux_codex_hook(v) => i += 1,
+            (Some("-c" | "--config"), Some(v), _) if cmux_codex_hook(v) => i += 2,
+            _ => break,
         }
     }
+    if i == start { args } else { &args[i..] }
+}
+
+/// A `-c` value cmux's Codex wrapper writes: `hooks.<Event>=[{hooks=[{type="command",
+/// command='''…''',timeout=N}]}]` (or two handlers in one group), each command cmux's own hook
+/// script (`…/.cmux/hooks/<script>`) or `cmux-codex-hook … hooks [enqueue] codex <event>`.
+fn cmux_codex_hook(v: &str) -> bool {
+    let Some((key, body)) = v.split_once('=') else { return false };
+    let event = key.strip_prefix("hooks.").unwrap_or("");
+    if event.is_empty() || !event.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    let Some(inner) = body.strip_prefix("[{hooks=[{type=\"command\",command='''") else { return false };
+    let Some(inner) = inner.strip_suffix("}]}]") else { return false };
+    // `<cmd>''',timeout=N` handlers, joined by `},{type="command",command='''`.
+    inner.split("},{type=\"command\",command='''").all(|handler| {
+        let Some((cmd, timeout)) = handler.split_once("''',timeout=") else { return false };
+        let timeout_ok = !timeout.is_empty() && timeout.chars().all(|c| c.is_ascii_digit());
+        timeout_ok && !cmd.contains("'''") && !cmd.contains('\\') && cmux_hook_command(cmd)
+    })
+}
+
+fn cmux_hook_command(cmd: &str) -> bool {
+    let path = cmd.trim_matches('\'');
+    let script = path.starts_with('/')
+        && !path.contains(char::is_whitespace)
+        && path.rsplit_once('/').is_some_and(|(dir, file)| dir.ends_with("/.cmux/hooks") && !file.is_empty());
+    let cli = cmd.contains("cmux-codex-hook") && (cmd.contains("hooks codex ") || cmd.contains("hooks enqueue codex "));
+    script || cli
+}
+
+/// Claude Code's `--settings` value that cmux's wrapper added for its hooks, as cmux's sanitizer
+/// recognises it: JSON whose only keys are `hooks` (every command in it cmux's `claude-hook`) and
+/// `preferredNotifChannel`, or an older non-JSON value naming cmux's hook. Settings of the user's
+/// own merged in are not cmux's, so the restricting `--settings` rule still applies to them.
+fn cmux_claude_settings(name: &str, value: &str) -> bool {
+    if name != "--settings" {
+        return false;
+    }
+    let cmux_text = |t: &str| t.contains("claude-hook") || t.contains("hooks claude");
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(value) else {
+        return !value.trim_start().starts_with(['{', '[']) && cmux_text(value);
+    };
+    fn commands(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, x) in m {
+                    match (k.as_str(), x) {
+                        ("command", serde_json::Value::String(c)) => out.push(c.clone()),
+                        _ => commands(x, out),
+                    }
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| commands(x, out)),
+            _ => {}
+        }
+    }
+    let only_cmux_keys = map.keys().all(|k| k == "hooks" || k == "preferredNotifChannel");
+    let quiet = map.get("preferredNotifChannel").is_none_or(|v| v == "notifications_disabled");
+    let mut cmds = vec![];
+    if let Some(h) = map.get("hooks") {
+        commands(h, &mut cmds);
+    }
+    let hooks_ok = map.get("hooks").is_none() || (!cmds.is_empty() && cmds.iter().all(|c| cmux_text(c)));
+    !map.is_empty() && only_cmux_keys && quiet && hooks_ok
 }
 
 #[cfg(test)]
@@ -706,6 +778,30 @@ mod tests {
         assert!(claude.check_args(&strings(&["--plugin-dir", "{x}"])).lost.is_some());
     }
 
+    /// cmux's own hook settings for Claude Code are left out silently, as cmux's sanitizer does;
+    /// settings of the user's own in them keep the restricting `--settings` rule.
+    #[test]
+    fn claude_cmux_hook_settings_are_left_out_silently() {
+        let claude = find("claude").unwrap();
+        let hook = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"cmux claude-hook stop"}]}]}}"#;
+        let c = claude.check_args(&strings(&["--settings", hook, "--model", "opus"]));
+        assert_eq!(c, FlagCheck { kept: strings(&["--model", "opus"]), ..Default::default() });
+        let c = claude.check_args(&[format!("--settings={hook}")]);
+        assert_eq!(c, FlagCheck::default());
+        let quiet = r#"{"preferredNotifChannel":"notifications_disabled"}"#;
+        assert_eq!(claude.check_args(&strings(&["--settings", quiet])), FlagCheck::default());
+        // Legacy: not JSON, but cmux's hook command.
+        assert_eq!(claude.check_args(&strings(&["--settings", "x claude-hook y"])), FlagCheck::default());
+        for mine in [
+            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"cmux claude-hook stop"}]}]},"permissions":{"deny":["Bash"]}}"#,
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/bin/deny"}]}],"Stop":[{"hooks":[{"type":"command","command":"cmux claude-hook stop"}]}]}}"#,
+            r#"{"permissions":{"deny":["Bash"]}}"#,
+        ] {
+            let c = claude.check_args(&strings(&["--settings", mine]));
+            assert_eq!(c.lost, Some(flags::Lost::Restriction("--settings".into())), "{mine}");
+        }
+    }
+
     #[test]
     fn codex_drops_only_session_picking_tokens() {
         let codex = find("codex").unwrap();
@@ -730,17 +826,47 @@ mod tests {
         // A prompt is not a subcommand.
         assert!(codex.resume_command(A, &strings(&["-s", "read-only", "fix the exec path"])).is_some());
         // The hook flags cmux's wrapper puts first go without a note.
-        let hooked = strings(&[
-            "--enable",
-            "hooks",
-            "--dangerously-bypass-hook-trust",
-            "-c",
-            "hooks.Stop=[{hooks=[]}]",
-            "-c=hooks.SessionStart=[]",
-            "-m",
-            "o3",
-        ]);
+        // The hook flags cmux's wrapper puts first go without a note, matched exactly as cmux's
+        // sanitizer matches them.
+        let cmux = |event: &str, cmd: &str| {
+            format!("hooks.{event}=[{{hooks=[{{type=\"command\",command='''{cmd}''',timeout=10000}}]}}]")
+        };
+        let hooked = vec![
+            "--enable".to_string(),
+            "hooks".into(),
+            "--dangerously-bypass-hook-trust".into(),
+            "-c".into(),
+            cmux("Stop", "/Users/me/.cmux/hooks/cmux-codex-hook-stop.sh"),
+            format!("-c={}", cmux("SessionStart", "cmux-codex-hook hooks codex session-start")),
+            "-m".into(),
+            "o3".into(),
+        ];
         assert_eq!(codex.check_args(&hooked), FlagCheck { kept: strings(&["-m", "o3"]), ..Default::default() });
+        // A user's own hook after that prefix is not stripped: `hooks.*` is on no list, and the
+        // session is left out.
+        for user in [
+            strings(&[
+                "--enable",
+                "hooks",
+                "--dangerously-bypass-hook-trust",
+                "-c",
+                "hooks.PreToolUse=[{matcher=\"Bash\",hooks=[{type=\"command\",command=\"/usr/local/bin/deny-rm\"}]}]",
+                "-a",
+                "on-request",
+            ]),
+            strings(&["--enable=hooks", "--dangerously-bypass-hook-trust", "--config=hooks.PreToolUse=x"]),
+            vec![
+                "--enable".into(),
+                "hooks".into(),
+                "--dangerously-bypass-hook-trust".into(),
+                "-c".into(),
+                cmux("Stop", "cmux-codex-hook hooks codex stop"),
+                "-c".into(),
+                cmux("PreToolUse", "/usr/local/bin/deny-rm"),
+            ],
+        ] {
+            assert!(matches!(codex.check_args(&user).lost, Some(flags::Lost::UnlistedConfigKey(..))), "{user:?}");
+        }
         // Without the hook-trust flag that is the user's own `--enable`.
         assert_eq!(
             codex.kept_args(&strings(&["--enable", "hooks", "-m", "o3"])),
