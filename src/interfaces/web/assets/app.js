@@ -224,7 +224,9 @@ function shellWord(w) {
 function kindOf(t) {
   if (t.type === "agent") {
     const flags = t.args && t.args.length ? ` · flags: ${t.args.map(shellWord).join(" ")}` : "";
-    return `${agentName(t.agent)} session${flags}`;
+    // Flags left out with a reason: the tab restores as a plain shell.
+    const leftOut = t.leftOut ? ` · flags left out: ${t.leftOut}` : "";
+    return `${agentName(t.agent)} session${flags}${leftOut}`;
   }
   return t.command ? `Runs: ${t.command}` : "Shell";
 }

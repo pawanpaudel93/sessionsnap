@@ -59,7 +59,14 @@ pub fn agents(histories: Vec<FakeHistory>) -> TestAgents {
 
 /// An agent tab without saved flags.
 pub fn agent_tab(agent: &str, title: &str, cwd: &str, id: &str) -> Tab {
-    Tab::Agent { title: title.into(), cwd: cwd.into(), agent: agent.into(), session_id: id.into(), args: vec![] }
+    Tab::Agent {
+        title: title.into(),
+        cwd: cwd.into(),
+        agent: agent.into(),
+        session_id: id.into(),
+        args: vec![],
+        left_out: None,
+    }
 }
 
 /// Writes a minimal Codex rollout for `id`, started in `cwd`, whose first real prompt is `prompt`.

@@ -11,24 +11,41 @@ use crate::ports::{AgentCatalog, SessionInfo};
 /// so sessions compare equal however the tab was written (unknown agents are left as they are),
 /// and keeps only the saved flags the agent allows (`AgentCatalog::check_flags`), so a snapshot
 /// saved before the allow-list, or edited by hand, is never shown or carried forward with flags a
-/// save would leave out today. Every tab's flags are filtered, whatever else it holds. A tab whose
-/// flags lose the session, or hold a control character (it can't be resumed), becomes a plain
-/// terminal tab without them, as a save today makes it. Every read of a snapshot goes through this
-/// (`app::load_normalized`).
+/// save would leave out today. Every tab's flags are filtered, whatever else it holds. When its
+/// flags lose the session, or hold a control character, the tab keeps its session but none of its
+/// flags, and `left_out` records why: `show` and restore give that reason, and restore opens a
+/// plain shell. Every read of a snapshot goes through this (`app::load_normalized`).
 pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
     for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        let Tab::Agent { agent, args, title, cwd, .. } = tab else { continue };
+        let Tab::Agent { agent, args, left_out, .. } = tab else { continue };
         if let Some(kind) = agents.kind_of(agent)
             && kind != agent
         {
             *agent = kind.to_string();
         }
         let check = agents.check_flags(agent, args);
-        if check.lost.is_some() || args.iter().any(|a| has_control(a)) {
-            *tab = Tab::Terminal { title: title.clone(), cwd: cwd.clone(), command: None };
+        let why = if args.iter().any(|a| has_control(a)) {
+            Some("its flags have control characters; resume it by hand".to_string())
         } else {
-            *args = check.kept;
+            check.lost_reason(&agents.display_name(agent))
+        };
+        match left_out.clone().or(why) {
+            Some(reason) => {
+                args.clear();
+                *left_out = Some(reason);
+            }
+            None => *args = check.kept,
         }
+    }
+}
+
+/// Why a saved agent tab can't be resumed from its flags (see `Tab::Agent::left_out`), if so.
+pub fn flags_problem(agents: &dyn AgentCatalog, tab: &Tab) -> Option<String> {
+    match tab {
+        Tab::Agent { agent, args, left_out, .. } => {
+            left_out.clone().or_else(|| agents.check_flags(agent, args).lost_reason(&agents.display_name(agent)))
+        }
+        Tab::Terminal { .. } => None,
     }
 }
 

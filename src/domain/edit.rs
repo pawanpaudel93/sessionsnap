@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::agents::{Resume, find_session, problem, resume_status};
+use crate::domain::agents::{Resume, find_session, flags_problem, problem, resume_status};
 use crate::domain::capture;
 use crate::domain::model::{SessionRef, Tab, Workspace, find_by_name, has_control, parse_ref};
 use crate::error::{Exit, failure};
@@ -234,6 +234,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
                 agent: kind,
                 session_id: session_id.clone(),
                 args: vec![],
+                left_out: None,
             });
         }
         Op::TabAddTerminal { ws: w, cwd, command, title } => {
@@ -259,12 +260,15 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             let (kind, _) = find_session(ctx.agents, session_id, agent.as_deref())?;
             let old = &ws[w].tabs[t];
             // The launch flags still fit when the agent stays the same.
-            let args = match old {
-                Tab::Agent { agent, args, .. } if ctx.agents.kind_of(agent) == Some(kind.as_str()) => args.clone(),
-                _ => vec![],
+            // So does a reason they were left out: the same launch, without its limits.
+            let (args, left_out) = match old {
+                Tab::Agent { agent, args, left_out, .. } if ctx.agents.kind_of(agent) == Some(kind.as_str()) => {
+                    (args.clone(), left_out.clone())
+                }
+                _ => (vec![], None),
             };
             let (title, cwd) = (old.title().to_string(), old.cwd().to_string());
-            ws[w].tabs[t] = Tab::Agent { title, cwd, agent: kind, session_id: session_id.clone(), args };
+            ws[w].tabs[t] = Tab::Agent { title, cwd, agent: kind, session_id: session_id.clone(), args, left_out };
         }
     }
     Ok(vec![])
@@ -310,12 +314,7 @@ pub fn warnings(workspaces: &[Workspace], agents: &dyn AgentCatalog) -> Vec<Stri
             }
             if let Some(s) = t.session() {
                 let status = resume_status(agents, &s);
-                let lost = match t {
-                    Tab::Agent { agent, args, .. } => {
-                        agents.check_flags(agent, args).lost_reason(&agents.display_name(agent))
-                    }
-                    Tab::Terminal { .. } => None,
-                };
+                let lost = flags_problem(agents, t);
                 let why = lost.or_else(|| (status != Resume::Ready).then(|| problem(agents, &s, status)));
                 if let Some(why) = why
                     && t.control_field().is_none()
@@ -478,6 +477,7 @@ mod tests {
             agent: "claude".into(),
             session_id: A.into(),
             args: vec!["--model".into(), "opus".into()],
+            left_out: None,
         };
         let set = |id: &str| Op::TabSetSession { tab: "Alpha#1".into(), session_id: id.into(), agent: None };
         apply_ops(&mut ws, &[set(A)], &ctx).unwrap();

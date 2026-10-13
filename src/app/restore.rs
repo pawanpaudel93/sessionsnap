@@ -148,6 +148,8 @@ pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Te
 pub fn launch_tab(agents: &Agents, tab: &Tab) -> LaunchTab {
     let command = match tab {
         Tab::Terminal { command, .. } => command.clone(),
+        // Flags left out with a reason: never resumed (the plan opens a plain shell).
+        Tab::Agent { left_out: Some(_), .. } => None,
         Tab::Agent { agent, session_id, args, .. } => agents.resume_command(agent, session_id, args),
     };
     LaunchTab { title: tab.title().to_string(), cwd: safe_cwd(tab.cwd()), command: command.filter(|c| !has_control(c)) }
@@ -251,6 +253,7 @@ mod launch_tests {
             agent: agent.into(),
             session_id: id.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
+            left_out: None,
         };
         let cmd = |t: &Tab| launch_tab(&agents, t).command;
         assert_eq!(

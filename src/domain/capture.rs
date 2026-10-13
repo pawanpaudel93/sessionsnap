@@ -80,6 +80,7 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
         agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
         session_id: a.session_id.clone(),
         args: check.kept,
+        left_out: None,
     }
 }
 
@@ -177,6 +178,7 @@ mod tests {
                     agent: "codex".into(),
                     session_id: B.into(),
                     args: vec!["-a".into(), "on-request".into()],
+                    left_out: None,
                 },
                 // Unknown to sessionsnap: kept as cmux reported it, titled from the tab, without
                 // flags (it has no allow-list).
@@ -186,6 +188,7 @@ mod tests {
                     agent: "aider".into(),
                     session_id: C.into(),
                     args: vec![],
+                    left_out: None,
                 },
             ]
         );

@@ -64,6 +64,11 @@ pub enum Tab {
         /// The flags the agent was started with, passed again when it resumes.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
+        /// Why the session can't be resumed from what was saved (its flags were left out because
+        /// one could not be kept, e.g. a deny rule): the tab then restores as a plain shell, with
+        /// this reason. Names flags only, never values.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        left_out: Option<String>,
     },
 }
 
@@ -134,7 +139,9 @@ impl Tab {
     /// as a changed tab), folder + command for terminals.
     pub fn key(&self) -> String {
         match self {
-            Tab::Agent { agent, session_id, args, .. } => format!("agent:{agent}:{session_id}|{}", args.join("\u{1f}")),
+            Tab::Agent { agent, session_id, args, left_out, .. } => {
+                format!("agent:{agent}:{session_id}|{}|{}", args.join("\u{1f}"), left_out.as_deref().unwrap_or(""))
+            }
             Tab::Terminal { cwd, command, .. } => format!("terminal:{cwd}|{}", command.as_deref().unwrap_or("")),
         }
     }
@@ -222,6 +229,7 @@ mod tests {
             agent: "codex".into(),
             session_id: ID.into(),
             args: vec!["-a".into(), "on-request".into()],
+            left_out: None,
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(
@@ -237,6 +245,7 @@ mod tests {
             agent: "claude".into(),
             session_id: ID.into(),
             args: vec![],
+            left_out: None,
         };
         assert!(serde_json::to_value(&t).unwrap().get("args").is_none());
         assert_eq!(t.session(), Some(SessionRef::new("claude", ID)));

@@ -293,14 +293,45 @@ fn old_snapshots_are_filtered_on_load() {
          "args": ["--mcp-config", inline, "--model", "opus"]},
         {"type": "agent", "title": "b", "cwd": "/w/o", "agent": "claude", "sessionId": C,
          "args": ["--disallowedTools", format!("Bash(x {ghp})")]},
+        {"type": "agent", "title": "c", "cwd": "/w/o", "agent": "claude", "sessionId": A,
+         "args": ["--disallowedTools", format!("Bash(x {ghp})")]},
+    ]}));
+    v["workspaces"].as_array_mut().unwrap().push(serde_json::json!({"name": "Fresh", "cwd": "/w/f", "tabs": [
+        {"type": "agent", "title": "f", "cwd": "/w/f", "agent": "claude", "sessionId": "44444444-4444-4444-8444-444444444444",
+         "args": ["--disallowedTools", format!("Bash(x {ghp})")]},
     ]}));
     std::fs::write(&file, serde_json::to_string(&v).unwrap()).unwrap();
     let shown = env.run(&["show", "work", "--json"]).unwrap();
     assert!(!shown.json.to_string().contains(&ghp), "{}", shown.json);
     let old = &shown.json["version"]["workspaces"][2]["tabs"];
     assert_eq!(old[0]["args"], serde_json::json!(["--model", "opus"]));
-    // The deny rule can't be kept: the tab is a plain terminal, as a save today would make it.
-    assert_eq!(old[1]["type"], "terminal", "{old}");
+    // The deny rule can't be kept: the session stays, without its flags, with the reason.
+    let reason = "a restricting flag (--disallowedTools) could not be saved; resume it by hand";
+    assert_eq!((old[1]["type"].as_str(), old[1]["sessionId"].as_str()), (Some("agent"), Some(C)), "{old}");
+    assert!(old[1].get("args").is_none(), "{old}");
+    assert_eq!(old[1]["leftOut"], reason, "{old}");
+    let warnings = shown.json["warnings"].to_string();
+    assert!(warnings.contains(&format!("Old#2 'b': {reason}, restores as a plain shell")), "{warnings}");
+    // Restore gives the reason. "Old" matches the open "Alpha" by its sessions: the lost tab is
+    // skipped there, and a tab whose session is open is still "already open".
+    let planned = env.run(&["restore", "work", "--plan"]).unwrap();
+    let plan = planned.json["plan"].to_string();
+    assert!(plan.contains(&format!("Old › b: {reason}; not added to an open workspace")), "{plan}");
+    assert!(plan.contains("Old › c: already open"), "{plan}");
+    // In a new workspace it opens as a plain shell, with a warning.
+    assert!(plan.contains(&format!("Fresh › f: {reason}, opening a plain shell")), "{plan}");
+    assert!(!plan.contains(&ghp));
+    let tabs = &planned.json["plan"]["actions"][0]["tabs"];
+    assert_eq!(tabs[0]["type"], "terminal", "{tabs}");
+    // An edit keeps the session and the reason, and never writes the flags back.
+    let ops = r#"[{"op":"ws-rename","ws":"Old","to":"Older"}]"#;
+    env.run_with_input(&["edit", "work", "--batch", "-"], ops).unwrap();
+    let shown = env.run(&["show", "work", "--json"]).unwrap();
+    let older = &shown.json["version"]["workspaces"][2]["tabs"];
+    assert_eq!((older[1]["sessionId"].as_str(), older[1]["leftOut"].as_str()), (Some(C), Some(reason)), "{older}");
+    let newest = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).max().unwrap();
+    let text = std::fs::read_to_string(newest).unwrap();
+    assert!(!text.contains(&ghp) && text.contains(C), "{text}");
 }
 
 /// A control character anywhere in a tab (a title is enough) never stops its flags being filtered:
@@ -343,7 +374,8 @@ fn every_read_of_a_snapshot_filters_its_flags() {
     }
     let shown = &outputs[2].json["version"]["workspaces"][2]["tabs"];
     assert_eq!(shown[0]["args"], serde_json::json!(["--model", "opus"]), "{shown}");
-    // Flags with a control character: the tab can't be resumed, so it is a plain terminal tab.
-    assert_eq!(shown[1]["type"], "terminal", "{shown}");
+    // Flags with a control character: the tab can't be resumed; its flags go, the session stays.
+    assert_eq!((shown[1]["type"].as_str(), shown[1]["sessionId"].as_str()), (Some("agent"), Some(A)), "{shown}");
     assert!(shown[1].get("args").is_none());
+    assert_eq!(shown[1]["leftOut"], "its flags have control characters; resume it by hand");
 }

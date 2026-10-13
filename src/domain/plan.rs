@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::agents::{Resume, problem, resume_status, unknown_session};
+use crate::domain::agents::{Resume, flags_problem, problem, resume_status, unknown_session};
 use crate::domain::edit::{find_ws, locate, parse_tab_ref};
 use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
 use crate::error::{Exit, failure};
@@ -121,6 +121,7 @@ pub fn recovered_workspace(sessions: &[SessionRef], agents: &dyn AgentCatalog) -
             agent: s.agent.clone(),
             session_id: s.session_id.clone(),
             args: vec![],
+            left_out: None,
         });
     }
     let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
@@ -173,12 +174,7 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
                 b.skipped.push(format!("{label}: same session listed earlier"));
                 continue;
             }
-            let lost = match tab {
-                Tab::Agent { agent, args, .. } => {
-                    agents.check_flags(agent, args).lost_reason(&agents.display_name(agent))
-                }
-                Tab::Terminal { .. } => None,
-            };
+            let lost = flags_problem(agents, tab);
             let why = match (control, lost, resume_status(agents, &s)) {
                 (Some(field), _, _) => Some(format!("its {field} has control characters")),
                 (None, Some(lost), _) => Some(lost),
@@ -391,6 +387,7 @@ mod tests {
             agent: "opencode".into(),
             session_id: id.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
+            left_out: None,
         };
         let saved = vec![workspace(
             "Gamma",
@@ -485,6 +482,7 @@ mod tests {
             agent: agent.into(),
             session_id: id.into(),
             args,
+            left_out: None,
         };
         let with_args = |title: &str, id: &str, args: Vec<String>| tab("claude", title, id, args);
         let deny = with_args("deny", A, vec!["--disallowedTools".into(), format!("Bash({ghp})")]);

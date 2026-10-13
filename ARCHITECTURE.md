@@ -52,7 +52,8 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
 ## The snapshot format
 
 `domain/model.rs`, format version 2. A tab is either a plain terminal (`title`, `cwd`, optional
-`command`) or an agent tab (`title`, `cwd`, `agent`, `sessionId`, `args`). The format names no
+`command`) or an agent tab (`title`, `cwd`, `agent`, `sessionId`, `args`, and `leftOut`: why its flags were
+left out when one could not be kept, so it restores as a plain shell). The format names no
 terminal, so a snapshot can be restored by any terminal adapter.
 
 Snapshots are user-editable files whose contents end up as commands in a shell. Every value that
