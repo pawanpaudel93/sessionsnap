@@ -165,14 +165,17 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 ### How flags are restored
 
 A restored tab runs the agent's resume command with the flags it was started with (from cmux's
-record). Only the flags on the agent's allow-list are saved and passed again; every other flag is
-left out when you save, and `save` names the flags it left out (never their values). Supporting
+record). Only the flags on the agent's allow-list are saved and passed again; every other flag the
+agent's command line knows is left out when you save, and `save` names the flags it left out (never
+their values). A flag sessionsnap doesn't know at all (not in `claude --help` or `codex --help` as
+of Claude Code 2.1.296 and Codex 0.160.0) leaves out the session, since what follows it can't be
+read for certain. Short flags may be grouped (`-vs read-only`) as the agents allow. Supporting
 another flag is one line in `src/adapters/agents/registry.rs`.
 
 | Agent | Flags kept | Restricting (also kept, fail closed) |
 |---|---|---|
-| Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--agents`, `--plugin-dir`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`, `--settings` (path only), `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands` |
-| Codex | `--model`/`-m`, `--enable`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--disable`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.*` |
+| Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--agents`, `--plugin-dir`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`, `--settings` (path only), `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands`, `--bare` |
+| Codex | `--model`/`-m`, `--enable`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.*` |
 | Every other agent | none: a session started with any flag is left out | every flag |
 
 Both `--flag value` and `--flag=value` work. A kept flag's values are checked too:
@@ -270,13 +273,14 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   run, and an agent record with one is not saved. A resume command with a backslash is not typed
   into an already open workspace (`cmux send` would turn `\n` into Enter).
 - Environment variables from cmux's state are never stored. Of an agent's flags, only those on its
-  allow-list are saved; every other flag (`--api-key`, `--header`, `-c mcp_servers…`, anything
-  unknown) is left out, and `save` names what it left out. Kept values are checked for their kind
-  (inline JSON is not a path) and for known credential formats (see
+  allow-list are saved; every other known flag (`--append-system-prompt`, `-c mcp_servers…`, …) is
+  left out, and `save` names what it left out. A flag sessionsnap doesn't know (`--api-key`,
+  `--header`, …) leaves out the whole agent session. Kept values are checked for their kind (inline
+  JSON is not a path) and for known credential formats (see
   [How flags are restored](#how-flags-are-restored)). A flag that limits the agent (deny rules,
-  sandbox, permission mode, settings) that can't be saved leaves out the whole agent session rather
-  than resume it with fewer limits; so does any flag of an agent whose flags are untested. Restore filters old
-  snapshots through the same lists.
+  sandbox, permission mode, settings) that can't be saved exactly as given leaves out the whole
+  agent session rather than resume it with fewer limits; so does any flag of an agent whose flags
+  are untested. Restore filters old snapshots through the same rules.
 - Snapshot files are readable only by you (folder 0700, files 0600).
 
 ## Status

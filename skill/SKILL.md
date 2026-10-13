@@ -30,8 +30,8 @@ without flags (`sessionsnap agents --json` lists them).
 - `sessionsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
 - `save` only reads cmux. If nothing changed it writes nothing and exits 3. Its `warnings` name the
   flags it left out (only allow-listed flags are saved) and any agent session it left out (a
-  restricting flag it could not save, flags of an untested agent, or a launch such as `claude -p`
-  that is not a session); tell the user.
+  restricting flag it could not save, a flag it doesn't know, flags of an untested agent, or a
+  launch such as `claude -p` that is not a session); tell the user.
 - A `list` row or `history` version with `"error"` (e.g. "unreadable: format 1, expected 2") is a
   file sessionsnap cannot read; tell the user, do not try to restore it.
 
