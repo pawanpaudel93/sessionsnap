@@ -111,10 +111,14 @@ mkdir -p "$INSTALL_DIR"
 NEW=$(mktemp "$INSTALL_DIR/.sessionsnap.XXXXXX")
 cp "$SRC" "$NEW"
 chmod 755 "$NEW"
+# Check the new binary where it will run (a temp folder may be noexec) before it replaces the old
+# one, so a broken download never leaves you without a working sessionsnap.
+VER=$("$NEW" --version 2>/dev/null) || die "the downloaded binary does not run; $INSTALL_DIR/sessionsnap was left as it was."
+[ "$VER" = "sessionsnap $VERSION" ] ||
+  die "the downloaded binary reports '$VER', not sessionsnap $VERSION; $INSTALL_DIR/sessionsnap was left as it was."
 mv -f "$NEW" "$INSTALL_DIR/sessionsnap"
 NEW=""
 BIN="$INSTALL_DIR/sessionsnap"
-VER=$("$BIN" --version 2>/dev/null) || die "the installed binary does not run: $BIN"
 say "Installed $BIN"
 
 # --- PATH ------------------------------------------------------------------

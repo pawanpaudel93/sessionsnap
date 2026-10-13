@@ -66,7 +66,8 @@ The installer:
 
 1. Picks the build for your system: one universal binary for macOS (Apple Silicon and Intel), a
    static binary for Linux x86_64 or arm64.
-2. Downloads the latest release from GitHub and checks its SHA-256.
+2. Downloads the latest release from GitHub, checks its SHA-256, and checks that the new binary
+   runs and reports that version before it replaces an installed one.
 3. Installs `sessionsnap` into `~/.local/bin` and adds that folder to `PATH` in your shell's
    startup file (zsh, bash or fish) if it is not there yet.
 4. On macOS, if `cmux` is on your `PATH`, offers to add the sessionsnap commands to the cmux

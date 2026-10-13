@@ -60,6 +60,8 @@ for t in universal-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-
 done
 release 8.8.8 x86_64-unknown-linux-musl 'exit 1'
 release 7.7.7 x86_64-unknown-linux-musl "$GOOD"
+# Runs, but is not the version asked for.
+release 6.6.6 x86_64-unknown-linux-musl "$GOOD"
 echo "0000000000000000000000000000000000000000000000000000000000000000  x" \
   >"$T/dist/sessionsnap-7.7.7-x86_64-unknown-linux-musl.tar.gz.sha256"
 
@@ -106,6 +108,22 @@ has_out "checksum mismatch" || fail "checksum message"
 
 run Linux x86_64 bash SESSIONSNAP_VERSION=8.8.8 && fail "a binary that does not run must be refused"
 has_out "does not run" || fail "broken binary message"
+[ ! -e "$T/home/.local/bin/sessionsnap" ] || fail "installed a binary that does not run"
+
+# over OS VERSION: install.sh again into the same HOME (after a good install).
+over() {
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" TMPDIR="$T" SHELL=/bin/bash FAKE_DIST="$T/dist" \
+    FAKE_OS=Linux FAKE_ARCH=x86_64 SESSIONSNAP_VERSION="$1" sh "$ROOT/install.sh" >"$T/out" 2>&1
+}
+# A new binary that does not run, or reports another version, never replaces a working one.
+run Linux x86_64 bash || fail "good install before a bad upgrade"
+for bad in 8.8.8 6.6.6; do
+  over "$bad" && fail "upgrading to the bad $bad must fail"
+  has_out "does not run" || has_out "reports" || fail "message for the bad $bad"
+  [ "$("$T/home/.local/bin/sessionsnap" --version)" = "sessionsnap 9.9.9" ] || fail "the working binary was replaced by $bad"
+  [ "$(ls -A "$T/home/.local/bin")" = sessionsnap ] || fail "temp files left after the bad $bad"
+done
+
 
 run Linux x86_64 bash 'SESSIONSNAP_INSTALL_DIR=~/tools' || fail "a quoted ~ install dir"
 [ -x "$T/home/tools/sessionsnap" ] || fail "~ expanded to HOME"
