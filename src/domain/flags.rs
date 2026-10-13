@@ -325,7 +325,7 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
             for v in &o.values {
                 let key = config_key(v);
                 if ![keys, restricting, neutral].iter().any(|list| key_in(list, key)) {
-                    lose(&mut out, Lost::UnlistedConfigKey(o.name.clone(), shown_key(key)));
+                    lose(&mut out, Lost::UnlistedConfigKey(o.name.clone(), shown_key(v)));
                 }
             }
         }
@@ -383,13 +383,22 @@ fn config_key(v: &str) -> &str {
     v.split_once('=').map_or(v, |(k, _)| k).trim()
 }
 
-/// How a config key is shown in a note: a plain dotted name, never anything that could be a value.
-fn shown_key(key: &str) -> String {
-    let plain = !key.is_empty()
-        && key.len() <= 64
+/// How a config value's key is shown in a note: only its first segment, as a plain name
+/// (`tools.web_search` shows as `tools.*`), never anything that could be a value or a variable's
+/// name; "(not shown)" when that can't be told (no `=`, quotes, spaces, a token).
+fn shown_key(v: &str) -> String {
+    let Some((key, _)) = v.split_once('=') else { return "(not shown)".to_string() };
+    let key = key.trim();
+    let first = key.split('.').next().unwrap_or("");
+    let plain = !first.is_empty()
+        && first.len() <= 64
         && key.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
         && !holds_credential(key);
-    if plain { key.to_string() } else { "(not shown)".to_string() }
+    match (plain, first.len() < key.len()) {
+        (false, _) => "(not shown)".to_string(),
+        (true, true) => format!("{first}.*"),
+        (true, false) => first.to_string(),
+    }
 }
 
 /// `key` is one of `keys`, or starts with one ending in `.` or `_`.
@@ -728,7 +737,7 @@ mod tests {
             assert!(c.note("Codex").unwrap().contains("an unlisted Codex -c key"), "{v}");
         }
         let c = check(&words(&["-c", "tools.web_search=false"]), &POLICY);
-        assert_eq!(c.lost_reason("Codex").unwrap(), "an unlisted Codex -c key tools.web_search; resume it by hand");
+        assert_eq!(c.lost_reason("Codex").unwrap(), "an unlisted Codex -c key tools.*; resume it by hand");
         // A key that could be a value is not shown.
         let ghp = format!("ghp_{}", "a1".repeat(18));
         assert!(!check(&words(&["-c", &format!("{ghp}=1")]), &POLICY).note("Codex").unwrap().contains("ghp_"));

@@ -802,6 +802,48 @@ mod tests {
         }
     }
 
+    /// No form of Codex's `shell_environment_policy.set` (environment variables, often secrets)
+    /// is saved, and no note shows the variable's name or value.
+    #[test]
+    fn codex_shell_env_values_never_reach_saved_args_or_notes() {
+        let codex = find("codex").unwrap();
+        // Built at runtime so secret scanners don't flag the source.
+        let var = format!("MY_{}_KEY", "SECRET");
+        let val = format!("v{}z", "9q".repeat(6));
+        let dotted = format!("shell_environment_policy.set.{var}={val}");
+        let forms: Vec<Vec<String>> = vec![
+            vec!["-c".into(), dotted.clone()],
+            vec!["--config".into(), dotted.clone()],
+            vec![format!("--config={dotted}")],
+            vec![format!("-c{dotted}")],
+            vec!["-c".into(), format!("shell_environment_policy.set.{var} = \"{val} with spaces\"")],
+            vec!["-c".into(), format!("shell_environment_policy.set={{{var}=\"{val}\"}}")],
+            vec!["-c".into(), format!("shell_environment_policy={{set={{{var}=\"{val}\"}}}}")],
+            vec!["-c".into(), format!("shell_environment_policy.\"set\".{var}={val}")],
+            vec!["-c".into(), format!("\"shell_environment_policy\".set.{var}={val}")],
+            vec!["-c".into(), format!("Shell_Environment_Policy.set.{var}={val}")],
+            vec!["-c".into(), format!("shell_environment_policy.{var}={val}")],
+            vec!["-c".into(), format!("{var}{val}")],
+        ];
+        for args in forms {
+            let c = codex.check_args(&args);
+            let note = c.note("Codex").unwrap_or_default();
+            let shown = format!("{:?} {note} {:?}", c.kept, c.left_out);
+            assert!(c.kept.is_empty(), "{args:?}: {shown}");
+            assert!(!shown.contains(&var) && !shown.contains(&val), "{args:?}: {shown}");
+            assert!(!note.is_empty(), "{args:?}");
+            assert!(codex.resume_command(A, &args).is_none_or(|cmd| !cmd.contains(&val)), "{args:?}");
+        }
+        // Whole-table assignments to a restricting parent are not understood: the session is lost.
+        for v in [
+            "shell_environment_policy={inherit=\"none\"}",
+            "sandbox_workspace_write={network_access=false}",
+            "features={x=true}",
+        ] {
+            assert!(codex.check_args(&strings(&["-c", v])).lost.is_some(), "{v}");
+        }
+    }
+
     #[test]
     fn codex_drops_only_session_picking_tokens() {
         let codex = find("codex").unwrap();

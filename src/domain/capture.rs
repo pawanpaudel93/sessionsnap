@@ -325,7 +325,7 @@ mod tests {
         assert!(matches!(tab, Tab::Terminal { .. }));
         assert_eq!(
             notes,
-            ["Beta › t: left out its agent session: an unlisted Codex -c key mcp_servers.gh.env; resume it by hand"]
+            ["Beta › t: left out its agent session: an unlisted Codex -c key mcp_servers.*; resume it by hand"]
         );
     }
 
