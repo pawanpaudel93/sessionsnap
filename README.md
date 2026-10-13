@@ -319,7 +319,9 @@ comments, the step is skipped and you remove those entries by hand), the Claude 
 (`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), `~/.sessionsnap` (or
 `SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap
 did not make), and the `sessionsnap` binary. Anything already gone is
-reported, not an error. It leaves the `PATH` line the installer added in place (other tools may
+reported, not an error. If a step fails (say the binary's folder is not writable), the others still
+run, the report lists what was removed and what failed with its error, and the exit code is 1. It
+leaves the `PATH` line the installer added in place (other tools may
 use `~/.local/bin`) and lists it.
 
 Installed with `cargo install`? `sessionsnap uninstall` removes everything but the binary; then run

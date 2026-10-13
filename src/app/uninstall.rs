@@ -55,7 +55,7 @@ pub fn rc_files(home: &Path, zdotdir: Option<PathBuf>, xdg_config: Option<PathBu
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Step {
     pub what: String,
-    /// "removed", "already gone", "kept" or "left".
+    /// "removed", "already gone", "kept", "left" or "failed" (the note says why).
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -66,6 +66,13 @@ pub struct Report {
     pub steps: Vec<Step>,
     /// Shared things left in place, for the user to remove if nothing else needs them.
     pub left: Vec<String>,
+}
+
+impl Report {
+    /// The steps that failed.
+    pub fn failed(&self) -> Vec<&Step> {
+        self.steps.iter().filter(|s| s.status == "failed").collect()
+    }
 }
 
 /// What `run` will remove, one line each, to ask about first.
@@ -96,9 +103,11 @@ fn step(what: impl Into<String>, status: &'static str, note: Option<String>) -> 
 }
 
 /// Removes the palette commands, the skill, the data (unless `keep_data`) and the binary. A piece
-/// that is already gone is reported, not an error.
+/// that is already gone is reported, not an error. A step that fails is reported as "failed" with
+/// its error, and the others still run, so the report always says what was removed.
 pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
     let mut steps = vec![];
+    let failed = |what: String, e: anyhow::Error| step(what, "failed", Some(format!("{e:#}")));
 
     let config = p.cmux_config.display().to_string();
     steps.push(match uninstall_cmux(&p.cmux_config) {
@@ -111,18 +120,23 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
         Err(e) if crate::error::exit_of(&e) == crate::error::Exit::Refused => {
             step(format!("palette commands in {config}"), "left", Some(format!("{e:#}")))
         }
-        Err(e) => return Err(e),
+        Err(e) => failed(format!("palette commands in {config}"), e),
     });
 
     let skill = p.skills_dir.join("sessionsnap").display().to_string();
-    steps.push(match uninstall_skill(&p.skills_dir)? {
-        SkillRemoval::Removed => step(skill, "removed", None),
-        SkillRemoval::Missing => step(skill, "already gone", None),
-        SkillRemoval::NotOurs => step(skill, "left", Some("it has files sessionsnap did not write".into())),
+    steps.push(match uninstall_skill(&p.skills_dir) {
+        Ok(SkillRemoval::Removed) => step(skill, "removed", None),
+        Ok(SkillRemoval::Missing) => step(skill, "already gone", None),
+        Ok(SkillRemoval::NotOurs) => step(skill, "left", Some("it has files sessionsnap did not write".into())),
+        Err(e) => failed(skill, e),
     });
 
     let data = p.data.display().to_string();
-    steps.push(if keep_data { step(data, "kept", Some("--keep-data".into())) } else { remove_data(&p.data)? });
+    steps.push(if keep_data {
+        step(data, "kept", Some("--keep-data".into()))
+    } else {
+        remove_data(&p.data).unwrap_or_else(|e| failed(data, e))
+    });
 
     let exe = p.exe.display().to_string();
     steps.push(if from_cargo(p) {
@@ -131,7 +145,7 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
         match std::fs::remove_file(&p.exe) {
             Ok(()) => step(exe, "removed", None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => step(exe, "already gone", None),
-            Err(e) => return Err(anyhow::Error::new(e).context(format!("remove {exe}"))),
+            Err(e) => failed(exe.clone(), anyhow::Error::new(e).context(format!("remove {exe}"))),
         }
     });
 
@@ -266,6 +280,25 @@ mod tests {
         assert_eq!(r.left.len(), 1);
         assert!(r.left[0].contains(".zshrc"), "{:?}", r.left);
         assert!(std::fs::read_to_string(d.path().join(".zshrc")).unwrap().contains("PATH"));
+    }
+
+    /// A step that fails (here the binary, in a folder it can't write) does not hide what the
+    /// earlier steps already removed: the report lists them, then the failure.
+    #[test]
+    fn a_failed_step_still_reports_what_was_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        let bin = p.exe.parent().unwrap();
+        std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let r = run(&p, false);
+        std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let r = r.unwrap();
+        assert_eq!(statuses(&r), ["removed", "removed", "removed", "failed"]);
+        assert!(!p.data.exists());
+        let note = r.steps[3].note.as_deref().unwrap();
+        assert!(note.contains("remove") && note.contains("ermission denied"), "{note}");
+        assert_eq!(r.failed().len(), 1);
     }
 
     #[test]

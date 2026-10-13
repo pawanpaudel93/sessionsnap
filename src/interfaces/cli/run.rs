@@ -90,12 +90,19 @@ fn uninstall(ctx: &Ctx, keep_data: bool) -> Result<Outcome> {
             None => format!("{}: {}", s.what, s.status),
         })
         .collect();
-    text.push("sessionsnap is uninstalled.".into());
+    let failed = report.failed();
+    if failed.is_empty() {
+        text.push("sessionsnap is uninstalled.".into());
+    } else {
+        text.push(format!("sessionsnap is not fully uninstalled: {} step(s) failed (see above).", failed.len()));
+    }
     if !report.left.is_empty() {
         text.push("Left in place, since other tools may use them:".into());
         text.extend(report.left.iter().map(|l| format!("  - {l}")));
     }
-    Ok(Outcome::ok(json!({"steps": report.steps, "left": report.left}), text.join("\n")))
+    let out = Outcome::ok(json!({"steps": report.steps, "left": report.left}), text.join("\n"));
+    // Like `apply`: the report lists every step, and a failed one makes the exit code 1.
+    Ok(if failed.is_empty() { out } else { out.with_exit(Exit::Error) })
 }
 
 fn updated(update: Update) -> Outcome {
