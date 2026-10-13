@@ -367,7 +367,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               with the reason. The tokens that pick another session are taken out first: the agent's
               own resume words and resume flags with the old ID, its continue flag, Claude Code's
               <code translate="no">--session-id &lt;id&gt;</code> and <code translate="no">--fork-session</code>, Codex's
-              <code translate="no">resume|fork &lt;uuid|--last&gt;</code> and a leading <code translate="no">exec</code> run.
+              <code translate="no">resume|fork &lt;uuid|--last&gt;</code>. A Codex launch that is a subcommand (<code translate="no">codex exec</code>, <code translate="no">codex review</code>, …) is not a session and is left out.
             </p>
             <p>
               A tab with an invalid session ID, or an agent sessionsnap does not know, reopens as a

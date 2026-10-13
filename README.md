@@ -198,10 +198,12 @@ Claude Code with `--print`/`-p` or `--no-session-persistence`, or a subcommand s
 Restore applies the same lists and rules, so a snapshot saved by an older sessionsnap never passes
 a flag that is no longer allowed, and a tab whose restricting flag can't be passed again (or an
 untested agent's tab with flags) is not resumed: it opens as a plain shell in a new workspace, or is
-skipped in an open one, with the reason. The tokens that pick another session are also taken out before the list
-applies: the agent's own resume words and resume flags with the old ID, its continue flag, Claude
-Code's `--session-id <id>` and `--fork-session`, Codex's `resume|fork <uuid|--last>` and a leading
-`exec` run.
+skipped in an open one, with the reason.
+
+The tokens that pick another session are taken out before the list applies: the agent's own resume
+words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and
+`--fork-session`, Codex's `resume|fork <uuid|--last>`. A Codex launch that is a subcommand
+(`codex exec`, `codex review`, …) is not a session and is left out.
 
 A tab with an invalid session ID, or an agent sessionsnap does not know, reopens as a plain shell
 in its folder, with a warning.

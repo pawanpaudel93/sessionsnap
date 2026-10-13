@@ -33,7 +33,7 @@ pub enum Ids {
 pub enum Flags {
     /// Claude Code: also `--session-id <id>` and `--fork-session`.
     Claude,
-    /// Codex: also `resume|fork <uuid|--last>`, all of a leading `exec` run, and the hook flags
+    /// Codex: also `resume|fork <uuid|--last>`, and the hook flags
     /// cmux puts first (`--enable hooks --dangerously-bypass-hook-trust -c hooks.…`).
     Codex,
     /// Nothing more.
@@ -253,7 +253,37 @@ const CODEX_FLAGS: Policy = Policy {
         Flag::skip(&["--local-provider"]),
         Flag::skip_many(&["--image", "-i"]),
     ],
-    commands: &[],
+    // `codex --help`'s subcommands other than `resume` and `fork` (taken out with their session).
+    commands: &[
+        "agents",
+        "app",
+        "app-server",
+        "apply",
+        "a",
+        "archive",
+        "cloud",
+        "completion",
+        "debug",
+        "delete",
+        "doctor",
+        "e",
+        "exec",
+        "exec-server",
+        "features",
+        "help",
+        "login",
+        "logout",
+        "mcp",
+        "mcp-server",
+        "migrate-rollouts",
+        "plugin",
+        "queue",
+        "remote-control",
+        "review",
+        "sandbox",
+        "unarchive",
+        "update",
+    ],
     rejects: &[],
     untested: false,
 };
@@ -390,13 +420,10 @@ fn claude_args(args: &[String]) -> Vec<String> {
     out
 }
 
-/// Codex: `resume <x>` and `fork <x>` when `<x>` is a session ID or `--last`, and everything when
-/// the first token is `exec` (a one-shot run). Anything else is kept, e.g. `-p resume x` (a profile
-/// named "resume").
+/// Codex: `resume <x>` and `fork <x>` when `<x>` is a session ID or `--last`, after the hook flags
+/// cmux's wrapper puts first. Anything else is kept, e.g. `-p resume x` (a profile named "resume");
+/// a one-shot `exec` run loses the session (see `CODEX_FLAGS`).
 fn codex_args(args: &[String]) -> Vec<String> {
-    if args.first().is_some_and(|a| a == "exec") {
-        return vec![];
-    }
     let args = without_cmux_hooks(args);
     let mut out = vec![];
     let mut i = 0;
@@ -575,8 +602,14 @@ mod tests {
         // A profile named "resume" is a flag value, not the subcommand.
         let profile = strings(&["-p", "resume"]);
         assert_eq!(codex.kept_args(&profile), profile);
-        // A one-shot `exec` run keeps nothing.
-        assert_eq!(codex.kept_args(&strings(&["exec", "fix it", "--json"])), strings(&[]));
+        // A one-shot `exec` run (or another subcommand) is not a session: its sandbox flags would
+        // be lost, so it is not resumed.
+        for args in [strings(&["exec", "-s", "read-only", "fix it"]), strings(&["-m", "o3", "review"])] {
+            assert!(matches!(codex.check_args(&args).lost, Some(flags::Lost::NotASession(_))), "{args:?}");
+            assert_eq!(codex.resume_command(A, &args), None, "{args:?}");
+        }
+        // A prompt is not a subcommand.
+        assert!(codex.resume_command(A, &strings(&["-s", "read-only", "fix the exec path"])).is_some());
         // The hook flags cmux's wrapper puts first go without a note.
         let hooked = strings(&[
             "--enable",
