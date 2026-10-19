@@ -55,8 +55,8 @@ fn serve_until(
     listener.set_nonblocking(true)?;
     // Connections queued or being handled; the accept loop keeps it at most `WORKERS + QUEUE`.
     let busy = AtomicUsize::new(0);
-    // When the last request came. Only a request read in full counts, so connections that send
-    // nothing don't keep the server running.
+    // When the UI was last used (`Server::is_use`): connections that send nothing, and requests
+    // anyone could send, don't keep the server running.
     let last = Mutex::new(Instant::now());
     let (queue, inbox) = mpsc::channel::<TcpStream>();
     let inbox = Mutex::new(inbox);
@@ -175,11 +175,16 @@ fn handle_connection(stream: &TcpStream, server: &Server<'_>, make_ctx: &MakeCtx
     let reader = Deadline { stream, until: Instant::now() + REQUEST_DEADLINE };
     match http::read_request(&mut BufReader::new(reader)) {
         Ok(req) => {
-            seen();
+            let used = server.is_use(&req);
+            if used {
+                seen();
+            }
             let response = server.handle(&req, make_ctx);
             let _ = http::write_response(&mut &*stream, &response);
-            // A command can run for long; idle counts from when it ended.
-            seen();
+            if used {
+                // A command can run for long; idle counts from when it ended.
+                seen();
+            }
         }
         Err(response) => {
             let _ = http::write_response(&mut &*stream, &response);
@@ -560,16 +565,31 @@ mod tests {
 
     /// The one test that waits for the idle timeout.
     #[test]
-    fn stops_once_idle_and_connections_without_a_request_do_not_count() {
+    fn stops_once_idle_and_only_use_of_the_ui_counts() {
         let (listener, port) = listen();
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        // What another site, or a stray client, can send: none of it is use of the UI.
+        let noise = [
+            String::new(),
+            format!("GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+            format!("GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+            "GET / HTTP/1.1\r\nHost: evil.example\r\n\r\n".to_string(),
+            format!("DELETE / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+            format!(
+                "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+                 Content-Length: 17\r\n\r\n{{\"args\":[\"list\"]}}"
+            ),
+        ];
         let pinger = std::thread::spawn(move || {
             let started = Instant::now();
-            while started.elapsed() < Duration::from_secs(4) {
-                if TcpStream::connect(("127.0.0.1", port)).is_err() {
+            for req in noise.iter().cycle() {
+                if started.elapsed() > Duration::from_secs(4) {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else { break };
+                let _ = s.write_all(req.as_bytes());
+                drop(s);
+                std::thread::sleep(Duration::from_millis(50));
             }
         });
         let dir = tempfile::tempdir().unwrap();

@@ -110,6 +110,22 @@ impl<'a> Server<'a> {
         }
     }
 
+    /// Whether a request is someone using the UI: the page's own files, or a command with the
+    /// key. Only these keep the server from stopping when idle; anything another site can send
+    /// (a wrong path, no key, `/api/hello`) does not.
+    pub fn is_use(&self, req: &Request) -> bool {
+        if !self.own_host(req.header("host")) {
+            return false;
+        }
+        match (req.method.as_str(), req.path.as_str()) {
+            ("GET", "/" | "/app.js" | "/app.css") => true,
+            ("POST", "/api/run") => {
+                !self.foreign_origin(req) && req.header("x-sessionsnap-token").is_some_and(|t| same(t, &self.token))
+            }
+            _ => false,
+        }
+    }
+
     fn own_host(&self, host: Option<&str>) -> bool {
         host.is_some_and(|h| h == format!("127.0.0.1:{}", self.port) || h == format!("localhost:{}", self.port))
     }
@@ -414,6 +430,34 @@ mod tests {
             }
         });
         assert_eq!(most.into_inner(), 1);
+    }
+
+    #[test]
+    fn only_the_page_and_keyed_commands_are_use() {
+        let s = server();
+        let origin = format!("http://127.0.0.1:{PORT}");
+        for (r, want) in [
+            (req("GET", "/", &[], ""), true),
+            (req("GET", "/app.js", &[], ""), true),
+            (req("GET", "/app.css", &[], ""), true),
+            (api(r#"{"args":["list"]}"#), true),
+            (req("GET", "/nope", &[], ""), false),
+            (req("GET", "/api/hello", &[], ""), false),
+            (req("POST", "/", &[], ""), false),
+            (show_req(&[("content-type", "application/json")]), false),
+            (req("POST", "/api/run", &[("content-type", "application/json")], "{}"), false),
+            (req("POST", "/api/run", &[("x-sessionsnap-token", "old")], "{}"), false),
+            (
+                req("POST", "/api/run", &[("x-sessionsnap-token", "t0k"), ("origin", "http://evil.example")], "{}"),
+                false,
+            ),
+            (req("POST", "/api/run", &[("x-sessionsnap-token", "t0k"), ("origin", origin.as_str())], "{}"), true),
+        ] {
+            assert_eq!(s.is_use(&r), want, "{} {} {:?}", r.method, r.path, r.headers);
+        }
+        let mut r = req("GET", "/", &[], "");
+        r.headers[0].1 = "evil.example:47317".into();
+        assert!(!s.is_use(&r), "wrong host");
     }
 
     fn show_req(headers: &[(&str, &str)]) -> Request {
