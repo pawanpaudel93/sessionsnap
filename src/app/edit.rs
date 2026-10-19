@@ -84,7 +84,8 @@ pub fn edit(
     let mut result = commit(ctx, name, base, workspaces, source, message, notes, false)?;
     // What the edit read from cmux is a live launch seen now: every open session's, checked.
     if let Some(open) = &open
-        && let Ok((seen, _)) = capture(open, &ctx.agents, &[])
+        && let Ok((captured, _)) = capture(open, &ctx.agents, &[])
+        && let seen = crate::domain::capture::seen(open, &ctx.agents, &captured)
         && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &seen, &read_at)
         && let Commit::Saved { warnings, .. } = &mut result
     {

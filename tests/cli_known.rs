@@ -409,13 +409,16 @@ fn recorded_a(env: &Env) -> Value {
     record["sessions"][format!("claude:{A}")].clone()
 }
 
-/// Completing the record after a failed update: a saved version that contradicts an entry (here
-/// the older `old` versions against `work`'s plan mode) leaves the session out, failing closed,
-/// instead of picking one.
+/// Probe 5: a correct entry, then an unrelated failed update. Completing the record compares the
+/// entry only with versions written since that failed update (and since the entry was seen), so
+/// `old`'s older copy of A, saved without flags, doesn't make it undecided.
 #[test]
-fn completing_the_record_leaves_out_a_contradicted_entry() {
+fn an_unrelated_failed_update_leaves_a_correct_entry_alone() {
     let env = partial_save_history();
-    assert_eq!(args(&recorded_a(&env)), PLAN);
+    let before = recorded_a(&env);
+    assert_eq!(args(&before), PLAN);
+    // Version times are to the second: the failed update comes later than `old` v2.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     let store = env.dir.path().join("store");
     let blocker = store.join(format!("sessions.tmp-{}", std::process::id()));
     std::fs::create_dir(&blocker).unwrap();
@@ -424,8 +427,10 @@ fn completing_the_record_leaves_out_a_contradicted_entry() {
     std::fs::remove_dir(&blocker).unwrap();
     assert!(store.join("sessions.dirty").is_file());
     let p = env.run(&["recent", "--plan"]).unwrap().json;
-    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
-    assert!(!env.run(&["restore", "work", "--plan"]).unwrap().json["plan"]["actions"].to_string().contains(A));
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert_eq!(recorded_a(&env), before);
+    let p = env.run(&["restore", "work", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
 }
 
 /// The update that failed held the newer, stricter launch: the looser entry doesn't win.
@@ -469,4 +474,66 @@ fn a_rebuilt_record_keeps_agreeing_flags() {
     std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
     let p = env.run(&["recent", "--plan"]).unwrap().json;
     assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+}
+
+/// Probe 8: an older, looser launch (`--dangerously-skip-permissions`) never wins a rebuild.
+#[test]
+fn a_rebuild_never_picks_a_looser_launch() {
+    let env = setup();
+    run_a_with(&env, &["--dangerously-skip-permissions"]);
+    env.run(&["save", "aaa"]).unwrap();
+    run_a_with(&env, &[]);
+    env.run(&["save", "zzz"]).unwrap();
+    close_a(&env);
+    std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    let p = env.run(&["restore", "zzz", "--plan"]).unwrap().json;
+    assert!(!p["plan"]["actions"].to_string().contains("dangerously"), "{p}");
+}
+
+/// Probe 9: a session a rebuild couldn't decide is decided by the next live reading.
+#[test]
+fn a_live_save_decides_an_undecided_session() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
+    // Any plan reads the record, rebuilding it.
+    env.run(&["restore", "old", "--plan"]).unwrap();
+    assert_eq!(recorded_a(&env)["leftOut"], "its flags differ between saved versions; resume it by hand");
+    // A still runs in plan mode: a live save sees it.
+    env.run(&["save", "work2"]).unwrap();
+    assert_eq!(args(&recorded_a(&env)), PLAN);
+    assert!(recorded_a(&env).get("leftOut").is_none(), "{}", recorded_a(&env));
+    close_a(&env);
+    let p = env.run(&["restore", "work2", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+}
+
+/// A launch whose flags couldn't be kept stays left out, whatever later live saves see.
+#[test]
+fn a_lost_launch_stays_lost_after_a_live_save() {
+    let env = setup();
+    run_a_with(&env, &["--frobnicate"]);
+    env.run(&["save", "work"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "later"]).unwrap();
+    assert_eq!(recorded_a(&env)["leftOut"], LOST);
+}
+
+/// A live launch whose flags hold a control character is recorded as left out, so the record's
+/// older flags are never used for it.
+#[test]
+fn a_launch_with_control_characters_is_recorded_as_left_out() {
+    let env = setup();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    run_a_with(&env, &["--model", "a\u{1b}b"]);
+    env.run(&["save", "later"]).unwrap();
+    assert_eq!(recorded_a(&env)["leftOut"], "its launch flags have control characters; resume it by hand");
+    close_a(&env);
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
 }

@@ -248,14 +248,21 @@ impl Store {
         Ok(aside)
     }
 
-    /// Marks the record as missing launches (an update failed): the next read adds what the
-    /// snapshots tell.
-    pub fn mark_sessions_dirty(&self) {
-        let _ = fs::write(self.root.join("sessions.dirty"), "");
+    /// Marks the record as missing launches read from cmux at `at` (an update failed): the next
+    /// read adds what the snapshots tell. Keeps the earliest such time.
+    pub fn mark_sessions_dirty(&self, at: &str) {
+        let path = self.root.join("sessions.dirty");
+        let earliest = match fs::read_to_string(&path) {
+            Ok(old) if !old.trim().is_empty() && old.trim() < at => return,
+            _ => at,
+        };
+        let _ = fs::write(path, earliest);
     }
 
-    pub fn sessions_dirty(&self) -> bool {
-        self.root.join("sessions.dirty").exists()
+    /// When the record is marked as missing launches: the earliest failed update's read time
+    /// (empty when not known, as in a marker written before the time was kept).
+    pub fn sessions_dirty(&self) -> Option<String> {
+        fs::read_to_string(self.root.join("sessions.dirty")).ok().map(|t| t.trim().to_string())
     }
 
     pub fn clear_sessions_dirty(&self, _lock: &Lock) {
