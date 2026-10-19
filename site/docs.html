@@ -391,8 +391,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               too long, or holds a control character or a credential reads “its flags were left out;
               resume it by hand”). A record of every session seen
               (<code translate="no">sessions.json</code>, never pruned) keeps the flags of its newest
-              launch as <code translate="no">save</code> read them from cmux; only those live saves
-              write it, never edits, copies or restores. Every restore, <code translate="no">recent</code>
+              launch as read from cmux; every live read of cmux writes it (<code translate="no">save</code>,
+              and edits that read cmux), never copies or restores. Every restore, <code translate="no">recent</code>
               and edit that puts a session in a tab reads it: once left out, a session stays left
               out, and otherwise it resumes with its newest flags (with a warning when the tab's own
               differ). A session seen nowhere resumes with no flags and a warning.

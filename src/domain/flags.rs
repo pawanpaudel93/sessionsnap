@@ -168,6 +168,9 @@ pub struct FlagCheck {
     pub lost: Option<Lost>,
     /// More to say in the note about what was left out (no values).
     pub remarks: Vec<String>,
+    /// The kept words of flags that limit the agent (each restricting flag with its values), in
+    /// order: two launches with the same ones run with the same restrictions.
+    pub restricting: Vec<String>,
 }
 
 impl FlagCheck {
@@ -337,6 +340,7 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
                 lose(&mut out, Lost::Restriction(o.name.clone()));
             }
         }
+        let before = out.kept.len();
         if keep_switch {
             out.kept.push(o.whole.unwrap_or(&o.name).to_string());
         } else if !kept.is_empty() {
@@ -347,6 +351,10 @@ pub fn check(args: &[String], policy: &Policy) -> FlagCheck {
                     out.kept.extend(kept.iter().map(|v| v.to_string()));
                 }
             }
+        }
+        if restricts {
+            let words = out.kept[before..].to_vec();
+            out.restricting.extend(words);
         }
     }
     out
@@ -572,7 +580,10 @@ mod tests {
             "-c",
             "model=\"o3\"",
         ]);
-        assert_eq!(check(&args, &POLICY), FlagCheck { kept: args.clone(), ..Default::default() });
+        assert_eq!(
+            FlagCheck { restricting: vec![], ..check(&args, &POLICY) },
+            FlagCheck { kept: args.clone(), ..Default::default() }
+        );
     }
 
     #[test]
@@ -670,7 +681,8 @@ mod tests {
             words(&["-c", "sandbox_mode=read-only"]),
             words(&["-c", "features.web_search=false"]),
         ] {
-            assert_eq!(check(&args, &POLICY), FlagCheck { kept: args.clone(), ..Default::default() }, "{args:?}");
+            let c = FlagCheck { restricting: vec![], ..check(&args, &POLICY) };
+            assert_eq!(c, FlagCheck { kept: args.clone(), ..Default::default() }, "{args:?}");
         }
         // Neutral flags and config keys are only noted.
         for args in [words(&["--model", "a b"]), words(&["-c", "model_x={}"]), words(&["--add-dir", "[x]"])] {

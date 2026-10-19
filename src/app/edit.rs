@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::Ctx;
 use super::snapshots::{Base, Commit, commit};
+use crate::domain::capture::capture;
 use crate::domain::diff::{self, Change};
 use crate::domain::edit::{self, EditCtx, Op};
 use crate::domain::model::{Source, Workspace};
@@ -52,6 +53,7 @@ pub fn edit(
     // cmux when it is open there.
     let sets_session =
         ops.iter().any(|o| matches!(o, Op::TabAddSession { .. } | Op::TabSetSession { .. } | Op::WsFrom { .. }));
+    let read_at = super::known::now();
     let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
         Some(super::read_open(ctx.terminal.as_ref())?)
     } else if sets_session {
@@ -79,5 +81,14 @@ pub fn edit(
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
     let lock = lock.ok_or_else(|| anyhow::anyhow!("an edit is saved under its snapshot's lock"))?;
     let base = Base { lock: &lock, latest: Some(previous.version), previous: Some(&previous) };
-    Ok(Edited::Committed(commit(ctx, name, base, workspaces, source, message, notes, false)?))
+    let mut result = commit(ctx, name, base, workspaces, source, message, notes, false)?;
+    // What the edit read from cmux is a live launch seen now: every open session's, checked.
+    if let Some(open) = &open
+        && let Ok((seen, _)) = capture(open, &ctx.agents, &[])
+        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &seen, &read_at)
+        && let Commit::Saved { warnings, .. } = &mut result
+    {
+        warnings.push(format!("could not update the record of sessions: {e:#}"));
+    }
+    Ok(Edited::Committed(result))
 }

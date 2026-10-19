@@ -1,5 +1,6 @@
-//! The record of every session seen (`domain::known`), kept in the store: built from every
-//! snapshot on first use, and updated only by `save`'s live captures.
+//! The record of every session seen (`domain::known`), kept in the store: updated by every live
+//! read of cmux (`save`, and edits that read it), and completed from every snapshot on first use,
+//! after a failed update, or when it can't be read.
 
 use anyhow::Result;
 
@@ -11,7 +12,7 @@ use crate::domain::known::KnownSessions;
 use crate::domain::model::Workspace;
 
 /// The record of every session seen. Built from every snapshot's readable versions when there is
-/// none yet; when an update failed, what the snapshots tell is added to it; one that can't be read
+/// none yet; when an update failed, sessions it lacks are added from them; one that can't be read
 /// is moved aside (never overwritten) and built again.
 pub fn load(store: &Store, agents: &Agents) -> Result<KnownSessions> {
     if let SessionsFile::Read(known) = store.read_sessions()
@@ -23,41 +24,41 @@ pub fn load(store: &Store, agents: &Agents) -> Result<KnownSessions> {
     current(store, agents, &lock)
 }
 
-/// The record, while holding its lock: read, or repaired and written back.
+/// The record, while holding its lock: read, or repaired and written back. Completing or
+/// rebuilding it from the snapshots only adds sessions it lacks (see `KnownSessions::fill_from`).
 fn current(store: &Store, agents: &Agents, lock: &Lock) -> Result<KnownSessions> {
     let dirty = store.sessions_dirty();
-    let known = match store.read_sessions() {
+    let mut known = match store.read_sessions() {
         SessionsFile::Read(known) if !dirty => return Ok(known),
-        SessionsFile::Read(mut known) => {
-            known.merge(seed(store, agents)?);
-            known
-        }
-        SessionsFile::Missing => seed(store, agents)?,
+        SessionsFile::Read(known) => known,
+        SessionsFile::Missing => KnownSessions::default(),
         SessionsFile::Bad(why) => {
             let aside = store.set_aside_sessions(lock)?;
             eprintln!(
                 "sessionsnap: the record of sessions could not be read ({why}); kept it as {} and built it again from the snapshots",
                 aside.display()
             );
-            seed(store, agents)?
+            KnownSessions::default()
         }
     };
+    let versions = saved_versions(store, agents)?;
+    known.fill_from(versions.iter().map(Vec::as_slice), agents);
     store.write_sessions(lock, &known)?;
     store.clear_sessions_dirty(lock);
     Ok(known)
 }
 
-/// Records the live launches `save` just captured from the terminal (only those: not workspaces it
-/// kept from the previous version). When that fails, the record is kept and marked, so the next
+/// Records live launches just read from the terminal, read at `at` (see `now`): what `save`
+/// captured (not the workspaces it kept from the previous version), or every session open when an
+/// edit read cmux. When that fails, the record is kept and marked, so the next
 /// read adds what the snapshots tell rather than miss a launch.
-pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace]) -> Result<()> {
+pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace], at: &str) -> Result<()> {
     let mut captured = captured.to_vec();
     crate::domain::agents::normalize_tabs(&mut captured, agents);
-    let at = utc_now();
     let result = (|| {
         let lock = store.lock_sessions()?;
         let mut known = current(store, agents, &lock)?;
-        if known.record_live(&captured, &at) {
+        if known.record_live(&captured, at) {
             store.write_sessions(&lock, &known)?;
         }
         Ok(())
@@ -68,39 +69,22 @@ pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace]) -> Re
     result
 }
 
-/// Now, as the record stores times: UTC, RFC 3339, so they sort as text.
-fn utc_now() -> String {
+/// Now, as the record stores times: UTC, RFC 3339, so they sort as text. Taken before cmux is
+/// read, so a slow read never makes its launches look newer than ones read after it started.
+pub fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-/// A version's `createdAt` (local time with offset) as the record stores times.
-fn utc_of(created_at: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(created_at)
-        .map(|t| t.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .unwrap_or_default()
-}
-
-/// The record as the snapshots tell it: the launches of every readable live save, oldest first,
-/// and every session left out in any version.
-fn seed(store: &Store, agents: &Agents) -> Result<KnownSessions> {
-    let mut versions = vec![];
+/// The workspaces of every readable version of every snapshot, normalized.
+fn saved_versions(store: &Store, agents: &Agents) -> Result<Vec<Vec<Workspace>>> {
+    let mut out = vec![];
     for name in store.list()? {
         for n in store.versions(&name)? {
             if let Ok(Ok(mut v)) = store.read_version(&name, n) {
                 crate::domain::agents::normalize_tabs(&mut v.workspaces, agents);
-                versions.push((utc_of(&v.created_at), v));
+                out.push(v.workspaces);
             }
         }
     }
-    versions.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut known = KnownSessions::default();
-    for (at, v) in &versions {
-        // A live save may also hold workspaces it kept from before (`save -w`); taking those as
-        // seen then can only happen here, once, for data from before the record existed.
-        if v.source.kind == "live" {
-            known.record_live(&v.workspaces, at);
-        }
-        known.record_left_out(&v.workspaces);
-    }
-    Ok(known)
+    Ok(out)
 }

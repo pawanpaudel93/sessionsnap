@@ -329,3 +329,129 @@ fn left_out_sticks_everywhere() {
     // The tab added now is left out (the one saved earlier stays as saved; restore leaves it out).
     assert_eq!(tabs.last().unwrap()["leftOut"], LOST, "{tabs:?}");
 }
+
+/// The launch command apply runs for session A, if any.
+fn launched_a(env: &Env) -> Option<String> {
+    env.fake.launched.borrow().iter().find_map(|t| t.command.clone().filter(|c| c.contains(A)))
+}
+
+/// An edit that reads A's live flags from cmux records them: restoring later uses them.
+#[test]
+fn an_edit_records_the_live_flags_it_reads() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.run(&["tab", "old", "Alpha#1", "--remove"]).unwrap();
+    env.run(&["tab", "old", "Alpha", "--add-session", A]).unwrap();
+    close_a(&env);
+    let p = env.run(&["restore", "old", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert!(!p["plan"]["warnings"].to_string().contains(NEWEST), "{p}");
+    let r = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&r)), PLAN, "{r}");
+    env.run(&["apply", p["plan"]["planId"].as_str().unwrap()]).unwrap();
+    assert!(launched_a(&env).unwrap().contains("plan"));
+}
+
+/// `ws --add-live` reads the live flags too.
+#[test]
+fn adding_a_live_workspace_records_its_flags() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.fake.state.borrow_mut().workspaces[0].name = "Gamma".into();
+    env.run(&["ws", "old", "--add-live", "Gamma"]).unwrap();
+    close_a(&env);
+    env.fake.state.borrow_mut().workspaces.clear();
+    let p = env.run(&["restore", "old", "--plan"]).unwrap().json;
+    let tabs: Vec<Value> = p["plan"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|a| a["tabs"].as_array().unwrap().clone())
+        .filter(|t| t["sessionId"] == A)
+        .collect();
+    assert!(!tabs.is_empty() && tabs.iter().all(|t| args(t) == PLAN), "{p}");
+}
+
+/// An edit that sees A's live launch left out leaves A out everywhere after.
+#[test]
+fn an_edit_that_sees_a_left_out_launch_records_it() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &["--frobnicate"]);
+    env.run(&["tab", "old", "Alpha#1", "--remove"]).unwrap();
+    env.run(&["tab", "old", "Alpha", "--add-session", A]).unwrap();
+    close_a(&env);
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    env.fake.state.borrow_mut().workspaces.clear();
+    env.run(&["save", "x", "--from", "old@1"]).unwrap();
+    let p = env.run(&["restore", "x", "--plan"]).unwrap().json;
+    assert_eq!(resumes_a(&p), (false, true), "{p}");
+}
+
+/// `old` v1 (A without flags), `work` (A in plan mode), A closed, then `old -w Beta` v2, which
+/// keeps old's Alpha (A without flags) though it was not seen then.
+fn partial_save_history() -> Env {
+    let env = plan_mode_after_old();
+    // Versions are stamped to the second: this one must look newer than `work`.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    env.fake.state.borrow_mut().workspaces[1].cwd = "/w/b2".into();
+    env.run(&["save", "old", "-w", "Beta"]).unwrap();
+    env
+}
+
+/// The record's entry for session A, as stored.
+fn recorded_a(env: &Env) -> Value {
+    let text = std::fs::read_to_string(env.dir.path().join("store/sessions.json")).unwrap();
+    let record: Value = serde_json::from_str(&text).unwrap();
+    record["sessions"][format!("claude:{A}")].clone()
+}
+
+/// Completing the record after a failed update only adds what it lacks: an entry that was right
+/// stays as it was.
+#[test]
+fn completing_the_record_never_changes_an_entry() {
+    let env = partial_save_history();
+    let before = recorded_a(&env);
+    assert_eq!(args(&before), PLAN);
+    let store = env.dir.path().join("store");
+    let blocker = store.join(format!("sessions.tmp-{}", std::process::id()));
+    std::fs::create_dir(&blocker).unwrap();
+    env.fake.state.borrow_mut().workspaces[1].cwd = "/w/b3".into();
+    env.run(&["save", "third"]).unwrap();
+    std::fs::remove_dir(&blocker).unwrap();
+    assert!(store.join("sessions.dirty").is_file());
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert_eq!(recorded_a(&env), before);
+    let p = env.run(&["restore", "work", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+}
+
+/// Rebuilt from the snapshots, a session saved with different restrictions in different versions
+/// is left out: which launch is newer can't be told from them.
+#[test]
+fn a_rebuilt_record_leaves_out_sessions_with_differing_restrictions() {
+    let env = partial_save_history();
+    std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    assert!(p["plan"]["warnings"].to_string().contains("its flags differ between saved versions"), "{p}");
+    let p = env.run(&["restore", "work", "--plan"]).unwrap().json;
+    assert!(!p["plan"]["actions"].to_string().contains(A), "{p}");
+}
+
+/// Versions that agree on a session's restrictions give it those flags when the record is rebuilt.
+#[test]
+fn a_rebuilt_record_keeps_agreeing_flags() {
+    let env = setup();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    env.run(&["save", "copy", "--from", "work"]).unwrap();
+    close_a(&env);
+    std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+}
