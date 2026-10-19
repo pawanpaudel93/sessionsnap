@@ -8,7 +8,7 @@ pub mod http;
 
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,18 @@ pub fn serve(
     make_ctx: &MakeCtx<'_>,
     idle: Duration,
     show_at_start: bool,
+) -> Result<()> {
+    serve_until(listener, server, make_ctx, idle, show_at_start, &AtomicBool::new(false))
+}
+
+/// `serve`, which also stops once `stop` is set.
+fn serve_until(
+    listener: TcpListener,
+    server: &Server<'_>,
+    make_ctx: &MakeCtx<'_>,
+    idle: Duration,
+    show_at_start: bool,
+    stop: &AtomicBool,
 ) -> Result<()> {
     listener.set_nonblocking(true)?;
     // Connections queued or being handled; the accept loop keeps it at most `WORKERS`, so a
@@ -81,7 +93,7 @@ pub fn serve(
                     }
                 },
             }
-            if last.lock().unwrap_or_else(|e| e.into_inner()).elapsed() >= idle {
+            if stop.load(Ordering::SeqCst) || last.lock().unwrap_or_else(|e| e.into_inner()).elapsed() >= idle {
                 // Workers finish what they have, then stop; the scope waits for them.
                 drop(queue);
                 return Ok(());
@@ -315,114 +327,120 @@ mod tests {
         ));
     }
 
-    fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + '_ {
+    fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + Send + Sync + '_ {
         move |cli, input| Ok(crate::testing::ctx(dir, FakeTerminal::default(), cli.json, cli.yes, input))
+    }
+
+    /// Sets the flag when dropped, so a failed client still stops the server.
+    struct StopOnDrop<'a>(&'a AtomicBool);
+
+    impl Drop for StopOnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Serves on `listener` while `client` runs, then stops: the idle timeout plays no part.
+    fn serve_while<T: Send>(
+        listener: TcpListener,
+        server: &Server<'_>,
+        make: &MakeCtx<'_>,
+        show_at_start: bool,
+        client: impl FnOnce() -> T + Send,
+    ) -> T {
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let client = scope.spawn(|| {
+                let _stop = StopOnDrop(&stop);
+                client()
+            });
+            serve_until(listener, server, make, Duration::from_secs(60), show_at_start, &stop).unwrap();
+            client.join().unwrap()
+        })
+    }
+
+    fn listen() -> (TcpListener, u16) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    }
+
+    fn get(port: u16, path: &str) -> String {
+        let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+        request(port, &req, Duration::from_secs(10)).unwrap()
     }
 
     #[test]
     fn a_silent_client_does_not_block_others() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-        let silent = std::thread::spawn(move || {
-            let _s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            tx.send(()).unwrap();
-            let _ = done_rx.recv();
-        });
-        rx.recv().unwrap();
-        let client = std::thread::spawn(move || {
-            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            write!(s, "GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
-            let mut out = String::new();
-            s.read_to_string(&mut out).unwrap();
-            out
-        });
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        let started = Instant::now();
-        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        let out = client.join().unwrap();
-        done_tx.send(()).unwrap();
-        silent.join().unwrap();
-        assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
-        assert!(started.elapsed() < Duration::from_secs(10));
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            let _silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let started = Instant::now();
+            (get(port, "/api/hello"), started.elapsed())
+        });
+        assert!(out.0.starts_with("HTTP/1.1 200 OK"), "{}", out.0);
+        assert!(out.1 < Duration::from_secs(1), "waited {:?} behind the silent client", out.1);
     }
 
-    fn hello(port: u16) -> String {
-        let req = format!("GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
-        request(port, &req, Duration::from_secs(10)).unwrap()
-    }
+    /// Sends a byte every 200 ms until dropped or the server drops it.
+    struct Drip(Option<std::sync::mpsc::Sender<()>>, Option<std::thread::JoinHandle<()>>);
 
-    /// Sends a byte every 200 ms until `stop` or the server drops it.
-    fn drip(port: u16, stop: std::sync::mpsc::Receiver<()>) -> std::thread::JoinHandle<()> {
+    fn drip(port: u16) -> Drip {
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        std::thread::spawn(move || {
-            while stop.recv_timeout(Duration::from_millis(200)).is_err() {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            while stopped.recv_timeout(Duration::from_millis(200)) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
                 if s.write_all(b"G").is_err() {
                     break;
                 }
             }
-        })
+        });
+        Drip(Some(stop), Some(thread))
+    }
+
+    impl Drop for Drip {
+        fn drop(&mut self) {
+            drop(self.0.take());
+            let _ = self.1.take().map(|t| t.join());
+        }
     }
 
     #[test]
     fn a_slow_client_does_not_hold_up_a_second_request() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
-        let (stop, stopped) = std::sync::mpsc::channel();
-        let slow = drip(port, stopped);
-        let client = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
-            let started = Instant::now();
-            let out = (hello(port), started.elapsed());
-            let _ = stop.send(());
-            out
-        });
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(600), false).unwrap();
-        let (out, took) = client.join().unwrap();
-        slow.join().unwrap();
+        let (out, took) = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            let _slow = drip(port);
+            let started = Instant::now();
+            (get(port, "/api/hello"), started.elapsed())
+        });
         assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
         assert!(took < Duration::from_secs(1), "waited {took:?} behind the slow client");
     }
 
     #[test]
     fn connections_beyond_the_workers_are_refused() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
-        let client = std::thread::spawn(move || {
-            let stops: Vec<_> = (0..WORKERS)
-                .map(|_| {
-                    let (stop, stopped) = std::sync::mpsc::channel();
-                    (stop, drip(port, stopped))
-                })
-                .collect();
-            std::thread::sleep(Duration::from_millis(300));
-            let full = hello(port);
-            for (stop, slow) in stops {
-                let _ = stop.send(());
-                slow.join().unwrap();
-            }
-            std::thread::sleep(Duration::from_millis(300));
-            (full, hello(port))
-        });
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(1500), false).unwrap();
-        let (full, after) = client.join().unwrap();
+        let (full, after) = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            // Connections are accepted in order, so these hold every worker when the next comes.
+            let slow: Vec<_> = (0..WORKERS).map(|_| drip(port)).collect();
+            let full = get(port, "/api/hello");
+            drop(slow);
+            (full, get(port, "/api/hello"))
+        });
         assert!(full.starts_with("HTTP/1.1 503 "), "{full}");
         assert!(after.starts_with("HTTP/1.1 200 OK"), "{after}");
     }
 
+    /// The one test that waits for the idle timeout.
     #[test]
-    fn connections_without_a_request_do_not_keep_it_running() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+    fn stops_once_idle_and_connections_without_a_request_do_not_count() {
+        let (listener, port) = listen();
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
         let pinger = std::thread::spawn(move || {
             let started = Instant::now();
@@ -440,35 +458,42 @@ mod tests {
         let took = started.elapsed();
         pinger.join().unwrap();
         assert!(took < Duration::from_secs(2), "{took:?}");
+        assert!(!is_running(port), "the server stopped");
     }
 
     #[test]
     fn a_slow_drip_client_is_cut_off_at_the_deadline() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
-        let drip = std::thread::spawn(move || {
-            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            for _ in 0..14 {
-                if s.write_all(b"G").is_err() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        });
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        let started = Instant::now();
-        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        let took = started.elapsed();
-        drip.join().unwrap();
+        let took = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(14))).unwrap();
+            let mut w = s.try_clone().unwrap();
+            let started = Instant::now();
+            let dripper = std::thread::spawn(move || {
+                for _ in 0..70 {
+                    if w.write_all(b"G").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            });
+            // The server answers and closes once the deadline has passed.
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+            let took = started.elapsed();
+            drop(s);
+            dripper.join().unwrap();
+            took
+        });
+        assert!(took >= REQUEST_DEADLINE - Duration::from_millis(500), "{took:?}");
         assert!(took < Duration::from_secs(8), "{took:?}");
     }
 
     #[test]
     fn a_second_ui_asks_the_running_server_to_show_itself() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let seen = std::sync::Mutex::new(vec![]);
         let server = Server::new(
             port,
@@ -478,11 +503,11 @@ mod tests {
                 Ok(Shown::whole("reused"))
             }),
         );
-        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        assert_eq!(client.join().unwrap(), Ok(("reused".to_string(), true)));
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            ask_to_show(port).map_err(|e| format!("{e:#}"))
+        });
+        assert_eq!(out, Ok(("reused".to_string(), true)));
         assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{port}/#t=k3y")]);
     }
 
@@ -498,64 +523,62 @@ mod tests {
 
     #[test]
     fn the_page_loads_while_a_show_waits_for_it() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(port, "k3y".into(), Box::new(show_that_loads_the_page(port)));
-        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        assert_eq!(client.join().unwrap(), Ok(("reused".to_string(), true)));
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            ask_to_show(port).map_err(|e| format!("{e:#}"))
+        });
+        assert_eq!(out, Ok(("reused".to_string(), true)));
     }
 
     #[test]
     fn showing_at_start_does_not_block_the_page() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let shown = std::sync::Mutex::new(None);
+        let (listener, port) = listen();
+        let (done, shown) = std::sync::mpsc::channel();
+        let done = std::sync::Mutex::new(done);
         let load = show_that_loads_the_page(port);
         let server = Server::new(
             port,
             "k3y".into(),
             Box::new(|u: &str| {
                 let r = load(u);
-                *shown.lock().unwrap() = Some(r.as_ref().map(|s| s.place.to_string()).map_err(|e| format!("{e:#}")));
+                let _ =
+                    done.lock().unwrap().send(r.as_ref().map(|s| s.place.to_string()).map_err(|e| format!("{e:#}")));
                 r
             }),
         );
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300), true).unwrap();
-        drop(server);
-        assert_eq!(shown.into_inner().unwrap(), Some(Ok("reused".to_string())));
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), true, move || {
+            shown.recv_timeout(Duration::from_secs(10)).unwrap()
+        });
+        assert_eq!(out, Ok("reused".to_string()));
     }
 
     #[test]
     fn a_second_ui_hears_when_the_key_did_not_reach_the_page() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(
             port,
             "k3y".into(),
             Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("no socket".into()) })),
         );
-        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        assert_eq!(client.join().unwrap(), Ok(("dock".to_string(), false)));
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            ask_to_show(port).map_err(|e| format!("{e:#}"))
+        });
+        assert_eq!(out, Ok(("dock".to_string(), false)));
     }
 
     #[test]
     fn asking_a_server_that_cannot_show_is_an_error() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let (listener, port) = listen();
         let server = Server::new(port, "k3y".into(), Box::new(|_| anyhow::bail!("no cmux")));
-        let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
-        let make = test_ctx_maker(dir.path());
-        serve(listener, &server, &make, Duration::from_millis(300), false).unwrap();
-        let err = client.join().unwrap().unwrap_err();
+        let err = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            ask_to_show(port).map_err(|e| format!("{e:#}"))
+        })
+        .unwrap_err();
         assert!(err.contains("no cmux"), "{err}");
     }
 }
