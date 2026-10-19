@@ -111,13 +111,20 @@ fn serve_until(
     })
 }
 
-/// Answers 503 on the accept thread without waiting for the client.
+/// Answers 503 without holding up the accept thread.
 fn refuse(stream: TcpStream) {
-    let _ = stream.set_nonblocking(true);
-    // Read what already arrived: closing on unread bytes would reset the connection before the
-    // client reads the answer.
-    let _ = (&stream).read(&mut [0u8; http::MAX_HEAD]);
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
     let _ = http::write_response(&mut &stream, &http::Response::text(503, "busy; try again"));
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    // Closing on request bytes still unread would reset the connection, and the client could lose
+    // the answer: read until it closes, briefly, on a thread of its own.
+    std::thread::spawn(move || {
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+        let until = Instant::now() + Duration::from_secs(1);
+        let mut buf = [0u8; 4096];
+        while Instant::now() < until && matches!((&stream).read(&mut buf), Ok(n) if n > 0) {}
+    });
 }
 
 /// Prints where `sessionsnap ui` showed its page, or why it could not.
@@ -527,6 +534,28 @@ mod tests {
             assert!(out.starts_with("HTTP/1.1 500 "), "{out}");
         }
         assert!(after.starts_with("HTTP/1.1 200 OK"), "{after}");
+    }
+
+    #[test]
+    fn a_refused_client_reads_its_503_even_when_it_sends_late() {
+        let (listener, port) = listen();
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let dir = tempfile::tempdir().unwrap();
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            let _full: Vec<_> = (0..WORKERS + QUEUE).map(|_| drip(port)).collect();
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            // The rest of the request comes after the server has answered.
+            s.write_all(b"GET /api/hello HTTP/1.1\r\n").unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+            let _ = s.write_all(format!("Host: 127.0.0.1:{port}\r\n\r\n").as_bytes());
+            std::thread::sleep(Duration::from_millis(20));
+            let mut out = vec![];
+            let read = s.read_to_end(&mut out).map_err(|e| e.kind());
+            (read.map(drop), String::from_utf8_lossy(&out).into_owned())
+        });
+        assert_eq!(out.0, Ok(()), "{}", out.1);
+        assert!(out.1.starts_with("HTTP/1.1 503 "), "{}", out.1);
     }
 
     /// The one test that waits for the idle timeout.
