@@ -56,3 +56,19 @@ assert.deepEqual(listable([{ name: "work" }, { name: "--x" }, { name: "-y" }]),
   { shown: [{ name: "work" }, { name: "-y" }], hidden: 1 });
 assert.deepEqual(listable([]), { shown: [], hidden: 0 });
 console.log("web page list: leaves out names starting with --");
+
+// A task whose `wanted()` is false by its turn (a search a newer one replaced) never runs.
+{
+  const inTurn2 = new Function(`${ser[0]}; return serializer();`)();
+  const ran = [];
+  let latest = 0;
+  const search = (q) => {
+    const mine = ++latest;
+    return inTurn2(async () => { ran.push(q); await sleep(5); return q; }, () => mine === latest);
+  };
+  const first = inTurn2(async () => { await sleep(20); return "save"; });
+  const results = await Promise.all([first, search("a"), search("au"), search("auth")]);
+  assert.deepEqual(ran, ["auth"]);
+  assert.deepEqual(results, ["save", undefined, undefined, "auth"]);
+  console.log("web page commands: a replaced search is skipped");
+}

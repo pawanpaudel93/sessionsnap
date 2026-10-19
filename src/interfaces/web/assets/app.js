@@ -72,11 +72,14 @@ function cliArgs(args) {
   return [command, ...options, ...(dashed ? ["--"] : []), ...values];
 }
 
-// Returns `inTurn(task)`, which runs `task` once every task given before it has settled.
+// Returns `inTurn(task, wanted)`, which runs `task` once every task given before it has settled.
+// If `wanted()` is false by then (a search a newer one replaced), it resolves to undefined
+// without running.
 function serializer() {
   let tail = Promise.resolve();
-  return (task) => {
-    const run = tail.then(task, task);
+  return (task, wanted) => {
+    const go = () => (!wanted || wanted() ? task() : undefined);
+    const run = tail.then(go, go);
     tail = run.catch(() => {});
     return run;
   };
@@ -86,8 +89,9 @@ function serializer() {
 const inTurn = serializer();
 
 // Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
-function sessionsnap(args, input) {
-  return inTurn(() => runCommand(cliArgs(args), input));
+// With `wanted`, resolves to undefined without sending when it is false by the command's turn.
+function sessionsnap(args, input, wanted) {
+  return inTurn(() => runCommand(cliArgs(args), input), wanted);
 }
 
 async function runCommand(args, input) {
@@ -658,7 +662,8 @@ function editTab(w, t, pos) {
   return li;
 }
 
-// A search box over a list: `load(query)` returns [{ label, sub, pick }].
+// A search box over a list: `load(query, wanted)` returns [{ label, sub, pick }]. It passes
+// `wanted` to its commands, which a newer search then skips; it returns null when one was skipped.
 function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to add." } = {}) {
   const results = h("ul", {});
   const input = h("input", { placeholder, "aria-label": placeholder });
@@ -675,7 +680,7 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
   let latest = 0;
   const run = () => guard(async () => {
     const mine = ++latest;
-    const items = await load(input.value.trim());
+    const items = await load(input.value.trim(), () => mine === latest);
     if (mine !== latest) return;
     if (items) show(items);
     else results.replaceChildren();
@@ -698,9 +703,10 @@ function addTabRow(w) {
   const slot = h("div", {});
   const sessions = h("button", { class: "ghost", onclick: () => {
     if (slot.firstChild) return slot.replaceChildren();
-    const p = picker("Search agent sessions by title, prompt or folder", async (q) => {
+    const p = picker("Search agent sessions by title, prompt or folder", async (q, wanted) => {
       if (!q) return null;
-      const r = await sessionsnap(["sessions", "--search", q, "--days", "365"]);
+      const r = await sessionsnap(["sessions", "--search", q, "--days", "365"], undefined, wanted);
+      if (!r) return null;
       return r.result.sessions.slice(0, 30).map(({ session: s, open }) => ({
         label: s.title || s.firstPrompt || s.sessionId,
         sub: `${agentName(s.agent)} · ${tilde(s.cwd)}${open ? " · open in cmux" : ""}`,
@@ -723,8 +729,9 @@ function addWorkspace(name, have) {
   const panel = () => {
     const slot = h("div", {});
     const fromOpen = () => {
-      const p = picker("Filter workspaces open in cmux", async (q) => {
-        const r = await sessionsnap(["open"]);
+      const p = picker("Filter workspaces open in cmux", async (q, wanted) => {
+        const r = await sessionsnap(["open"], undefined, wanted);
+        if (!r) return null;
         return r.result.workspaces
           .filter((w) => !have.has(w.name))
           .filter((w) => !q || w.name.toLowerCase().includes(q.toLowerCase()))
@@ -734,11 +741,14 @@ function addWorkspace(name, have) {
       p.focusInput();
     };
     const fromSnapshot = () => {
-      const p = picker("Filter workspaces in other snapshots", async (q) => {
-        const r = await sessionsnap(["list"]);
+      const p = picker("Filter workspaces in other snapshots", async (q, wanted) => {
+        const r = await sessionsnap(["list"], undefined, wanted);
+        if (!r) return null;
         const items = [];
         for (const s of listable(r.result.snapshots).shown.filter((x) => x.name !== name)) {
-          const v = await sessionsnap(["show", s.name]);
+          // A newer filter skips the rest of this load.
+          const v = await sessionsnap(["show", s.name], undefined, wanted);
+          if (!v) return null;
           for (const w of v.result.version.workspaces) {
             if (have.has(w.name)) continue;
             if (q && !`${s.name} ${w.name}`.toLowerCase().includes(q.toLowerCase())) continue;
