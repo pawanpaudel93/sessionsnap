@@ -230,7 +230,9 @@ restore), so a snapshot saved by an older sessionsnap never shows or passes a fl
 allowed. A tab whose saved flags can't be passed again (a restricting flag that can't be kept, or an
 untested agent's tab with flags) keeps its session ID but none of its flags, with the reason
 (`leftOut`): `show` gives it, and restore opens a plain shell in a new workspace, or skips the tab
-in an open one, with the reason.
+in an open one, with the reason. A `leftOut` edited by hand that is blank, longer than 200
+characters, or holds a control character or a credential is shown as "its flags were left out;
+resume it by hand".
 
 The tokens that pick another session are taken out before the list applies: the agent's own resume
 words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and

@@ -387,7 +387,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               or passes a flag that is no longer allowed. A tab whose saved flags can't be passed
               again keeps its session ID but none of its flags, with the reason
               (<code translate="no">leftOut</code>): restore opens a plain shell in a new workspace,
-              or skips the tab in an open one, with the reason. Versions written before the
+              or skips the tab in an open one, with the reason (a hand-edited reason that is blank,
+              too long, or holds a control character or a credential reads “its flags were left out;
+              resume it by hand”). Versions written before the
               allow-list may still hold their flags on disk until you prune or delete them; they are
               never shown or replayed. The tokens that pick another session are taken out first: the agent's
               own resume words and resume flags with the old ID, its continue flag, Claude Code's
