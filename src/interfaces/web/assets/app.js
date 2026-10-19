@@ -72,9 +72,25 @@ function cliArgs(args) {
   return [command, ...options, ...(dashed ? ["--"] : []), ...values];
 }
 
+// Returns `inTurn(task)`, which runs `task` once every task given before it has settled.
+function serializer() {
+  let tail = Promise.resolve();
+  return (task) => {
+    const run = tail.then(task, task);
+    tail = run.catch(() => {});
+    return run;
+  };
+}
+// The server runs one command at a time and refuses one that waits too long behind another, so
+// the page sends its own one at a time.
+const inTurn = serializer();
+
 // Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
-async function sessionsnap(args, input) {
-  args = cliArgs(args);
+function sessionsnap(args, input) {
+  return inTurn(() => runCommand(cliArgs(args), input));
+}
+
+async function runCommand(args, input) {
   if (!TOKEN) {
     throw new CommandError(
       "This page has no key yet. Click Reconnect to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
@@ -645,8 +661,12 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
       : [h("li", { class: "note" }, input.value.trim() ? "No matches." : emptyNote)]));
   };
   // `load` returns null for "nothing typed yet": the list then stays empty.
+  // Only the newest search shows its results; one that finishes later is dropped.
+  let latest = 0;
   const run = () => guard(async () => {
+    const mine = ++latest;
     const items = await load(input.value.trim());
+    if (mine !== latest) return;
     if (items) show(items);
     else results.replaceChildren();
   });

@@ -1,5 +1,6 @@
-// Checks how the web page turns a command into arguments (`cliArgs` in app.js): values that
-// start with `-` must reach clap as values, never as flags.
+// Checks how the web page sends commands (app.js): `cliArgs` turns a command into arguments, and
+// values that start with `-` must reach clap as values, never as flags; `serializer` sends them
+// one at a time.
 //   node scripts/test-web-args.mjs
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
@@ -26,3 +27,22 @@ for (const [input, want] of cases) {
   assert.deepEqual(cliArgs(input), want, JSON.stringify(input));
 }
 console.log(`web page arguments: ${cases.length} cases ok`);
+
+// `serializer` in app.js: the page's commands run one after another, even when one fails.
+const ser = src.match(/^function serializer\(\) \{\n[\s\S]*?\n\}\n/m);
+assert.ok(ser, "app.js has no top-level function serializer");
+const inTurn = new Function(`${ser[0]}; return serializer();`)();
+const log = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const task = (name, ms, fail) => async () => {
+  log.push(`start ${name}`);
+  await sleep(ms);
+  log.push(`end ${name}`);
+  if (fail) throw new Error(name);
+  return name;
+};
+const results = await Promise.allSettled([inTurn(task("a", 30)), inTurn(task("b", 5, true)), inTurn(task("c", 1))]);
+assert.deepEqual(log, ["start a", "end a", "start b", "end b", "start c", "end c"]);
+assert.deepEqual(results.map((r) => r.status), ["fulfilled", "rejected", "fulfilled"]);
+assert.equal(results[2].value, "c");
+console.log("web page commands: one at a time");
