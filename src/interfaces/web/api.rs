@@ -143,15 +143,19 @@ impl<'a> Server<'a> {
         }
     }
 
-    /// Whether a request is someone using the UI: the page's own files, or a command with the
-    /// key. Only these keep the server from stopping when idle; anything another site can send
+    /// Whether a request is someone using the UI: the page's own files (not loaded by another
+    /// site), or a command with the key. Only these keep the server from stopping when idle; anything another site can send
     /// (a wrong path, no key, `/api/hello`) does not.
     pub fn is_use(&self, req: &Request) -> bool {
         if !self.own_host(req.header("host")) {
             return false;
         }
         match (req.method.as_str(), req.path.as_str()) {
-            ("GET", "/" | "/app.js" | "/app.css") => true,
+            // Another site can load these too (a no-cors fetch, a script tag); browsers say so in
+            // Sec-Fetch-Site. cmux opening the page sends `none`, the page's own loads `same-origin`.
+            ("GET", "/" | "/app.js" | "/app.css") => {
+                req.header("sec-fetch-site").is_none_or(|site| site == "none" || site == "same-origin")
+            }
             ("POST", "/api/run") => {
                 !self.foreign_origin(req) && req.header("x-sessionsnap-token").is_some_and(|t| same(t, &self.token))
             }
@@ -474,6 +478,13 @@ mod tests {
             (req("GET", "/", &[], ""), true),
             (req("GET", "/app.js", &[], ""), true),
             (req("GET", "/app.css", &[], ""), true),
+            // cmux opening the page, and the page loading its files.
+            (req("GET", "/", &[("sec-fetch-site", "none")], ""), true),
+            (req("GET", "/app.js", &[("sec-fetch-site", "same-origin")], ""), true),
+            // Another site fetching or embedding them.
+            (req("GET", "/", &[("sec-fetch-site", "cross-site")], ""), false),
+            (req("GET", "/app.js", &[("sec-fetch-site", "cross-site")], ""), false),
+            (req("GET", "/app.css", &[("sec-fetch-site", "same-site")], ""), false),
             (api(r#"{"args":["list"]}"#), true),
             (req("GET", "/nope", &[], ""), false),
             (req("GET", "/api/hello", &[], ""), false),
