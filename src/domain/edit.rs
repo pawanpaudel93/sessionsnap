@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::agents::{Resume, find_session, flags_problem, problem, resume_status};
 use crate::domain::capture;
-use crate::domain::model::{SessionRef, Tab, Version, Workspace, find_by_name, has_control, parse_ref};
+use crate::domain::model::{SessionRef, Tab, Version, Workspace, canonical_id, find_by_name, has_control, parse_ref};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, Snapshots};
 
@@ -248,6 +248,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
         }
         Op::TabAddSession { ws: w, session_id, agent, title } => {
             clean("session ID", session_id)?;
+            let session_id = &canonical_id(session_id);
             clean("agent", agent.as_deref().unwrap_or(""))?;
             let i = find_ws(ws, w)?;
             let (kind, info) = find_session(ctx.agents, session_id, agent.as_deref())?;
@@ -289,6 +290,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
         }
         Op::TabSetSession { tab, session_id, agent } => {
             clean("session ID", session_id)?;
+            let session_id = &canonical_id(session_id);
             clean("agent", agent.as_deref().unwrap_or(""))?;
             let (w, t) = tab_at(ws, tab)?;
             let (kind, _) = find_session(ctx.agents, session_id, agent.as_deref())?;
@@ -523,6 +525,21 @@ mod tests {
         assert!(matches!(&ws[0].tabs[0], Tab::Agent { args, .. } if args.len() == 2));
         apply_ops(&mut ws, &[set(B)], &ctx).unwrap();
         assert!(matches!(&ws[0].tabs[0], Tab::Agent { agent, args, .. } if agent == "codex" && args.is_empty()));
+    }
+
+    /// UUIDs are compared in lowercase: an uppercase ID is the same session.
+    #[test]
+    fn uuid_session_ids_are_lowercased() {
+        const HEX: &str = "abcdef12-3456-4789-8abc-def012345678";
+        let (snapshots, _, mut ws) = setup();
+        let history = agents(vec![FakeHistory::with(&[(HEX, "/w/h", "hex")])]);
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None, left_out: Default::default() };
+        let add = Op::TabAddSession { ws: "Beta".into(), session_id: HEX.to_uppercase(), agent: None, title: None };
+        apply_ops(&mut ws, &[add], &ctx).unwrap();
+        assert_eq!(ws[1].tabs[1].session(), Some(SessionRef::new("claude", HEX)));
+        let set = Op::TabSetSession { tab: "Alpha#2".into(), session_id: HEX.to_uppercase(), agent: None };
+        apply_ops(&mut ws, &[set], &ctx).unwrap();
+        assert_eq!(ws[0].tabs[1].session(), Some(SessionRef::new("claude", HEX)));
     }
 
     #[test]

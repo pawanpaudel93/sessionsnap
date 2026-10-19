@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
+use crate::domain::model::{SessionRef, Tab, Workspace, canonical_id, has_control};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, SessionInfo};
 
@@ -20,7 +20,8 @@ const LEFT_OUT: &str = "its flags were left out; resume it by hand";
 /// plain shell. Every read of a snapshot goes through this (`app::load_normalized`).
 pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
     for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        let Tab::Agent { agent, args, left_out, .. } = tab else { continue };
+        let Tab::Agent { agent, session_id, args, left_out, .. } = tab else { continue };
+        *session_id = canonical_id(session_id);
         if let Some(kind) = agents.kind_of(agent)
             && kind != agent
         {
@@ -178,6 +179,25 @@ mod tests {
             Tab::Agent { left_out, .. } => left_out.clone(),
             Tab::Terminal { .. } => None,
         }
+    }
+
+    #[test]
+    fn uuid_session_ids_load_in_lowercase() {
+        let mut ws = vec![Workspace {
+            name: "W".into(),
+            color: None,
+            cwd: "/w".into(),
+            git_branch: None,
+            cmux_workspace_id: None,
+            tabs: vec![
+                agent_tab("claude", "t", "/w", "ABCDEF12-3456-4789-8ABC-DEF012345678"),
+                agent_tab("opencode", "o", "/w", "ses_AB"),
+            ],
+        }];
+        normalize_tabs(&mut ws, &agents(vec![]));
+        assert_eq!(ws[0].tabs[0].session().unwrap().session_id, "abcdef12-3456-4789-8abc-def012345678");
+        // Other IDs are kept as they are.
+        assert_eq!(ws[0].tabs[1].session().unwrap().session_id, "ses_AB");
     }
 
     /// A reason edited down to nothing still says why the tab opens as a plain shell.
