@@ -565,7 +565,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               read and edit. Files from pre-release builds (format 1) show as “unreadable” until
               converted; the
               <a href="https://github.com/pawanpaudel93/sessionsnap#configuration-and-files">README</a>
-              says how.
+              says how. When the latest version can't be read, <code translate="no">save</code>
+              compares with the newest one that can, says so, and writes a new version; saves at the
+              same moment never lose a version or share a number.
             </p>
           </section>
 

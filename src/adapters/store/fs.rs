@@ -1,7 +1,9 @@
 //! Snapshot versions and restore plans as JSON files under `~/.sessionsnap`.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -189,7 +191,9 @@ impl Store {
         Ok(serde_json::from_value(raw).map_err(|e| format!("not a sessionsnap version: {e}")))
     }
 
-    /// Writes the next version of `name` and returns it.
+    /// Writes the next version of `name` and returns it. Saves of one snapshot take turns (a lock
+    /// file in its folder), and each publishes its file with an exclusive create under a number no
+    /// other file has, so saves at the same moment never overwrite each other or share a number.
     pub fn save_new(&self, name: &str, message: &str, source: Source, workspaces: Vec<Workspace>) -> Result<Version> {
         validate_name(name)?;
         // Names ignore case: "Main" adds to an existing "main".
@@ -197,19 +201,18 @@ impl Store {
         make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
         in_new_dir(&dir, || {
-            let next = self.versions(name)?.last().copied().unwrap_or(0) + 1;
+            let _lock = SaveLock::acquire(&dir)?;
             let now = chrono::Local::now();
-            let version = Version {
+            let mut version = Version {
                 sessionsnap: FORMAT,
                 snapshot: name.to_string(),
-                version: next,
+                version: self.versions(name)?.last().copied().unwrap_or(0) + 1,
                 created_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
                 message: message.to_string(),
                 source,
                 workspaces,
             };
-            let file = dir.join(format!("{next:04}-{}.json", now.format("%Y%m%dT%H%M%S")));
-            write_private_json_atomic(&file, &version)?;
+            publish(&dir, &mut version, &now.format("%Y%m%dT%H%M%S").to_string())?;
             Ok(version)
         })
     }
@@ -255,6 +258,99 @@ fn in_new_dir<T>(dir: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
         let _ = fs::remove_dir(dir);
     }
     result
+}
+
+/// Publishes `version` in `dir` as `<NNNN>-<stamp>.json`, from its number up: a number any file
+/// already has (whatever its time suffix) is skipped, and the file is linked into place, which
+/// fails rather than replace one that appeared meanwhile; it is synced to disk first, so a crash
+/// never leaves an empty latest version. Sets the number it got.
+fn publish(dir: &Path, version: &mut Version, stamp: &str) -> Result<()> {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let taken = |n: u32| -> Result<bool> {
+        Ok(fs::read_dir(dir)?.flatten().any(|e| parse_version_file(&e.file_name().to_string_lossy()) == Some(n)))
+    };
+    loop {
+        let n = version.version;
+        if taken(n)? {
+            version.version += 1;
+            continue;
+        }
+        // Not a version file (no `.json` end), and unique to this process and call.
+        let tmp =
+            dir.join(format!(".{n:04}-{stamp}.{}-{}.tmp", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed)));
+        let file = dir.join(format!("{n:04}-{stamp}.json"));
+        let linked = write_synced(&tmp, version).map(|()| fs::hard_link(&tmp, &file));
+        let _ = fs::remove_file(&tmp);
+        match linked? {
+            Ok(()) => {
+                sync_dir(dir);
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => version.version += 1,
+            Err(e) => return Err(e).with_context(|| format!("writing {}", file.display())),
+        }
+    }
+}
+
+/// Writes `value` as JSON to a new file readable by its owner only, and syncs it to disk.
+fn write_synced(path: &Path, value: &Version) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).with_context(|| format!("writing {}", path.display()))?;
+    file.write_all((serde_json::to_string_pretty(value)? + "\n").as_bytes())
+        .and_then(|()| file.sync_all())
+        .with_context(|| format!("writing {}", path.display()))
+}
+
+/// Syncs a folder's entries to disk where the system allows it (a new file's name is in its
+/// folder, not in the file).
+fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(d) = fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// One save at a time per snapshot folder: `.save.lock`, made with an exclusive create and removed
+/// when dropped. A lock older than `STALE` was left by a save that crashed, and is broken.
+struct SaveLock(PathBuf);
+
+impl SaveLock {
+    const STALE: Duration = Duration::from_secs(30);
+
+    fn acquire(dir: &Path) -> Result<SaveLock> {
+        let path = dir.join(".save.lock");
+        let started = std::time::Instant::now();
+        loop {
+            match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(SaveLock(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .is_ok_and(|m| m.elapsed().unwrap_or_default() > Self::STALE);
+                    if stale || started.elapsed() > Self::STALE {
+                        let _ = fs::remove_file(&path);
+                    } else {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                Err(e) => return Err(e).with_context(|| format!("locking {}", path.display())),
+            }
+        }
+    }
+}
+
+impl Drop for SaveLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 fn parse_version_file(fname: &str) -> Option<u32> {
@@ -391,6 +487,69 @@ mod tests {
         assert_eq!(s.load("work", Some(1)).unwrap().message, "first");
         assert_eq!(s.list().unwrap(), vec!["work".to_string()]);
         assert!(s.exists("work"));
+    }
+
+    /// Saves of the same snapshot at the same moment each get their own number: none is lost and
+    /// no two files share one.
+    #[test]
+    fn concurrent_saves_keep_every_version() {
+        let (d, _) = store();
+        let (threads, each) = (4, 10);
+        std::thread::scope(|scope| {
+            for t in 0..threads {
+                let root = d.path().to_path_buf();
+                scope.spawn(move || {
+                    let s = Store::new(root);
+                    for i in 0..each {
+                        s.save_new("work", &format!("{t}-{i}"), Source::default(), vec![ws("A")]).unwrap();
+                    }
+                });
+            }
+        });
+        let s = Store::new(d.path());
+        let total = threads * each;
+        assert_eq!(s.versions("work").unwrap(), (1..=total as u32).collect::<Vec<_>>());
+        let files: Vec<String> = fs::read_dir(s.snapshot_dir("work"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files.iter().filter(|f| parse_version_file(f).is_some()).count(), total, "{files:?}");
+        assert!(files.iter().all(|f| f.ends_with(".json")), "temporary files left: {files:?}");
+        let mut messages: Vec<String> = (1..=total as u32).map(|v| s.load("work", Some(v)).unwrap().message).collect();
+        messages.sort();
+        messages.dedup();
+        assert_eq!(messages.len(), total);
+        for v in 1..=total as u32 {
+            assert_eq!(s.load("work", Some(v)).unwrap().version, v);
+        }
+    }
+
+    /// A lock left by a save that crashed doesn't block saves for good.
+    #[test]
+    fn a_stale_lock_is_broken() {
+        let (_d, s) = store();
+        s.save_new("work", "a", Source::default(), vec![]).unwrap();
+        let lock = s.snapshot_dir("work").join(".save.lock");
+        let f = fs::File::create(&lock).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
+        assert_eq!(s.save_new("work", "b", Source::default(), vec![]).unwrap().version, 2);
+        assert!(!lock.exists());
+    }
+
+    /// A number is taken by any file that has it, whatever its time suffix; publishing skips it.
+    #[test]
+    fn numbers_ignore_the_time_suffix() {
+        let (_d, s) = store();
+        let v1 = s.save_new("work", "a", Source::default(), vec![]).unwrap();
+        let dir = s.snapshot_dir("work");
+        // Another save published 2 and 3 after this one counted the versions.
+        fs::write(dir.join("0002-20000101T000000.json"), "{}").unwrap();
+        fs::write(dir.join("0003-20000101T000001.json"), "{}").unwrap();
+        let mut v = Version { version: 2, ..v1 };
+        publish(&dir, &mut v, "20991231T235959").unwrap();
+        assert_eq!(v.version, 4);
+        assert_eq!(s.versions("work").unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(s.load("work", Some(4)).unwrap().version, 4);
     }
 
     #[test]

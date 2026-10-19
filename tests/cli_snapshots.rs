@@ -98,3 +98,25 @@ fn names_ignore_case_on_every_command() {
     env.run(&["delete", "WORK", "-y"]).unwrap();
     assert_eq!(exit_of(&env.run(&["show", "work"]).unwrap_err()), Exit::NotFound);
 }
+
+/// A latest version that can't be read (broken by hand, or a crash) doesn't stop saving: save
+/// compares with the newest readable version, says so, and writes a new version.
+#[test]
+fn an_unreadable_latest_version_does_not_block_saves() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    env.run(&["tab", "work", "Alpha#2", "--remove"]).unwrap();
+    let dir = env.dir.path().join("store/snapshots/work");
+    let v2 = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("0002-"))
+        .unwrap();
+    std::fs::write(&v2, "").unwrap();
+    // What is open is v1 again: still a new version, since the latest is broken.
+    let o = env.run(&["save", "work"]).unwrap();
+    assert_eq!(o.json["version"], 3, "{}", o.json);
+    let warnings = o.json["warnings"].to_string();
+    assert!(warnings.contains("v2 is unreadable") && warnings.contains("compared with v1"), "{warnings}");
+    assert_eq!(env.run(&["save", "work"]).unwrap().exit, sessionsnap::error::Exit::NothingToDo);
+}

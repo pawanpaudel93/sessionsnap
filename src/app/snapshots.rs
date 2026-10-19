@@ -21,7 +21,7 @@ pub enum Commit {
 /// version of `name`.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
-    let previous = if ctx.store.exists(name) { Some(super::load_version(ctx, name, None)?) } else { None };
+    let (previous, unreadable) = if ctx.store.exists(name) { newest_readable(ctx, name)? } else { (None, None) };
     let (workspaces, source, notes) = match from {
         Some(from) => {
             let (src_name, version) = parse_ref(from)?;
@@ -44,11 +44,33 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
             (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None }, notes)
         }
     };
-    commit(ctx, name, previous.as_ref(), workspaces, source, message, notes)
+    // A broken latest version is never "unchanged": the save writes one that can be read.
+    let force = unreadable.is_some();
+    let notes = unreadable.into_iter().chain(notes).collect();
+    commit(ctx, name, previous.as_ref(), workspaces, source, message, notes, force)
 }
 
-/// Writes a new version unless nothing changed. Shared by save and edits. `notes` (what capture
-/// left out) are shown first among the warnings.
+/// The newest version of `name` that can be read, and, when the latest one can't be, a note that
+/// says so: a broken latest version (edited by hand, a crash) must not stop later saves.
+fn newest_readable(ctx: &Ctx, name: &str) -> Result<(Option<Version>, Option<String>)> {
+    let versions = ctx.store.versions(name)?;
+    let Some(&latest) = versions.last() else { return Ok((None, None)) };
+    // A file that can't even be opened counts as unreadable too.
+    let read = |n| read_normalized(ctx, name, n).unwrap_or_else(|e| Err(e.to_string()));
+    let why = match read(latest) {
+        Ok(v) => return Ok((Some(v), None)),
+        Err(why) => why,
+    };
+    for &n in versions.iter().rev().skip(1) {
+        if let Ok(v) = read(n) {
+            return Ok((Some(v), Some(format!("v{latest} is unreadable ({why}); compared with v{n}"))));
+        }
+    }
+    Ok((None, Some(format!("v{latest} is unreadable ({why}), and no older version can be read"))))
+}
+
+/// Writes a new version unless nothing changed (or `force`). Shared by save and edits. `notes`
+/// (what capture left out) are shown first among the warnings.
 #[allow(clippy::too_many_arguments)]
 pub fn commit(
     ctx: &Ctx,
@@ -58,10 +80,12 @@ pub fn commit(
     source: Source,
     message: Option<String>,
     notes: Vec<String>,
+    force: bool,
 ) -> Result<Commit> {
     let mut workspaces = workspaces;
     crate::domain::agents::normalize_tabs(&mut workspaces, &ctx.agents);
     if let Some(p) = previous
+        && !force
         && p.workspaces == workspaces
     {
         return Ok(Commit::Unchanged { snapshot: p.snapshot.clone(), version: p.version });

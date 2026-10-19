@@ -84,5 +84,5 @@ pub fn edit(
         return Ok(Edited::DryRun { base_version: previous.version, workspaces, changes, warnings });
     }
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
-    Ok(Edited::Committed(commit(ctx, name, Some(&previous), workspaces, source, message, notes)?))
+    Ok(Edited::Committed(commit(ctx, name, Some(&previous), workspaces, source, message, notes, false)?))
 }
