@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::clean_title;
-use super::state_file::FileWorkspace;
+use super::state_file::{FilePanel, FileWorkspace};
 use crate::error::{Exit, failure};
 use crate::ports::{OpenTab, OpenWorkspace};
 
@@ -17,6 +17,8 @@ pub struct TreeWorkspace {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeSurface {
     pub reference: String,
+    /// The surface's ID, the same as its panel's in the state file.
+    pub id: Option<String>,
     pub title: String,
     pub tty: Option<String>,
 }
@@ -36,6 +38,7 @@ pub fn parse(text: &str) -> Result<Vec<TreeWorkspace>> {
                     }
                     surfaces.push(TreeSurface {
                         reference: str_of(s, "ref"),
+                        id: s.get("id").and_then(Value::as_str).filter(|i| !i.is_empty()).map(str::to_string),
                         title: str_of(s, "title"),
                         tty: s.get("tty").and_then(Value::as_str).map(|t| norm_tty(t).to_string()),
                     });
@@ -87,23 +90,42 @@ fn norm_tty(t: &str) -> &str {
 }
 
 /// Live refs and order from the tree; folders and agent sessions from the state file, matched by
-/// workspace ID and tty. Workspaces cmux has not written to its file yet get empty folders.
+/// workspace ID and then by surface ID, else by tty. Workspaces cmux has not written to its file
+/// yet get empty folders.
+///
+/// A tty is reused: a tab can close and a new shell get its tty before cmux rewrites its file. So
+/// a panel found by tty is that surface's only when their IDs match (when both have one), else
+/// when their titles do; otherwise the surface gets the panel's folder but no agent session, so a
+/// shell is never saved as the closed tab's session (and restore never skips that one as open).
 pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
     tree.into_iter()
         .map(|tw| {
             let fw = file.iter().find(|f| f.id == tw.id);
+            let panels = fw.map(|f| f.panels.as_slice()).unwrap_or_default();
+            let id_of = |p: &FilePanel, s: &TreeSurface| match (&s.id, &p.id) {
+                (Some(a), Some(b)) => Some(a.eq_ignore_ascii_case(b)),
+                _ => None,
+            };
+            // IDs count only when some surface here has a panel's ID: should cmux ever report
+            // them differently, titles decide instead of every tab losing its session.
+            let ids_match = tw.surfaces.iter().any(|s| panels.iter().any(|p| id_of(p, s) == Some(true)));
             let tabs = tw
                 .surfaces
                 .into_iter()
                 .map(|s| {
                     let tty = s.tty.as_deref().map(norm_tty);
-                    let panel = fw
-                        .and_then(|f| f.panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty));
+                    let same_id = |p: &FilePanel| id_of(p, &s).filter(|_| ids_match);
+                    let by_id = panels.iter().find(|p| same_id(p) == Some(true));
+                    let panel = by_id.map(|p| (p, true)).or_else(|| {
+                        let p = panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty)?;
+                        let same = same_id(p).unwrap_or_else(|| clean_title(&p.title) == clean_title(&s.title));
+                        Some((p, same))
+                    });
                     OpenTab {
                         reference: Some(s.reference),
                         title: clean_title(&s.title),
-                        cwd: panel.map(|p| p.cwd.clone()).unwrap_or_default(),
-                        agent: panel.and_then(|p| p.agent.clone()),
+                        cwd: panel.map(|(p, _)| p.cwd.clone()).unwrap_or_default(),
+                        agent: panel.filter(|(_, same)| *same).and_then(|(p, _)| p.agent.clone()),
                     }
                 })
                 .collect();
@@ -191,6 +213,36 @@ mod tests {
         assert_eq!(ws[0].tabs[1].cwd, "/w/alpha/sub");
         assert_eq!(ws[1].name, "Fresh");
         assert_eq!(ws[1].tabs[0].agent, None);
+    }
+
+    /// A tab running session A closed and a new shell got its tty before cmux rewrote its file:
+    /// the tty alone would call the shell session A, and restore would skip A as already open.
+    #[test]
+    fn a_reused_tty_is_not_the_old_session() {
+        let (_, file) = state_file::parse(FIXTURE).unwrap();
+        // Another title on the same tty, no IDs: not the panel cmux saved.
+        let tree = TEST_TREE.replace(r#""title":"✳ fix login""#, r#""title":"zsh""#);
+        let ws = join(parse(&tree).unwrap(), &file);
+        assert_eq!(ws[0].tabs[1].agent, None);
+        // The same title but another surface ID than the saved panel's (the other tab's ID shows
+        // IDs can be compared): not it either.
+        let with_ids = |other: &str, surface: &str| {
+            let tree = TEST_TREE
+                .replace(r#""ref":"surface:2","#, &format!(r#""ref":"surface:2","id":"{other}","#))
+                .replace(r#""ref":"surface:1","#, &format!(r#""ref":"surface:1","id":"{surface}","#));
+            join(parse(&tree).unwrap(), &file)
+        };
+        let new_id = "0E1F2A3B-0000-4000-8000-000000000001";
+        assert_eq!(with_ids("P2", new_id)[0].tabs[1].agent, None);
+        // The saved panel's ID matches (any case), whatever the title says now.
+        assert_eq!(with_ids("P2", "p1")[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+        // No surface has a panel's ID (cmux reporting them differently): titles decide.
+        assert_eq!(with_ids("X2", new_id)[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+        // A changed title alone does not lose a session whose IDs match.
+        let tree = TEST_TREE
+            .replace(r#""ref":"surface:1","#, r#""ref":"surface:1","id":"P1","#)
+            .replace(r#""title":"✳ fix login""#, r#""title":"⠂ new title""#);
+        assert_eq!(join(parse(&tree).unwrap(), &file)[0].tabs[1].agent.as_ref().unwrap().session_id, A);
     }
 
     #[test]
