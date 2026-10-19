@@ -82,6 +82,7 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
         session_id: a.session_id.clone(),
         args: if left_out.is_some() { vec![] } else { check.kept },
         left_out,
+        left_out_unsure: false,
     }
 }
 
@@ -108,6 +109,7 @@ pub fn seen(open: &OpenState, agents: &dyn AgentCatalog, captured: &[Workspace])
             session_id: a.session_id.clone(),
             args: vec![],
             left_out: Some(CONTROL_FLAGS.to_string()),
+            left_out_unsure: false,
         })
         .collect();
     let mut out = captured.to_vec();
@@ -219,6 +221,7 @@ mod tests {
                     session_id: B.into(),
                     args: vec!["-a".into(), "on-request".into()],
                     left_out: None,
+                    left_out_unsure: false,
                 },
                 // Unknown to sessionsnap: kept as cmux reported it, titled from the tab, without
                 // flags (it has no allow-list).
@@ -229,6 +232,7 @@ mod tests {
                     session_id: C.into(),
                     args: vec![],
                     left_out: None,
+                    left_out_unsure: false,
                 },
             ]
         );

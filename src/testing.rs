@@ -66,6 +66,7 @@ pub fn agent_tab(agent: &str, title: &str, cwd: &str, id: &str) -> Tab {
         session_id: id.into(),
         args: vec![],
         left_out: None,
+        left_out_unsure: false,
     }
 }
 

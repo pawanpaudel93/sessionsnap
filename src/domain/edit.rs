@@ -200,10 +200,20 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             for tab in &mut copy.tabs {
                 let Some(s) = tab.session() else { continue };
                 let launch = ctx.known.launch(&s, ctx.open, ctx.agents);
-                let Tab::Agent { args, left_out, .. } = tab else { continue };
+                let Tab::Agent { args, left_out, left_out_unsure, .. } = tab else { continue };
+                let lost = left_out.is_some() && !*left_out_unsure;
                 if launch.left_out.is_some() {
-                    args.clear();
-                    *left_out = launch.left_out;
+                    // A tab's own lost launch stays lost.
+                    if !lost {
+                        args.clear();
+                        *left_out = launch.left_out;
+                        *left_out_unsure = launch.unsure;
+                    }
+                } else if *left_out_unsure && launch.known {
+                    // Undecided when copied; the record or cmux has decided since.
+                    *args = launch.args;
+                    *left_out = None;
+                    *left_out_unsure = false;
                 } else if args.is_empty() && left_out.is_none() {
                     *args = launch.args;
                 }
@@ -256,6 +266,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
                 session_id: session_id.clone(),
                 args: launch.args,
                 left_out: launch.left_out,
+                left_out_unsure: launch.unsure,
             });
             return Ok(note.into_iter().collect());
         }
@@ -284,20 +295,23 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             let old = &ws[w].tabs[t];
             let launch = ctx.known.launch(&SessionRef::new(&kind, session_id), ctx.open, ctx.agents);
             let mut note = None;
-            let (args, left_out) = match old {
-                _ if launch.known => (launch.args, launch.left_out),
+            let (args, left_out, left_out_unsure) = match old {
+                _ if launch.known => (launch.args, launch.left_out, launch.unsure),
                 // Nothing known of the new session: the launch flags still fit when the agent stays
                 // the same, and so does a reason they were left out.
-                Tab::Agent { agent, args, left_out, .. } if ctx.agents.kind_of(agent) == Some(kind.as_str()) => {
-                    (args.clone(), left_out.clone())
+                Tab::Agent { agent, args, left_out, left_out_unsure, .. }
+                    if ctx.agents.kind_of(agent) == Some(kind.as_str()) =>
+                {
+                    (args.clone(), left_out.clone(), *left_out_unsure)
                 }
                 _ => {
                     note = Some(format!("{} › {}: {UNKNOWN_FLAGS}", ws[w].name, old.title()));
-                    (vec![], None)
+                    (vec![], None, false)
                 }
             };
             let (title, cwd) = (old.title().to_string(), old.cwd().to_string());
-            ws[w].tabs[t] = Tab::Agent { title, cwd, agent: kind, session_id: session_id.clone(), args, left_out };
+            let session_id = session_id.clone();
+            ws[w].tabs[t] = Tab::Agent { title, cwd, agent: kind, session_id, args, left_out, left_out_unsure };
             return Ok(note.into_iter().collect());
         }
     }
@@ -508,6 +522,7 @@ mod tests {
             session_id: A.into(),
             args: vec!["--model".into(), "opus".into()],
             left_out: None,
+            left_out_unsure: false,
         };
         let set = |id: &str| Op::TabSetSession { tab: "Alpha#1".into(), session_id: id.into(), agent: None };
         apply_ops(&mut ws, &[set(A)], &ctx).unwrap();

@@ -248,25 +248,58 @@ impl Store {
         Ok(aside)
     }
 
-    /// Marks the record as missing launches read from cmux at `at` (an update failed): the next
-    /// read adds what the snapshots tell. Keeps the earliest such time.
-    pub fn mark_sessions_dirty(&self, at: &str) {
-        let path = self.root.join("sessions.dirty");
-        let earliest = match fs::read_to_string(&path) {
-            Ok(old) if !old.trim().is_empty() && old.trim() < at => return,
-            _ => at,
-        };
-        let _ = fs::write(path, earliest);
+    fn pending_dir(&self) -> PathBuf {
+        self.root.join("sessions.pending")
     }
 
-    /// When the record is marked as missing launches: the earliest failed update's read time
-    /// (empty when not known, as in a marker written before the time was kept).
-    pub fn sessions_dirty(&self) -> Option<String> {
-        fs::read_to_string(self.root.join("sessions.dirty")).ok().map(|t| t.trim().to_string())
+    /// Marks the record as about to learn of launches read from cmux at `at`, before the version
+    /// holding them is written: `<root>/sessions.pending/<at>.<pid>-<n>`. Removed once the record
+    /// is updated (`end_pending`), or kept as failed (`fail_pending`).
+    pub fn begin_pending(&self, _lock: &Lock, at: &str) -> Result<PathBuf> {
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        make_private_dir(&self.root)?;
+        let dir = self.pending_dir();
+        fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        let path = dir.join(format!("{at}.{}-{}", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed)));
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("writing {}", path.display()))?;
+        file.sync_all().with_context(|| format!("writing {}", path.display()))?;
+        sync_dir(&dir);
+        Ok(path)
     }
 
-    pub fn clear_sessions_dirty(&self, _lock: &Lock) {
-        let _ = fs::remove_file(self.root.join("sessions.dirty"));
+    /// Keeps a mark whose update failed, so the next read completes the record.
+    pub fn fail_pending(&self, mark: &Path) -> Result<()> {
+        let failed = PathBuf::from(format!("{}.failed", mark.display()));
+        fs::rename(mark, &failed).with_context(|| format!("renaming {}", mark.display()))
+    }
+
+    /// Removes a mark: its update is done, or the record has been completed for it.
+    pub fn end_pending(&self, mark: &Path) {
+        let _ = fs::remove_file(mark);
+    }
+
+    /// Every mark: (path, the read time it names, failed, age). A `sessions.dirty` file from an
+    /// older sessionsnap counts as a failed mark with the time it holds.
+    pub fn pending(&self) -> Vec<Pending> {
+        let mut out = vec![];
+        let age = |m: &fs::Metadata| m.modified().ok().and_then(|t| t.elapsed().ok()).unwrap_or_default();
+        if let Ok(entries) = fs::read_dir(self.pending_dir()) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let at = name.split_once("Z.").map(|(t, _)| format!("{t}Z")).unwrap_or(name.clone());
+                let age = e.metadata().map(|m| age(&m)).unwrap_or_default();
+                out.push(Pending { path: e.path(), at, failed: name.ends_with(".failed"), age });
+            }
+        }
+        let legacy = self.root.join("sessions.dirty");
+        if let Ok(at) = fs::read_to_string(&legacy) {
+            out.push(Pending { path: legacy, at: at.trim().to_string(), failed: true, age: Duration::MAX });
+        }
+        out
     }
 
     /// Writes the next version of `name` and returns it (takes the snapshot's lock).
@@ -353,6 +386,17 @@ impl Store {
         }
         Ok(doomed)
     }
+}
+
+/// A mark that the record of sessions is about to change (see `Store::begin_pending`).
+#[derive(Debug, Clone)]
+pub struct Pending {
+    pub path: PathBuf,
+    /// The read time it names (as written; may not be a valid time).
+    pub at: String,
+    /// Its update failed.
+    pub failed: bool,
+    pub age: Duration,
 }
 
 /// What `sessions.json` holds.

@@ -240,8 +240,10 @@ the time cmux was read: `save` (what it captured), and edits that read cmux (`--
 other edits and restores never do, so an older copy of a session can't replace what was seen
 last. Once left out, a session stays left out. Pruning or deleting versions never removes from
 it. It is built from every snapshot the first time it is needed; a record that can't be read is
-kept as `sessions.json.bad-<time>` and built again; when an update fails, the record is kept and
-completed the next time it is read. Building or completing it from the snapshots compares every
+kept as `sessions.json.bad-<time>` and built again. Before a save writes a version, it marks the
+record as about to change (`sessions.pending/`), and refuses to save if it can't; when the update
+then fails, the record is kept and completed the next time it is read, from the earliest failed
+update on (every version, when that time can't be trusted). Building or completing it from the snapshots compares every
 flag the versions keep, and version times are not trusted to tell which launch came last: a session
 the record lacks takes the flags its versions agree on; one whose versions disagree, or whose
 entry is contradicted by a version written since it was seen and since the failed update, is left

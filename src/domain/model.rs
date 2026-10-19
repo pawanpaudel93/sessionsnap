@@ -69,6 +69,12 @@ pub enum Tab {
         /// this reason. Names flags only, never values.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         left_out: Option<String>,
+        /// The kind of `left_out`: true when it only says the session's flags are undecided (its
+        /// saved versions disagree, see `domain::known`), which a live reading of the session
+        /// decides; false (and for tabs written before it existed) when a launch's flags couldn't
+        /// be kept, which is for good.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        left_out_unsure: bool,
     },
 }
 
@@ -245,6 +251,7 @@ mod tests {
             session_id: ID.into(),
             args: vec!["-a".into(), "on-request".into()],
             left_out: None,
+            left_out_unsure: false,
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(
@@ -261,6 +268,7 @@ mod tests {
             session_id: ID.into(),
             args: vec![],
             left_out: None,
+            left_out_unsure: false,
         };
         assert!(serde_json::to_value(&t).unwrap().get("args").is_none());
         assert_eq!(t.session(), Some(SessionRef::new("claude", ID)));

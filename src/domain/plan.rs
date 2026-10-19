@@ -152,6 +152,7 @@ pub fn recovered_workspace(
             session_id: s.session_id.clone(),
             args: launch.args,
             left_out: launch.left_out,
+            left_out_unsure: launch.unsure,
         });
     }
     let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
@@ -440,6 +441,7 @@ mod tests {
             session_id: id.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
             left_out: None,
+            left_out_unsure: false,
         };
         let saved = vec![workspace(
             "Gamma",
@@ -535,6 +537,7 @@ mod tests {
             session_id: id.into(),
             args,
             left_out: None,
+            left_out_unsure: false,
         };
         let with_args = |title: &str, id: &str, args: Vec<String>| tab("claude", title, id, args);
         let deny = with_args("deny", A, vec!["--disallowedTools".into(), format!("Bash({ghp})")]);
