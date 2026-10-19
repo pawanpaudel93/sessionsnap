@@ -264,8 +264,9 @@ Details:
 
 - It runs while its terminal is open and stops after 30 minutes without use; nothing starts at
   login. Stop it with Ctrl-C, or close the "sessionsnap UI" workspace.
-- It answers four connections at once (one more gets 503) and runs one command at a time. It
-  shows its page in cmux at most once a second (otherwise 429).
+- It answers four connections at once and lets 16 more wait (beyond that, 503). It runs one
+  command at a time; a command that would wait over 3 s for another is refused, and the page says
+  so. It shows its page in cmux at most once a second (otherwise 429).
 - Flags: `--port <n>` (default 47317), `--idle-minutes <n>` (default 30), `--no-open` (serve
   without showing the page).
 - The link carries a key after `#` (`…/#t=<key>`), which browsers never send to a server. The key

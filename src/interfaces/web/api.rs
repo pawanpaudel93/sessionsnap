@@ -1,6 +1,6 @@
 //! The UI server's routes. Every API call runs one sessionsnap command through `cli::run_json`.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -38,6 +38,9 @@ pub struct Server<'a> {
     /// Commands run one at a time, as before the server had workers: the store has no lock.
     runs: Mutex<()>,
 }
+
+/// Longest wait for the command before; then the page hears that one is still running.
+pub const RUN_WAIT: Duration = Duration::from_secs(3);
 
 /// Shortest time between the starts of two shows.
 pub const SHOW_GAP: Duration = Duration::from_secs(1);
@@ -195,7 +198,23 @@ impl<'a> Server<'a> {
             return Response::text(403, "send batches as input");
         }
         let input = body.input.unwrap_or_default();
-        let _one = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        // Waiting holds a worker, so it is short: the page's own files must still load.
+        let deadline = Instant::now() + RUN_WAIT;
+        let _one = loop {
+            match self.runs.try_lock() {
+                Ok(one) => break one,
+                Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Response::json(
+                        409,
+                        &json!({"error": {"code": "busy", "message": "Another command is still running. Try again when it ends."}}),
+                    );
+                }
+            }
+        };
         let (exit, result) = run_json(&body.args, |cli| make_ctx(cli, Some(input)));
         Response::json(200, &json!({"exit": exit.code(), "code": exit.name(), "result": result}))
     }

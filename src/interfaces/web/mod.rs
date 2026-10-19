@@ -24,9 +24,11 @@ use api::{MakeCtx, Server};
 /// Fixed so the Dock tab's URL stays valid across restarts.
 pub const DEFAULT_PORT: u16 = 47317;
 
-/// Connections handled at once; one more gets 503. A show takes one while cmux loads the page,
-/// which needs another.
+/// Connections handled at once. A show takes one while cmux loads the page, which needs another.
 pub const WORKERS: usize = 4;
+/// Connections that may wait for a worker; one more gets 503. Enough for a page reload (the
+/// page, its script and its style) behind commands that hold every worker.
+pub const QUEUE: usize = 16;
 
 /// Answers requests on `WORKERS` threads until no request has come for `idle`. With
 /// `show_at_start`, shows the page once the workers are up.
@@ -50,8 +52,7 @@ fn serve_until(
     stop: &AtomicBool,
 ) -> Result<()> {
     listener.set_nonblocking(true)?;
-    // Connections queued or being handled; the accept loop keeps it at most `WORKERS`, so a
-    // queued connection always has a free worker.
+    // Connections queued or being handled; the accept loop keeps it at most `WORKERS + QUEUE`.
     let busy = AtomicUsize::new(0);
     // When the last request came. Only a request read in full counts, so connections that send
     // nothing don't keep the server running.
@@ -75,7 +76,7 @@ fn serve_until(
         }
         loop {
             match listener.accept() {
-                Ok((stream, _)) if busy.load(Ordering::SeqCst) >= WORKERS => refuse(stream),
+                Ok((stream, _)) if busy.load(Ordering::SeqCst) >= WORKERS + QUEUE => refuse(stream),
                 Ok((stream, _)) => {
                     busy.fetch_add(1, Ordering::SeqCst);
                     if queue.send(stream).is_err() {
@@ -427,14 +428,81 @@ mod tests {
         let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
         let dir = tempfile::tempdir().unwrap();
         let (full, after) = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
-            // Connections are accepted in order, so these hold every worker when the next comes.
-            let slow: Vec<_> = (0..WORKERS).map(|_| drip(port)).collect();
+            // Connections are accepted in order, so these hold every worker and fill the queue
+            // when the next comes.
+            let slow: Vec<_> = (0..WORKERS + QUEUE).map(|_| drip(port)).collect();
             let full = get(port, "/api/hello");
             drop(slow);
             (full, get(port, "/api/hello"))
         });
         assert!(full.starts_with("HTTP/1.1 503 "), "{full}");
         assert!(after.starts_with("HTTP/1.1 200 OK"), "{after}");
+    }
+
+    /// Sends `POST /api/run` with these args and returns the connection to read the answer from.
+    fn post_run(port: u16, token: &str, args: &str) -> TcpStream {
+        let body = format!(r#"{{"args":{args}}}"#);
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        write!(
+            s,
+            "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+             X-Sessionsnap-Token: {token}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        s
+    }
+
+    fn send_get(port: u16, path: &str) -> TcpStream {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        write!(s, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
+        s
+    }
+
+    fn answer(mut s: TcpStream) -> String {
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn the_page_loads_while_every_worker_waits_on_a_command() {
+        let (listener, port) = listen();
+        let server = Server::new(port, "k".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let dir = tempfile::tempdir().unwrap();
+        let (started, started_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let (started, release_rx) = (Mutex::new(started), Mutex::new(release_rx));
+        let first = AtomicBool::new(true);
+        // The first command blocks until released; the next ones wait for it.
+        let make = |cli: &Cli, input: Option<String>| -> Result<Ctx> {
+            if first.swap(false, Ordering::SeqCst) {
+                started.lock().unwrap().send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv_timeout(Duration::from_secs(20));
+            }
+            Ok(crate::testing::ctx(dir.path(), FakeTerminal::default(), cli.json, cli.yes, input))
+        };
+        let (long, waiting, page) = serve_while(listener, &server, &make, false, move || {
+            let long = post_run(port, "k", r#"["list"]"#);
+            started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            // Accepted in order: these take the other workers before the page comes.
+            let waiting: Vec<_> = (1..WORKERS).map(|_| post_run(port, "k", r#"["list"]"#)).collect();
+            let page: Vec<_> = ["/", "/app.css", "/app.js"].iter().map(|p| send_get(port, p)).collect();
+            let page: Vec<_> = page.into_iter().map(answer).collect();
+            let waiting: Vec<_> = waiting.into_iter().map(answer).collect();
+            release.send(()).unwrap();
+            (answer(long), waiting, page)
+        });
+        for out in &page {
+            assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
+        }
+        assert!(long.starts_with("HTTP/1.1 200 OK") && long.contains(r#""exit":0"#), "{long}");
+        for out in &waiting {
+            assert!(out.starts_with("HTTP/1.1 409 "), "{out}");
+            assert!(out.contains(r#""code":"busy""#), "{out}");
+        }
     }
 
     /// The one test that waits for the idle timeout.

@@ -95,7 +95,17 @@ async function sessionsnap(args, input) {
     if (r.status === 401) {
       throw new CommandError("The sessionsnap UI was restarted, so this page's key is old.", 1, true);
     }
-    if (!r.ok) throw new CommandError(await r.text(), 1);
+    if (!r.ok) {
+      // Some refusals come as JSON (409: another command is still running).
+      const text = await r.text();
+      let message = text;
+      try {
+        message = JSON.parse(text).error.message || text;
+      } catch {
+        // Plain text.
+      }
+      throw new CommandError(message, 1);
+    }
     const body = await r.json();
     if (body.result && body.result.error) throw new CommandError(body.result.error.message, body.exit);
     return body;
