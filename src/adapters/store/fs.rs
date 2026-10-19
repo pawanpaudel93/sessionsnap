@@ -214,24 +214,47 @@ impl Store {
         self.lock_file("sessions.lock")
     }
 
-    /// The record of every saved session (`<root>/sessions.json`); None when there is none yet, or
-    /// it can't be read (it is then built again from the snapshots).
-    pub fn read_sessions(&self) -> Result<Option<KnownSessions>> {
-        let path = self.root.join("sessions.json");
-        Ok(fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()))
+    /// The record of every session seen (`<root>/sessions.json`), as it reads.
+    pub fn read_sessions(&self) -> SessionsFile {
+        match fs::read_to_string(self.root.join("sessions.json")) {
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(known) => SessionsFile::Read(known),
+                Err(e) => SessionsFile::Bad(e.to_string()),
+            },
+            Err(e) if e.kind() == ErrorKind::NotFound => SessionsFile::Missing,
+            Err(e) => SessionsFile::Bad(e.to_string()),
+        }
     }
 
-    /// Replaces the record of every saved session, while holding its lock; readable by the owner
-    /// only.
+    /// Replaces the record of every session seen, while holding its lock; readable by the owner
+    /// only, synced to disk.
     pub fn write_sessions(&self, _lock: &Lock, known: &KnownSessions) -> Result<()> {
         make_private_dir(&self.root)?;
         write_private_json_atomic(&self.root.join("sessions.json"), known)
     }
 
-    /// Removes the record of every saved session, so the next read builds it again from the
-    /// snapshots.
-    pub fn forget_sessions(&self) {
-        let _ = fs::remove_file(self.root.join("sessions.json"));
+    /// Moves a record that can't be read aside (`sessions.json.bad-<time>`), so it is never
+    /// overwritten; returns where it went.
+    pub fn set_aside_sessions(&self, _lock: &Lock) -> Result<PathBuf> {
+        let stamp = chrono::Local::now().format("%Y%m%dT%H%M%S%3f");
+        let aside = self.root.join(format!("sessions.json.bad-{stamp}"));
+        fs::rename(self.root.join("sessions.json"), &aside)
+            .with_context(|| format!("moving the unreadable sessions.json to {}", aside.display()))?;
+        Ok(aside)
+    }
+
+    /// Marks the record as missing launches (an update failed): the next read adds what the
+    /// snapshots tell.
+    pub fn mark_sessions_dirty(&self) {
+        let _ = fs::write(self.root.join("sessions.dirty"), "");
+    }
+
+    pub fn sessions_dirty(&self) -> bool {
+        self.root.join("sessions.dirty").exists()
+    }
+
+    pub fn clear_sessions_dirty(&self, _lock: &Lock) {
+        let _ = fs::remove_file(self.root.join("sessions.dirty"));
     }
 
     /// Writes the next version of `name` and returns it (takes the snapshot's lock).
@@ -310,6 +333,15 @@ impl Store {
         }
         Ok(doomed)
     }
+}
+
+/// What `sessions.json` holds.
+#[derive(Debug)]
+pub enum SessionsFile {
+    Missing,
+    Read(KnownSessions),
+    /// There, but not readable as a record (why).
+    Bad(String),
 }
 
 /// `name` as one of the `stored` folders (name, holds versions) that differ from it only in case:

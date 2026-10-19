@@ -5,43 +5,65 @@ use anyhow::Result;
 
 use crate::adapters::agents::Agents;
 use crate::adapters::store::Store;
+use crate::adapters::store::fs::SessionsFile;
+use crate::adapters::store::lock::Lock;
 use crate::domain::known::KnownSessions;
 use crate::domain::model::Workspace;
 
-/// The record, built from every snapshot's readable versions when there is none yet.
+/// The record of every session seen. Built from every snapshot's readable versions when there is
+/// none yet; when an update failed, what the snapshots tell is added to it; one that can't be read
+/// is moved aside (never overwritten) and built again.
 pub fn load(store: &Store, agents: &Agents) -> Result<KnownSessions> {
-    if let Some(known) = store.read_sessions()? {
+    if let SessionsFile::Read(known) = store.read_sessions()
+        && !store.sessions_dirty()
+    {
         return Ok(known);
     }
     let lock = store.lock_sessions()?;
-    if let Some(known) = store.read_sessions()? {
-        return Ok(known);
-    }
-    let known = seed(store, agents)?;
-    store.write_sessions(&lock, &known)?;
+    current(store, agents, &lock)
+}
+
+/// The record, while holding its lock: read, or repaired and written back.
+fn current(store: &Store, agents: &Agents, lock: &Lock) -> Result<KnownSessions> {
+    let dirty = store.sessions_dirty();
+    let known = match store.read_sessions() {
+        SessionsFile::Read(known) if !dirty => return Ok(known),
+        SessionsFile::Read(mut known) => {
+            known.merge(seed(store, agents)?);
+            known
+        }
+        SessionsFile::Missing => seed(store, agents)?,
+        SessionsFile::Bad(why) => {
+            let aside = store.set_aside_sessions(lock)?;
+            eprintln!(
+                "sessionsnap: the record of sessions could not be read ({why}); kept it as {} and built it again from the snapshots",
+                aside.display()
+            );
+            seed(store, agents)?
+        }
+    };
+    store.write_sessions(lock, &known)?;
+    store.clear_sessions_dirty(lock);
     Ok(known)
 }
 
 /// Records the live launches `save` just captured from the terminal (only those: not workspaces it
-/// kept from the previous version). When that fails, the record is removed, so the next read
-/// builds it again from the snapshots rather than miss a launch.
+/// kept from the previous version). When that fails, the record is kept and marked, so the next
+/// read adds what the snapshots tell rather than miss a launch.
 pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace]) -> Result<()> {
     let mut captured = captured.to_vec();
     crate::domain::agents::normalize_tabs(&mut captured, agents);
     let at = utc_now();
     let result = (|| {
         let lock = store.lock_sessions()?;
-        let (mut known, seeded) = match store.read_sessions()? {
-            Some(known) => (known, false),
-            None => (seed(store, agents)?, true),
-        };
-        if known.record_live(&captured, &at) || seeded {
+        let mut known = current(store, agents, &lock)?;
+        if known.record_live(&captured, &at) {
             store.write_sessions(&lock, &known)?;
         }
         Ok(())
     })();
     if result.is_err() {
-        store.forget_sessions();
+        store.mark_sessions_dirty();
     }
     result
 }

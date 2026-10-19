@@ -174,6 +174,44 @@ fn the_record_is_seeded_from_existing_snapshots() {
     }
 }
 
+/// A record that can't be read is kept aside, not overwritten, and built again from the snapshots.
+#[test]
+fn a_corrupt_record_is_kept_aside_and_rebuilt() {
+    let env = left_out_in_work();
+    let index = env.dir.path().join("store/sessions.json");
+    std::fs::write(&index, "{\"sessions\": {").unwrap();
+    env.run(&["save", "other"]).unwrap();
+    env.run(&["tab", "other", "Beta", "--add-session", A]).unwrap();
+    assert_eq!(tab_of(&env, "other", A)["leftOut"], LOST);
+    let aside: Vec<String> = std::fs::read_dir(env.dir.path().join("store"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("sessions.json.bad-"))
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+}
+
+/// A record that can't be updated is never removed: what only it knows (a left-out session whose
+/// versions are gone) survives, and the next read adds what the snapshots tell.
+#[test]
+fn a_failed_update_keeps_the_record() {
+    let env = left_out_in_work();
+    let store = env.dir.path().join("store");
+    // Only the record remembers A now.
+    env.run(&["delete", "work", "--yes"]).unwrap();
+    // The record's temporary file can't be written: the update fails.
+    let blocker = store.join(format!("sessions.tmp-{}", std::process::id()));
+    std::fs::create_dir(&blocker).unwrap();
+    let o = env.run(&["save", "other"]).unwrap();
+    assert!(o.json["warnings"].to_string().contains("could not update the record"), "{}", o.json);
+    assert!(store.join("sessions.json").is_file());
+    assert!(store.join("sessions.dirty").is_file());
+    std::fs::remove_dir(&blocker).unwrap();
+    env.run(&["tab", "other", "Beta", "--add-session", A]).unwrap();
+    assert_eq!(tab_of(&env, "other", A)["leftOut"], LOST);
+    assert!(!store.join("sessions.dirty").exists());
+}
+
 /// The plan's tab for session A's tab ("login fix"), as JSON.
 fn planned_a(plan: &Value) -> Value {
     let tabs: Vec<Value> = plan["plan"]["actions"]

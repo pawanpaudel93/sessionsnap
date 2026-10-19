@@ -12,7 +12,7 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
-/// Writes JSON to a temporary file next to `path`, then renames it into place.
+/// Writes JSON to a temporary file next to `path`, syncs it to disk, then renames it into place.
 pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     write_atomic(path, value, false)
 }
@@ -38,9 +38,17 @@ fn write_atomic<T: Serialize>(path: &Path, value: &T, private: bool) -> Result<(
     let _ = private;
     let mut file = options.open(&tmp).with_context(|| format!("writing {}", tmp.display()))?;
     file.write_all((serde_json::to_string_pretty(value)? + "\n").as_bytes())
+        .and_then(|()| file.sync_all())
         .with_context(|| format!("writing {}", tmp.display()))?;
     drop(file);
     fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))?;
+    // The new name is in the folder: sync it too, where the system allows.
+    #[cfg(unix)]
+    if let Some(dir) = path.parent()
+        && let Ok(d) = fs::File::open(dir)
+    {
+        let _ = d.sync_all();
+    }
     Ok(())
 }
 
