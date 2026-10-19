@@ -492,57 +492,81 @@ fn auth_header(v: &str) -> bool {
             token(after) >= 4
         })
     });
-    let words = shell_words(v);
     // Any value with a password after its `:` (a numeric `uid:gid` too: it can't be told from a
     // numeric password, so `docker -u 1000:1000` is dropped as well, failing safe).
     let user_pass = |w: &str| w.split_once(':').is_some_and(|(_, p)| !p.is_empty());
-    let curl_user = words.iter().enumerate().any(|(i, w)| {
-        (matches!(w.as_str(), "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
-            || w.strip_prefix("--user=").is_some_and(user_pass)
-            // The attached short form, `-uuser:password`.
-            || w.strip_prefix("-u").is_some_and(|rest| !rest.starts_with('-') && user_pass(rest))
-    });
+    let curl_user = |words: &[String]| {
+        words.iter().enumerate().any(|(i, w)| {
+            (matches!(w.as_str(), "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
+                || w.strip_prefix("--user=").is_some_and(user_pass)
+                // The attached short form, `-uuser:password`.
+                || w.strip_prefix("-u").is_some_and(|rest| !rest.starts_with('-') && user_pass(rest))
+        })
+    };
+    // Found in any reading of the words counts (see `readings`).
+    let curl_user = readings(v).iter().any(|words| curl_user(words));
     bearer || header || curl_user
 }
 
-/// `v` split into words the way a shell would: whitespace (and the parentheses of a rule such as
-/// `Bash(…)`) separates them, quotes don't, so `admin:"pw"` is one word `admin:pw`. A word ending
-/// in `:` also takes the quoted word after it (`-u 'admin:' "pw"`), so the password half of a
-/// quoted value is never missed.
-fn shell_words(v: &str) -> Vec<String> {
+/// Several ways to split `v` into words; a check that finds a credential in any of them drops the
+/// value, so no one reading can hide it:
+/// - split on whitespace, quotes and parentheses (the `Bash(…)` of a rule);
+/// - the way a shell joins them (`admin:"pw"` is one word `admin:pw`), where a word ending in `:`
+///   also takes the quoted word after it (`-u 'admin:' "pw"`);
+/// - the readings of the text inside each quoted part (`sh -c 'curl -u …'`).
+///
+/// A quote with no closing one is only a separator, never the start of one long word.
+fn readings(v: &str) -> Vec<Vec<String>> {
+    let plain =
+        v.split(|c: char| c.is_whitespace() || "\"'()".contains(c)).filter(|w| !w.is_empty()).map(str::to_string);
+    let mut out = vec![plain.collect()];
     let mut words: Vec<(String, bool)> = vec![];
+    let mut inner: Vec<String> = vec![];
     let (mut word, mut started, mut quoted) = (String::new(), false, false);
-    let mut chars = v.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' | '"' => {
+    let chars: Vec<char> = v.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let close = if c == '\'' || c == '"' { chars[i + 1..].iter().position(|&q| q == c) } else { None };
+        match close {
+            Some(n) => {
+                let part: String = chars[i + 1..i + 1 + n].iter().collect();
                 if !started {
                     quoted = true;
                 }
                 started = true;
-                word.extend(chars.by_ref().take_while(|&q| q != c));
+                word.push_str(&part);
+                inner.push(part);
+                i += n + 2;
+                continue;
             }
-            c if c.is_whitespace() || c == '(' || c == ')' => {
+            None if c.is_whitespace() || "\"'()".contains(c) => {
                 if started {
                     words.push((std::mem::take(&mut word), quoted));
                 }
                 (started, quoted) = (false, false);
             }
-            c => {
+            None => {
                 started = true;
                 word.push(c);
             }
         }
+        i += 1;
     }
     if started {
         words.push((word, quoted));
     }
-    let mut out: Vec<String> = vec![];
+    let mut joined: Vec<String> = vec![];
     for (w, quoted) in words {
-        match out.last_mut() {
+        match joined.last_mut() {
             Some(last) if quoted && last.ends_with(':') => last.push_str(&w),
-            _ => out.push(w),
+            _ => joined.push(w),
         }
+    }
+    out.push(joined);
+    // Each quoted part is shorter than `v`, so this ends.
+    for part in inner {
+        out.extend(readings(&part));
     }
     out
 }
@@ -888,6 +912,11 @@ mod tests {
             format!("curl -uadmin:\"{}\" https://x", "s3cret"),
             format!("curl -u 'admin:' \"{}\" https://x", "pw"),
             format!("Bash(curl -u :{} https://x)", "pw12"),
+            // Inside a quoted command, after an unclosed quote, in a quoted `-c` script.
+            format!("Bash(sh -c 'curl -u admin:{} https://x')", "pw"),
+            format!("Bash(echo don't && curl -u admin:{} https://x)", "pw"),
+            format!("bash -lc \"curl --user=a:{} x\"", "b"),
+            format!("Bash(sh -c 'curl -u \"admin:\" \"{}\"')", "pw"),
             // Fails safe: a numeric uid:gid can't be told from a numeric password.
             "Bash(docker run -u 1000:1000 img)".to_string(),
         ];
@@ -915,6 +944,9 @@ mod tests {
             "Bash(curl -u 'admin' https://x)",
             "Bash(curl -uadmin: https://x)",
             "Bash(docker run -u 1000 img)",
+            "Bash(git log:*)",
+            "Bash(sh -c 'git push -u origin main')",
+            "Bash(echo don't)",
         ] {
             assert!(!holds_credential(v), "{v}");
         }
