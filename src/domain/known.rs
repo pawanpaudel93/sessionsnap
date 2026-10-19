@@ -33,6 +33,11 @@ pub struct Known {
     /// (an entry made only to keep a session left out).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_at: Option<String>,
+    /// The kind of `left_out`: true when a rebuild from saved versions couldn't decide the flags
+    /// (`DIFFER`), so the next live reading decides them; false (and for older records, which
+    /// don't have it) when a launch's flags couldn't be kept, which is for good.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unsure: bool,
 }
 
 /// How a session is launched when an edit or a plan puts it in a tab.
@@ -80,19 +85,26 @@ impl KnownSessions {
             args: vec![],
             left_out: None,
             observed_at: None,
+            unsure: false,
         })
     }
 
     /// Records the agent tabs of live launches captured from the terminal at `at` (UTC, RFC 3339)
     /// and normalized: a left-out tab leaves its session out for good; otherwise its flags replace
-    /// older ones. Returns whether anything changed.
+    /// older ones, and decide a session a rebuild left undecided. Returns whether anything changed.
     pub fn record_live(&mut self, workspaces: &[Workspace], at: &str) -> bool {
         let before = self.sessions.clone();
         for t in workspaces.iter().flat_map(|w| &w.tabs) {
             let Tab::Agent { agent, session_id, args, left_out, .. } = t else { continue };
             let entry = self.entry(agent, session_id);
-            if entry.left_out.is_some() {
+            if entry.left_out.is_some() && !entry.unsure {
                 continue;
+            }
+            if entry.unsure {
+                // Undecided by a rebuild: any live reading is newer than the saved versions.
+                entry.left_out = None;
+                entry.unsure = false;
+                entry.observed_at = None;
             }
             match left_out {
                 Some(why) => {
@@ -118,6 +130,8 @@ impl KnownSessions {
     /// - An entry the record has stays as it is when every version agrees with it; a version with
     ///   other flags (it may hold a newer launch an update missed) leaves it out, and so does a
     ///   version where the session is left out.
+    /// - Left out because the versions disagree, a session is only undecided (`unsure`): the next
+    ///   live reading decides it. Left out because a version's launch was, it is left out for good.
     ///
     /// Flags taken from versions count as seen before any live read.
     pub fn fill_from<'a>(&mut self, versions: impl IntoIterator<Item = &'a [Workspace]>, agents: &dyn AgentCatalog) {
@@ -142,18 +156,36 @@ impl KnownSessions {
                 })
                 .collect();
             match self.sessions.get_mut(&k) {
-                Some(entry) if entry.left_out.is_none() => {
-                    let ours = launch(&entry.agent, &entry.args);
-                    let why = left_out.or_else(|| flags.iter().any(|f| *f != ours).then(|| DIFFER.to_string()));
-                    if let Some(why) = why {
-                        entry.args.clear();
+                // Left out already, for good or until a live reading: never turned back into flags.
+                Some(entry) if entry.left_out.is_some() => {
+                    if let (Some(why), true) = (left_out, entry.unsure) {
                         entry.left_out = Some(why);
+                        entry.unsure = false;
                     }
                 }
-                Some(_) => {}
+                Some(entry) => {
+                    let ours = launch(&entry.agent, &entry.args);
+                    if let Some(why) = left_out {
+                        *entry = Known {
+                            args: vec![],
+                            left_out: Some(why),
+                            observed_at: None,
+                            unsure: false,
+                            ..entry.clone()
+                        };
+                    } else if flags.iter().any(|f| *f != ours) {
+                        *entry = Known {
+                            args: vec![],
+                            left_out: Some(DIFFER.to_string()),
+                            observed_at: None,
+                            unsure: true,
+                            ..entry.clone()
+                        };
+                    }
+                }
                 None => {
-                    let left_out =
-                        left_out.or_else(|| flags.iter().any(|f| *f != flags[0]).then(|| DIFFER.to_string()));
+                    let differ = left_out.is_none() && flags.iter().any(|f| *f != flags[0]);
+                    let left_out = left_out.or_else(|| differ.then(|| DIFFER.to_string()));
                     self.sessions.insert(
                         k,
                         Known {
@@ -162,6 +194,7 @@ impl KnownSessions {
                             args: if left_out.is_some() { vec![] } else { args.clone() },
                             observed_at: left_out.is_none().then(String::new),
                             left_out,
+                            unsure: differ,
                         },
                     );
                 }
@@ -308,6 +341,34 @@ mod tests {
         assert_eq!(known.get(&s).unwrap().left_out, None, "versions that agree change nothing");
         known.fill_from([ws(vec![with(&["--permission-mode", "plan"], None)]).as_slice()], &agents);
         assert_eq!(known.get(&s).unwrap().left_out.as_deref(), Some(DIFFER));
+    }
+
+    /// Undecided after a rebuild, a session is decided by the next live reading; a lost launch is
+    /// never cleared, and a record written before the kind existed counts as lost.
+    #[test]
+    fn only_undecided_sessions_are_decided_by_a_live_reading() {
+        let agents = agents(vec![]);
+        let s = SessionRef::new("claude", A);
+        let plan = ws(vec![with(&["--permission-mode", "plan"], None)]);
+        let none = ws(vec![with(&[], None)]);
+        let mut known = KnownSessions::default();
+        known.fill_from([plan.as_slice(), none.as_slice()], &agents);
+        assert!(known.get(&s).unwrap().unsure);
+        known.record_live(&plan, T1);
+        let k = known.get(&s).unwrap();
+        assert_eq!((k.args.len(), k.left_out.as_deref(), k.unsure), (2, None, false));
+        // Lost: stays.
+        known.record_live(&ws(vec![with(&[], Some("lost"))]), T1);
+        known.record_live(&plan, T2);
+        assert_eq!(known.get(&s).unwrap().left_out.as_deref(), Some("lost"));
+        // An older record's left-out entry has no kind: lost.
+        let old: KnownSessions = serde_json::from_value(serde_json::json!({"sessions": {format!("claude:{A}"): {
+            "agent": "claude", "sessionId": A, "leftOut": DIFFER}}}))
+        .unwrap();
+        let mut old = old;
+        old.record_live(&plan, T2);
+        assert_eq!(old.get(&s).unwrap().left_out.as_deref(), Some(DIFFER));
+        assert!(!serde_json::to_string(&old).unwrap().contains("unsure"));
     }
 
     #[test]

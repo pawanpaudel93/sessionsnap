@@ -245,7 +245,8 @@ completed the next time it is read. Building or completing it from the snapshots
 flag the versions keep, and version times are not trusted to tell which launch came last: a session
 the record lacks takes the flags its versions agree on; one whose versions disagree, or disagree
 with the record's entry, is left out ("its flags differ between saved versions; resume it by
-hand"), and so is one left out in any version.
+hand") until the next save or edit reads it live from cmux and records that launch; one left out
+in any version, or whose live launch had flags that couldn't be kept, is left out for good.
 
 Everything that resumes a session reads it when the plan is made (`restore` of any snapshot or
 version, `recent`, and `apply`, which rebuilds the plan): a session the record has left out is left
