@@ -16,6 +16,7 @@ cargo test --locked
 
 say "web UI script"
 node --check src/interfaces/web/assets/app.js
+node scripts/test-web-args.mjs
 
 say "shell syntax"
 for f in install.sh scripts/*.sh; do

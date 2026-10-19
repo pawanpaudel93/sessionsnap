@@ -133,8 +133,14 @@ impl Server<'_> {
         if !body.args.first().is_some_and(|c| ALLOWED.contains(&c.as_str())) {
             return Response::text(403, "command not allowed from the UI");
         }
-        if body.args.iter().any(|a| a == "--") {
-            return Response::text(403, "arguments may not contain --");
+        // The page puts a `--` before positionals that start with `-` (a snapshot named `-x`).
+        // clap never takes `--` as an option's value, so all after it are positionals; refusing
+        // anything long-option shaped there keeps the checks below (and `run_json`'s `--json`)
+        // meaning what they say.
+        if let Some(at) = body.args.iter().position(|a| a == "--")
+            && body.args[at + 1..].iter().any(|a| a.starts_with("--"))
+        {
+            return Response::text(403, "only values may follow --");
         }
         // Batches come in `input`, never from a file the server would read.
         let file_batch = body.args.windows(2).any(|w| w[0] == "--batch" && w[1] != "-")
@@ -277,11 +283,50 @@ mod tests {
                 r#"{"args":[]}"#,
                 r#"{"args":["edit","work","--batch","/etc/hosts"]}"#,
                 r#"{"args":["edit","work","--batch=/etc/hosts"]}"#,
-                r#"{"args":["restore","work","--pick","--","x"]}"#,
+                r#"{"args":["restore","work","--","--pick"]}"#,
             ] {
                 assert_eq!(s.handle(&api(bad), mk).status, 403, "{bad}");
             }
             assert_eq!(s.handle(&api("not json"), mk).status, 400);
+        });
+    }
+
+    /// The page sends values that start with `-` as `--opt=value`, and such positionals after `--`.
+    #[test]
+    fn values_that_start_with_a_dash_get_through() {
+        with_store(|mk| {
+            let s = server();
+            let r = body(&s.handle(&api(r#"{"args":["save","--message=- fixed","--","-x"]}"#), mk));
+            assert_eq!(r["exit"], 0, "{r}");
+            let r = body(&s.handle(&api(r#"{"args":["history","--","-x"]}"#), mk));
+            assert_eq!(r["exit"], 0, "{r}");
+            assert_eq!(r["result"]["versions"][0]["message"], "- fixed", "{r}");
+            let r = body(&s.handle(&api(r#"{"args":["show","--","-x"]}"#), mk));
+            assert_eq!(r["exit"], 0, "{r}");
+            let r = body(&s.handle(&api(r#"{"args":["sessions","--search=-foo","--days","365"]}"#), mk));
+            assert_eq!(r["exit"], 0, "{r}");
+            let r = body(&s.handle(&api(r#"{"args":["edit","--batch","-","--dry-run","--","-x"],"input":"[]"}"#), mk));
+            assert_eq!(r["exit"], 0, "{r}");
+        });
+    }
+
+    #[test]
+    fn no_flag_slips_in_after_a_double_dash() {
+        with_store(|mk| {
+            let s = server();
+            s.handle(&api(r#"{"args":["save","x"]}"#), mk);
+            for bad in [
+                r#"{"args":["delete","--","x","--yes"]}"#,
+                r#"{"args":["delete","x","--","--yes"]}"#,
+                r#"{"args":["edit","--","x","--batch","/etc/hosts"]}"#,
+                r#"{"args":["edit","--","x","--batch=/etc/hosts"]}"#,
+                r#"{"args":["list","--","--json"]}"#,
+                r#"{"args":["show","--","--","x"]}"#,
+            ] {
+                assert_eq!(s.handle(&api(bad), mk).status, 403, "{bad}");
+            }
+            let r = body(&s.handle(&api(r#"{"args":["show","x"]}"#), mk));
+            assert_eq!(r["exit"], 0, "still there: {r}");
         });
     }
 

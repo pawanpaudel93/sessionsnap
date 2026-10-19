@@ -51,8 +51,30 @@ function setBusy(delta) {
   document.body.classList.toggle("busy", running > 0);
 }
 
+// clap reads a value that starts with `-` as a flag. So an option's value goes in its
+// `--opt=value` form, and the command's positionals (snapshot names, refs) go last, after a `--`
+// when one starts with `-`: the only place the server allows a `--`.
+function cliArgs(args) {
+  // How many positionals follow each command the page sends; its options come after them.
+  const positionals = { save: 1, delete: 1, edit: 1, show: 1, history: 1, diff: 2, restore: 1, apply: 1 };
+  const valued = { "-m": "--message", "--message": "--message", "--search": "--search", "--tab": "--tab",
+    "--days": "--days", "--hours": "--hours", "--base": "--base" };
+  const [command, ...rest] = args;
+  const n = positionals[command] || 0;
+  const values = rest.slice(0, n);
+  const options = [];
+  for (let i = n; i < rest.length; i++) {
+    const long = valued[rest[i]];
+    if (long && i + 1 < rest.length) options.push(`${long}=${rest[++i]}`);
+    else options.push(rest[i]);
+  }
+  const dashed = values.some((v) => v.startsWith("-"));
+  return [command, ...options, ...(dashed ? ["--"] : []), ...values];
+}
+
 // Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
 async function sessionsnap(args, input) {
+  args = cliArgs(args);
   if (!TOKEN) {
     throw new CommandError(
       "This page has no key yet. Click Reconnect to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
