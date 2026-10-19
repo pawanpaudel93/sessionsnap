@@ -85,3 +85,22 @@ fn dry_run_reports_invalid_ops() {
         .unwrap_err();
     assert_eq!(exit_of(&err), Exit::NotFound);
 }
+
+/// `--base` saves only onto the version the dry run previewed.
+#[test]
+fn base_must_be_the_latest_version() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let ops = r#"[{"op":"tab-remove","tab":"Alpha#2"}]"#;
+    let base = env.run_with_input(&["edit", "work", "--batch", "-", "--dry-run"], ops).unwrap().json["baseVersion"]
+        .to_string();
+    // The snapshot changes after the preview.
+    env.run(&["ws", "work", "Beta", "--rename", "Review"]).unwrap();
+    let err = env.run_with_input(&["edit", "work", "--batch", "-", "--base", &base], ops).unwrap_err();
+    assert_eq!(exit_of(&err), Exit::PlanStale);
+    assert!(err.to_string().contains("is now at v2, not v1"), "{err}");
+    assert_eq!(env.run(&["history", "work"]).unwrap().json["versions"].as_array().unwrap().len(), 2);
+    // Onto the version it previewed, it saves.
+    let o = env.run_with_input(&["edit", "work", "--batch", "-", "--base", "2"], ops).unwrap();
+    assert_eq!(o.json["version"], 3);
+}

@@ -7,6 +7,7 @@ use super::snapshots::{Commit, commit};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit::{self, EditCtx, Op};
 use crate::domain::model::{Source, Workspace};
+use crate::error::{Exit, failure};
 
 /// What an edit did.
 #[derive(Debug)]
@@ -21,9 +22,28 @@ pub enum Edited {
     Committed(Commit),
 }
 
-/// Applies `ops` to the latest version of `name` and saves the result (unless `dry_run`).
-pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Edited> {
+/// Applies `ops` to the latest version of `name` and saves the result (unless `dry_run`). With
+/// `base`, refuses unless the latest version is that one: the ops were previewed on it.
+pub fn edit(
+    ctx: &Ctx,
+    name: &str,
+    ops: Vec<Op>,
+    message: Option<String>,
+    dry_run: bool,
+    base: Option<u32>,
+) -> Result<Edited> {
     let previous = super::load_version(ctx, name, None)?;
+    if let Some(base) = base
+        && base != previous.version
+    {
+        return Err(failure(
+            Exit::PlanStale,
+            format!(
+                "snapshot '{name}' is now at v{}, not v{base}: it changed since these edits were previewed; preview them again",
+                previous.version
+            ),
+        ));
+    }
     let mut workspaces = previous.workspaces.clone();
     let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
         Some(super::read_open(ctx.terminal.as_ref())?)

@@ -24,6 +24,7 @@ let TOKEN = takeToken();
 const main = document.getElementById("main");
 const state = { view: "list", snapshot: null, tab: "edit", version: null, hours: 24 };
 const pending = new Map(); // snapshot name → unsaved edit ops, as `sessionsnap edit --batch` takes them
+const bases = new Map(); // snapshot name → the version its pending edits were last previewed on
 const expanded = new Set(); // "snapshot/workspace" keys whose tabs are shown
 let dragged = null; // the tab being dragged: { ws, pos }
 const opLabels = new WeakMap(); // edit op → what it does, in words, for the save bar
@@ -410,7 +411,9 @@ async function renderEdit(name) {
   let warnings;
   if (ops.length) {
     try {
-      ({ workspaces, warnings } = (await sessionsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
+      let baseVersion;
+      ({ workspaces, warnings, baseVersion } = (await sessionsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
+      bases.set(name, baseVersion);
     } catch (e) {
       if (e.reconnect) throw e;
       // The snapshot changed outside this page and the queued edits no longer apply.
@@ -706,6 +709,8 @@ function saveBar(name) {
   const message = h("input", { class: "grow", placeholder: "Describe the change (optional)", "aria-label": "Version message" });
   const save = actionButton("Save version", async () => {
     const args = ["edit", name, "--batch", "-"];
+    // Save only onto the version that was previewed.
+    if (bases.has(name)) args.push("--base", String(bases.get(name)));
     if (message.value.trim()) args.push("-m", message.value.trim());
     const r = await sessionsnap(args, JSON.stringify(ops));
     pending.delete(name);

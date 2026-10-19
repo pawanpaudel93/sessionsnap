@@ -269,7 +269,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   </tr>
                   <tr>
                     <td><code translate="no">sessionsnap edit &lt;name&gt; --batch &lt;file|-&gt;</code></td>
-                    <td>Apply a JSON array of edit operations as one version (<code translate="no">-</code> reads stdin). <code translate="no">--dry-run</code> shows the result without saving.</td>
+                    <td>Apply a JSON array of edit operations as one version (<code translate="no">-</code> reads stdin). <code translate="no">--dry-run</code> shows the result without saving, with the <code translate="no">baseVersion</code> it applied to; <code translate="no">--base &lt;v&gt;</code> saves only if the latest version is still <code translate="no">v</code> (else exit 6).</td>
                   </tr>
                 </tbody>
               </table>
