@@ -15,6 +15,7 @@ const cases = [
   [["save", "-x"], ["save", "--", "-x"]],
   [["delete", "-x", "--yes"], ["delete", "--yes", "--", "-x"]],
   [["show", "-x@2"], ["show", "--", "-x@2"]],
+  [["show", "--x"], ["show", "--", "--x"]],
   [["diff", "-x@1", "-x@2"], ["diff", "--", "-x@1", "-x@2"]],
   [["edit", "-x", "--batch", "-", "-m", "- fixed"], ["edit", "--batch", "-", "--message=- fixed", "--", "-x"]],
   [["edit", "work", "--batch", "-", "--base", "3"], ["edit", "--batch", "-", "--base=3", "work"]],
