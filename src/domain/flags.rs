@@ -492,19 +492,59 @@ fn auth_header(v: &str) -> bool {
             token(after) >= 4
         })
     });
-    let words: Vec<&str> =
-        v.split(|c: char| c.is_whitespace() || "\"'()".contains(c)).filter(|w| !w.is_empty()).collect();
-    // `user:password`, but not a numeric `uid:gid` (`docker -u 1000:1000`).
-    let numeric = |s: &str| s.chars().all(|c| c.is_ascii_digit());
-    let user_pass =
-        |w: &str| w.split_once(':').is_some_and(|(u, p)| !(u.is_empty() || p.is_empty() || (numeric(u) && numeric(p))));
+    let words = shell_words(v);
+    // Any value with a password after its `:` (a numeric `uid:gid` too: it can't be told from a
+    // numeric password, so `docker -u 1000:1000` is dropped as well, failing safe).
+    let user_pass = |w: &str| w.split_once(':').is_some_and(|(_, p)| !p.is_empty());
     let curl_user = words.iter().enumerate().any(|(i, w)| {
-        (matches!(*w, "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
+        (matches!(w.as_str(), "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
             || w.strip_prefix("--user=").is_some_and(user_pass)
             // The attached short form, `-uuser:password`.
             || w.strip_prefix("-u").is_some_and(|rest| !rest.starts_with('-') && user_pass(rest))
     });
     bearer || header || curl_user
+}
+
+/// `v` split into words the way a shell would: whitespace (and the parentheses of a rule such as
+/// `Bash(…)`) separates them, quotes don't, so `admin:"pw"` is one word `admin:pw`. A word ending
+/// in `:` also takes the quoted word after it (`-u 'admin:' "pw"`), so the password half of a
+/// quoted value is never missed.
+fn shell_words(v: &str) -> Vec<String> {
+    let mut words: Vec<(String, bool)> = vec![];
+    let (mut word, mut started, mut quoted) = (String::new(), false, false);
+    let mut chars = v.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' => {
+                if !started {
+                    quoted = true;
+                }
+                started = true;
+                word.extend(chars.by_ref().take_while(|&q| q != c));
+            }
+            c if c.is_whitespace() || c == '(' || c == ')' => {
+                if started {
+                    words.push((std::mem::take(&mut word), quoted));
+                }
+                (started, quoted) = (false, false);
+            }
+            c => {
+                started = true;
+                word.push(c);
+            }
+        }
+    }
+    if started {
+        words.push((word, quoted));
+    }
+    let mut out: Vec<String> = vec![];
+    for (w, quoted) in words {
+        match out.last_mut() {
+            Some(last) if quoted && last.ends_with(':') => last.push_str(&w),
+            _ => out.push(w),
+        }
+    }
+    out
 }
 
 fn token_in(v: &str) -> bool {
@@ -842,6 +882,14 @@ mod tests {
             format!("Bash(curl -uadmin:{} https://x)", "pw12"),
             format!("curl -u'admin:{}' https://x", "pw12"),
             format!("Bash(curl --user admin:{} https://x)", "pw12"),
+            // Numeric passwords, and passwords in quotes.
+            format!("Bash(curl -u 1234:{} https://x)", "567890"),
+            format!("curl --user=4242:{}", "20240101"),
+            format!("curl -uadmin:\"{}\" https://x", "s3cret"),
+            format!("curl -u 'admin:' \"{}\" https://x", "pw"),
+            format!("Bash(curl -u :{} https://x)", "pw12"),
+            // Fails safe: a numeric uid:gid can't be told from a numeric password.
+            "Bash(docker run -u 1000:1000 img)".to_string(),
         ];
         for v in &found {
             assert!(holds_credential(v), "{v}");
@@ -862,12 +910,11 @@ mod tests {
             "api-key",
             "Bash(git push -u origin main)",
             "Bash(npm i -u)",
-            // A user without a password, and docker's numeric uid:gid.
+            // A user without a password.
             "Bash(curl -u admin https://x)",
+            "Bash(curl -u 'admin' https://x)",
             "Bash(curl -uadmin: https://x)",
-            "Bash(docker run -u 1000:1000 img)",
-            "Bash(docker run -u1000:1000 img)",
-            "Bash(docker run --user=1000:1000 img)",
+            "Bash(docker run -u 1000 img)",
         ] {
             assert!(!holds_credential(v), "{v}");
         }
