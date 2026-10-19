@@ -16,7 +16,7 @@ use crate::domain::model::Workspace;
 /// is moved aside (never overwritten) and built again.
 pub fn load(store: &Store, agents: &Agents) -> Result<KnownSessions> {
     if let SessionsFile::Read(known) = store.read_sessions()
-        && !store.sessions_dirty()
+        && store.sessions_dirty().is_none()
     {
         return Ok(known);
     }
@@ -29,7 +29,7 @@ pub fn load(store: &Store, agents: &Agents) -> Result<KnownSessions> {
 fn current(store: &Store, agents: &Agents, lock: &Lock) -> Result<KnownSessions> {
     let dirty = store.sessions_dirty();
     let mut known = match store.read_sessions() {
-        SessionsFile::Read(known) if !dirty => return Ok(known),
+        SessionsFile::Read(known) if dirty.is_none() => return Ok(known),
         SessionsFile::Read(known) => known,
         SessionsFile::Missing => KnownSessions::default(),
         SessionsFile::Bad(why) => {
@@ -42,7 +42,8 @@ fn current(store: &Store, agents: &Agents, lock: &Lock) -> Result<KnownSessions>
         }
     };
     let versions = saved_versions(store, agents)?;
-    known.fill_from(versions.iter().map(Vec::as_slice), agents);
+    let since = dirty.unwrap_or_default();
+    known.fill_from_dated(versions.iter().map(|(at, ws)| (at.as_str(), ws.as_slice())), &since, agents);
     store.write_sessions(lock, &known)?;
     store.clear_sessions_dirty(lock);
     Ok(known)
@@ -64,7 +65,7 @@ pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace], at: &
         Ok(())
     })();
     if result.is_err() {
-        store.mark_sessions_dirty();
+        store.mark_sessions_dirty(at);
     }
     result
 }
@@ -76,13 +77,17 @@ pub fn now() -> String {
 }
 
 /// The workspaces of every readable version of every snapshot, normalized.
-fn saved_versions(store: &Store, agents: &Agents) -> Result<Vec<Vec<Workspace>>> {
+/// With each version's time (UTC, to the second; `ANY_TIME` when it can't be read).
+fn saved_versions(store: &Store, agents: &Agents) -> Result<Vec<(String, Vec<Workspace>)>> {
     let mut out = vec![];
     for name in store.list()? {
         for n in store.versions(&name)? {
             if let Ok(Ok(mut v)) = store.read_version(&name, n) {
                 crate::domain::agents::normalize_tabs(&mut v.workspaces, agents);
-                out.push(v.workspaces);
+                let at = chrono::DateTime::parse_from_rfc3339(&v.created_at)
+                    .map(|t| t.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                    .unwrap_or_else(|_| crate::domain::known::ANY_TIME.to_string());
+                out.push((at, v.workspaces));
             }
         }
     }

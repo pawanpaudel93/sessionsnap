@@ -56,6 +56,14 @@ pub const DIFFER: &str = "its flags differ between saved versions; resume it by 
 /// What a plan says when a tab's saved flags are not the session's newest.
 pub const NEWEST_FLAGS: &str = "using the session's newest known flags";
 
+/// The time of a version whose time is not known: later than any other, so it is always compared.
+pub const ANY_TIME: &str = "~";
+
+/// A record time (`…T12:00:05.123Z`) to the second, as version times are (`…T12:00:05Z`).
+fn to_second(at: &str) -> String {
+    if at.len() >= 19 { format!("{}Z", &at[..19]) } else { String::new() }
+}
+
 /// Kept flags as a set of launches can be compared: each flag with the values after it, sorted.
 fn canonical(kept: &[String]) -> Vec<Vec<String>> {
     let mut groups: Vec<Vec<String>> = vec![];
@@ -134,14 +142,33 @@ impl KnownSessions {
     ///   live reading decides it. Left out because a version's launch was, it is left out for good.
     ///
     /// Flags taken from versions count as seen before any live read.
+    ///
+    /// Here every version may be newer than any entry; see `fill_from_dated`.
     pub fn fill_from<'a>(&mut self, versions: impl IntoIterator<Item = &'a [Workspace]>, agents: &dyn AgentCatalog) {
-        let mut seen: BTreeMap<String, Vec<&Tab>> = BTreeMap::new();
-        for t in versions.into_iter().flatten().flat_map(|w| &w.tabs) {
-            if let Some(s) = t.session() {
-                seen.entry(key(&s)).or_default().push(t);
+        self.fill_from_dated(versions.into_iter().map(|w| (ANY_TIME, w)), "", agents);
+    }
+
+    /// `fill_from`, with each version's time (UTC, `YYYY-MM-DDTHH:MM:SSZ`; `ANY_TIME` when not
+    /// known). An existing entry is compared only with versions written no earlier than when it
+    /// was seen and than `since` (the first failed update): an older version can't hold a newer
+    /// launch. Times are to the second, so a version from the same second counts (failing
+    /// closed). A session the record lacks is compared across all versions.
+    pub fn fill_from_dated<'a>(
+        &mut self,
+        versions: impl IntoIterator<Item = (&'a str, &'a [Workspace])>,
+        since: &str,
+        agents: &dyn AgentCatalog,
+    ) {
+        let mut seen: BTreeMap<String, Vec<(&str, &Tab)>> = BTreeMap::new();
+        for (at, workspaces) in versions {
+            for t in workspaces.iter().flat_map(|w| &w.tabs) {
+                if let Some(s) = t.session() {
+                    seen.entry(key(&s)).or_default().push((at, t));
+                }
             }
         }
-        for (k, tabs) in seen {
+        for (k, dated) in seen {
+            let tabs: Vec<&Tab> = dated.iter().map(|(_, t)| *t).collect();
             let Some(Tab::Agent { agent, session_id, args, .. }) = tabs.first().copied() else { continue };
             let left_out = tabs.iter().find_map(|t| match t {
                 Tab::Agent { left_out: Some(why), .. } => Some(why.clone()),
@@ -165,6 +192,12 @@ impl KnownSessions {
                 }
                 Some(entry) => {
                     let ours = launch(&entry.agent, &entry.args);
+                    let from = to_second(entry.observed_at.as_deref().unwrap_or("")).max(to_second(since));
+                    let newer = dated.iter().filter(|(at, _)| *at >= from.as_str()).filter_map(|(_, t)| match t {
+                        Tab::Agent { agent, args, .. } => Some(launch(agent, args)),
+                        Tab::Terminal { .. } => None,
+                    });
+                    let differs = newer.into_iter().any(|f| f != ours);
                     if let Some(why) = left_out {
                         *entry = Known {
                             args: vec![],
@@ -173,7 +206,7 @@ impl KnownSessions {
                             unsure: false,
                             ..entry.clone()
                         };
-                    } else if flags.iter().any(|f| *f != ours) {
+                    } else if differs {
                         *entry = Known {
                             args: vec![],
                             left_out: Some(DIFFER.to_string()),
@@ -369,6 +402,36 @@ mod tests {
         old.record_live(&plan, T2);
         assert_eq!(old.get(&s).unwrap().left_out.as_deref(), Some(DIFFER));
         assert!(!serde_json::to_string(&old).unwrap().contains("unsure"));
+    }
+
+    /// An existing entry is compared only with versions written since it was seen and since the
+    /// first failed update.
+    #[test]
+    fn only_newer_versions_can_contradict_an_entry() {
+        let agents = agents(vec![]);
+        let s = SessionRef::new("claude", A);
+        let plan = ws(vec![with(&["--permission-mode", "plan"], None)]);
+        let none = ws(vec![with(&[], None)]);
+        let entry = || {
+            let mut known = KnownSessions::default();
+            known.record_live(&plan, T2);
+            known
+        };
+        let state = |k: &KnownSessions| k.get(&s).unwrap().unsure;
+        // Older than the entry: no say.
+        let mut known = entry();
+        known.fill_from_dated([("2026-01-01T00:00:00Z", none.as_slice())], "", &agents);
+        assert!(!state(&known));
+        // Newer than the entry, but older than the failed update: no say either.
+        let mut known = entry();
+        known.fill_from_dated([("2026-01-02T00:00:01Z", none.as_slice())], "2026-01-03T00:00:00.000Z", &agents);
+        assert!(!state(&known));
+        // Newer than both (or the same second): it may hold the launch the update missed.
+        for at in ["2026-01-03T00:00:00Z", "2026-01-04T00:00:00Z", ANY_TIME] {
+            let mut known = entry();
+            known.fill_from_dated([(at, none.as_slice())], "2026-01-03T00:00:00.500Z", &agents);
+            assert!(state(&known), "{at}");
+        }
     }
 
     #[test]

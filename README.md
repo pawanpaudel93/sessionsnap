@@ -243,8 +243,9 @@ it. It is built from every snapshot the first time it is needed; a record that c
 kept as `sessions.json.bad-<time>` and built again; when an update fails, the record is kept and
 completed the next time it is read. Building or completing it from the snapshots compares every
 flag the versions keep, and version times are not trusted to tell which launch came last: a session
-the record lacks takes the flags its versions agree on; one whose versions disagree, or disagree
-with the record's entry, is left out ("its flags differ between saved versions; resume it by
+the record lacks takes the flags its versions agree on; one whose versions disagree, or whose
+entry is contradicted by a version written since it was seen and since the failed update, is left
+out ("its flags differ between saved versions; resume it by
 hand") until the next save or edit reads it live from cmux and records that launch; one left out
 in any version, or whose live launch had flags that couldn't be kept, is left out for good.
 

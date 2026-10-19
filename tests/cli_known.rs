@@ -409,13 +409,16 @@ fn recorded_a(env: &Env) -> Value {
     record["sessions"][format!("claude:{A}")].clone()
 }
 
-/// Completing the record after a failed update: a saved version that contradicts an entry (here
-/// the older `old` versions against `work`'s plan mode) leaves the session out, failing closed,
-/// instead of picking one.
+/// Probe 5: a correct entry, then an unrelated failed update. Completing the record compares the
+/// entry only with versions written since that failed update (and since the entry was seen), so
+/// `old`'s older copy of A, saved without flags, doesn't make it undecided.
 #[test]
-fn completing_the_record_leaves_out_a_contradicted_entry() {
+fn an_unrelated_failed_update_leaves_a_correct_entry_alone() {
     let env = partial_save_history();
-    assert_eq!(args(&recorded_a(&env)), PLAN);
+    let before = recorded_a(&env);
+    assert_eq!(args(&before), PLAN);
+    // Version times are to the second: the failed update comes later than `old` v2.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     let store = env.dir.path().join("store");
     let blocker = store.join(format!("sessions.tmp-{}", std::process::id()));
     std::fs::create_dir(&blocker).unwrap();
@@ -424,8 +427,10 @@ fn completing_the_record_leaves_out_a_contradicted_entry() {
     std::fs::remove_dir(&blocker).unwrap();
     assert!(store.join("sessions.dirty").is_file());
     let p = env.run(&["recent", "--plan"]).unwrap().json;
-    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
-    assert!(!env.run(&["restore", "work", "--plan"]).unwrap().json["plan"]["actions"].to_string().contains(A));
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert_eq!(recorded_a(&env), before);
+    let p = env.run(&["restore", "work", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
 }
 
 /// The update that failed held the newer, stricter launch: the looser entry doesn't win.
