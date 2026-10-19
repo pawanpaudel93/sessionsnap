@@ -12,10 +12,10 @@
             "customTitle": "Alpha",
             "currentDirectory": "/w/alpha",
             "gitBranch": { "branch": "main", "isDirty": false },
-            "layout": { "type": "pane", "pane": { "panelIds": ["P2", "P1"], "selectedPanelId": "P1" } },
+            "layout": { "type": "pane", "pane": { "panelIds": ["5E55A0A0-0000-4000-8000-000000000002", "5E55A0A0-0000-4000-8000-000000000001"], "selectedPanelId": "5E55A0A0-0000-4000-8000-000000000001" } },
             "panels": [
               {
-                "id": "P1", "type": "terminal", "title": "✳ fix login", "directory": "/w/alpha", "ttyName": "ttys001",
+                "id": "5E55A0A0-0000-4000-8000-000000000001", "type": "terminal", "title": "✳ fix login", "directory": "/w/alpha", "ttyName": "ttys001",
                 "terminal": {
                   "agent": { "kind": "claude", "sessionId": "11111111-1111-4111-8111-111111111111", "workingDirectory": "/w/alpha/sub",
                              "launchCommand": { "arguments": ["/usr/local/bin/claude", "--model", "opus"] } },
@@ -23,9 +23,9 @@
                                      "environment": { "SECRET_TOKEN": "do-not-copy" } }
                 }
               },
-              { "id": "P2", "type": "terminal", "title": "zsh", "directory": "/w/alpha", "ttyName": "ttys002",
+              { "id": "5E55A0A0-0000-4000-8000-000000000002", "type": "terminal", "title": "zsh", "directory": "/w/alpha", "ttyName": "ttys002",
                 "terminal": { "workingDirectory": "/w/alpha" } },
-              { "id": "P3", "type": "browser", "title": "docs" }
+              { "id": "5E55A0A0-0000-4000-8000-000000000003", "type": "browser", "title": "docs" }
             ]
           },
           {
@@ -33,20 +33,20 @@
             "customTitle": "",
             "processTitle": "beta-proc",
             "currentDirectory": "/w/beta",
-            "layout": { "type": "pane", "pane": { "panelIds": ["P4", "P5", "P6", "P7"] } },
+            "layout": { "type": "pane", "pane": { "panelIds": ["5E55A0A0-0000-4000-8000-000000000004", "5E55A0A0-0000-4000-8000-000000000005", "5E55A0A0-0000-4000-8000-000000000006", "5E55A0A0-0000-4000-8000-000000000007"] } },
             "panels": [
-              { "id": "P4", "type": "terminal", "title": "review", "directory": "/w/beta", "ttyName": "ttys003",
+              { "id": "5E55A0A0-0000-4000-8000-000000000004", "type": "terminal", "title": "review", "directory": "/w/beta", "ttyName": "ttys003",
                 "terminal": { "resumeBinding": { "kind": "claude", "checkpointId": "22222222-2222-4222-8222-222222222222", "autoResume": false } } },
-              { "id": "P5", "type": "terminal", "title": "codex", "directory": "/w/beta", "ttyName": "ttys004",
+              { "id": "5E55A0A0-0000-4000-8000-000000000005", "type": "terminal", "title": "codex", "directory": "/w/beta", "ttyName": "ttys004",
                 "terminal": {
                   "agent": { "kind": "codex", "sessionId": "01a12bb7-d379-7541-a81a-7895725dc6dd", "workingDirectory": "/w/beta/api",
                              "launchCommand": { "arguments": ["/opt/homebrew/bin/codex", "-a", "on-request", "-s", "workspace-write"],
                                                 "environment": { "OPENAI_API_KEY": "do-not-copy" } } },
                   "resumeBinding": { "kind": "codex", "command": "codex resume 01a12bb7-d379-7541-a81a-7895725dc6dd", "source": "agent-hook" }
                 } },
-              { "id": "P6", "type": "terminal", "title": "aider", "directory": "/w/beta", "ttyName": "ttys005",
+              { "id": "5E55A0A0-0000-4000-8000-000000000006", "type": "terminal", "title": "aider", "directory": "/w/beta", "ttyName": "ttys005",
                 "terminal": { "agent": { "kind": "aider", "sessionId": "chat-7", "launchCommand": { "arguments": ["aider"] } } } },
-              { "id": "P7", "type": "terminal", "title": "starting", "directory": "/w/beta", "ttyName": "ttys006",
+              { "id": "5E55A0A0-0000-4000-8000-000000000007", "type": "terminal", "title": "starting", "directory": "/w/beta", "ttyName": "ttys006",
                 "terminal": { "agent": { "kind": "codex", "launchCommand": { "arguments": ["codex"] } } } }
             ]
           }

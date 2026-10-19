@@ -560,7 +560,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               </table>
             </div>
             <p>
-              sessionsnap also reads cmux's state file and <code translate="no">cmux --json tree</code>.
+              sessionsnap also reads cmux's state file and <code translate="no">cmux --json --id-format both tree --all</code>, and matches open tabs to the state file by surface ID.
               Snapshots are format 2 (<code translate="no">"sessionsnap": 2</code>), plain JSON you can
               read and edit. Files from pre-release builds (format 1) show as “unreadable” until
               converted; the

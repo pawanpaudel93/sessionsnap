@@ -292,7 +292,7 @@ Details:
 | cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
-sessionsnap also reads cmux's state file and `cmux --json tree`.
+sessionsnap also reads cmux's state file and `cmux --json --id-format both tree --all`, and matches open tabs to the state file by surface ID (by tty, with a warning, on a cmux that reports no IDs).
 
 Snapshots are format 2 (`"sessionsnap": 2`). Files from pre-release builds (format 1, with
 `"type": "claude"` tabs) are shown as "unreadable" until converted by hand: each

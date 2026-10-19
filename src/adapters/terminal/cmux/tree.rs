@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::clean_title;
-use super::state_file::{FilePanel, FileWorkspace};
+use super::state_file::FileWorkspace;
 use crate::error::{Exit, failure};
 use crate::ports::{OpenTab, OpenWorkspace};
 
@@ -90,42 +90,39 @@ fn norm_tty(t: &str) -> &str {
 }
 
 /// Live refs and order from the tree; folders and agent sessions from the state file, matched by
-/// workspace ID and then by surface ID, else by tty. Workspaces cmux has not written to its file
-/// yet get empty folders.
+/// workspace ID and then by surface. Workspaces cmux has not written to its file yet get empty
+/// folders.
 ///
-/// A tty is reused: a tab can close and a new shell get its tty before cmux rewrites its file. So
-/// a panel found by tty is that surface's only when their IDs match (when both have one), else
-/// when their titles do; otherwise the surface gets the panel's folder but no agent session, so a
-/// shell is never saved as the closed tab's session (and restore never skips that one as open).
-pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
-    tree.into_iter()
+/// A surface's ID is its panel's ID in the state file, so when the tree reports IDs (`--id-format
+/// both`) a surface matches only the panel with its ID. A tty is not enough: a tab can close and a
+/// new shell get its tty before cmux rewrites its file, and the shell must not pass for the closed
+/// tab's session. A cmux that reports no surface IDs at all is matched by tty, as before, and the
+/// second value is a warning saying so.
+pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> (Vec<OpenWorkspace>, Option<String>) {
+    let by_id = tree.iter().flat_map(|w| &w.surfaces).any(|s| s.id.is_some());
+    let workspaces = tree
+        .into_iter()
         .map(|tw| {
             let fw = file.iter().find(|f| f.id == tw.id);
             let panels = fw.map(|f| f.panels.as_slice()).unwrap_or_default();
-            let id_of = |p: &FilePanel, s: &TreeSurface| match (&s.id, &p.id) {
-                (Some(a), Some(b)) => Some(a.eq_ignore_ascii_case(b)),
-                _ => None,
-            };
-            // IDs count only when some surface here has a panel's ID: should cmux ever report
-            // them differently, titles decide instead of every tab losing its session.
-            let ids_match = tw.surfaces.iter().any(|s| panels.iter().any(|p| id_of(p, s) == Some(true)));
             let tabs = tw
                 .surfaces
                 .into_iter()
                 .map(|s| {
-                    let tty = s.tty.as_deref().map(norm_tty);
-                    let same_id = |p: &FilePanel| id_of(p, &s).filter(|_| ids_match);
-                    let by_id = panels.iter().find(|p| same_id(p) == Some(true));
-                    let panel = by_id.map(|p| (p, true)).or_else(|| {
-                        let p = panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty)?;
-                        let same = same_id(p).unwrap_or_else(|| clean_title(&p.title) == clean_title(&s.title));
-                        Some((p, same))
-                    });
+                    let panel = if by_id {
+                        let id = s.id.as_deref();
+                        panels
+                            .iter()
+                            .find(|p| id.is_some_and(|id| p.id.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(id))))
+                    } else {
+                        let tty = s.tty.as_deref().map(norm_tty);
+                        panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty)
+                    };
                     OpenTab {
                         reference: Some(s.reference),
                         title: clean_title(&s.title),
-                        cwd: panel.map(|(p, _)| p.cwd.clone()).unwrap_or_default(),
-                        agent: panel.filter(|(_, same)| *same).and_then(|(p, _)| p.agent.clone()),
+                        cwd: panel.map(|p| p.cwd.clone()).unwrap_or_default(),
+                        agent: panel.and_then(|p| p.agent.clone()),
                     }
                 })
                 .collect();
@@ -138,7 +135,13 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> Vec<OpenWorkspa
                 tabs,
             }
         })
-        .collect()
+        .collect();
+    let warning = (!by_id).then(|| {
+        "cmux reported no surface IDs, so tabs were matched to its saved state by tty: a tab opened \
+         since cmux last saved may be taken for a closed tab's session"
+            .to_string()
+    });
+    (workspaces, warning)
 }
 
 /// Open state when cmux is not running: the state file alone, without live refs.
@@ -164,15 +167,16 @@ pub fn from_file(file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
         .collect()
 }
 
-/// A `cmux --json tree --all` reply matching tests/fixtures/cmux-state.json, plus one new workspace.
+/// A `cmux --json --id-format both tree --all` reply matching tests/fixtures/cmux-state.json, plus
+/// one new workspace. Surface IDs are panel IDs in the state file.
 #[cfg(test)]
-pub const TEST_TREE: &str = r#"{"windows":[{"ref":"window:1","workspaces":[
- {"id":"WS-ALPHA","ref":"workspace:1","title":"Alpha","panes":[{"ref":"pane:1","surfaces":[
-   {"ref":"surface:2","title":"zsh","tty":"ttys002","type":"terminal"},
-   {"ref":"surface:1","title":"✳ fix login","tty":"ttys001","type":"terminal"},
-   {"ref":"surface:9","title":"docs","tty":null,"type":"browser"}]}]},
- {"id":"WS-NEW","ref":"workspace:7","title":"✳ Fresh","panes":[{"ref":"pane:2","surfaces":[
-   {"ref":"surface:5","title":"zsh","tty":"ttys009","type":"terminal"}]}]}]}]}"#;
+pub const TEST_TREE: &str = r#"{"windows":[{"id":"7A1B0000-0000-4000-8000-000000000001","ref":"window:1","workspaces":[
+ {"id":"WS-ALPHA","ref":"workspace:1","title":"Alpha","panes":[{"id":"9A9E0000-0000-4000-8000-000000000001","ref":"pane:1","surfaces":[
+   {"id":"5E55A0A0-0000-4000-8000-000000000002","ref":"surface:2","title":"zsh","tty":"ttys002","type":"terminal"},
+   {"id":"5E55A0A0-0000-4000-8000-000000000001","ref":"surface:1","title":"✳ fix login","tty":"ttys001","type":"terminal"},
+   {"id":"5E55A0A0-0000-4000-8000-000000000003","ref":"surface:9","title":"docs","tty":null,"type":"browser"}]}]},
+ {"id":"WS-NEW","ref":"workspace:7","title":"✳ Fresh","panes":[{"id":"9A9E0000-0000-4000-8000-000000000002","ref":"pane:2","surfaces":[
+   {"id":"5E55A0A0-0000-4000-8000-0000000000F5","ref":"surface:5","title":"zsh","tty":"ttys009","type":"terminal"}]}]}]}]}"#;
 
 /// A tree with the UI open in a workspace browser tab and in the Dock.
 #[cfg(test)]
@@ -202,7 +206,8 @@ mod tests {
     #[test]
     fn joins_tree_with_state_file() {
         let (_, file) = state_file::parse(FIXTURE).unwrap();
-        let ws = join(parse(TEST_TREE).unwrap(), &file);
+        let (ws, warning) = join(parse(TEST_TREE).unwrap(), &file);
+        assert_eq!(warning, None);
         assert_eq!(ws.len(), 2);
         assert_eq!(ws[0].reference.as_deref(), Some("workspace:1"));
         assert_eq!(ws[0].name, "Alpha");
@@ -215,34 +220,47 @@ mod tests {
         assert_eq!(ws[1].tabs[0].agent, None);
     }
 
+    #[test]
+    fn reads_surface_ids() {
+        let tree = parse(TEST_TREE).unwrap();
+        assert_eq!(tree[0].surfaces[1].id.as_deref(), Some("5E55A0A0-0000-4000-8000-000000000001"));
+        assert_eq!(tree[0].surfaces[1].reference, "surface:1");
+    }
+
+    /// The live title changed since cmux last wrote its file: the panel ID still finds the session.
+    #[test]
+    fn a_changed_title_still_matches_by_id() {
+        let (_, file) = state_file::parse(FIXTURE).unwrap();
+        let tree = TEST_TREE.replace(r#""title":"✳ fix login""#, r#""title":"✳ Refactor auth""#);
+        let (ws, warning) = join(parse(&tree).unwrap(), &file);
+        assert_eq!(ws[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+        assert_eq!(warning, None);
+    }
+
     /// A tab running session A closed and a new shell got its tty before cmux rewrote its file:
-    /// the tty alone would call the shell session A, and restore would skip A as already open.
+    /// the new shell has a new panel ID, so it is not session A (and restore won't skip A).
     #[test]
     fn a_reused_tty_is_not_the_old_session() {
         let (_, file) = state_file::parse(FIXTURE).unwrap();
-        // Another title on the same tty, no IDs: not the panel cmux saved.
-        let tree = TEST_TREE.replace(r#""title":"✳ fix login""#, r#""title":"zsh""#);
-        let ws = join(parse(&tree).unwrap(), &file);
-        assert_eq!(ws[0].tabs[1].agent, None);
-        // The same title but another surface ID than the saved panel's (the other tab's ID shows
-        // IDs can be compared): not it either.
-        let with_ids = |other: &str, surface: &str| {
-            let tree = TEST_TREE
-                .replace(r#""ref":"surface:2","#, &format!(r#""ref":"surface:2","id":"{other}","#))
-                .replace(r#""ref":"surface:1","#, &format!(r#""ref":"surface:1","id":"{surface}","#));
-            join(parse(&tree).unwrap(), &file)
-        };
-        let new_id = "0E1F2A3B-0000-4000-8000-000000000001";
-        assert_eq!(with_ids("P2", new_id)[0].tabs[1].agent, None);
-        // The saved panel's ID matches (any case), whatever the title says now.
-        assert_eq!(with_ids("P2", "p1")[0].tabs[1].agent.as_ref().unwrap().session_id, A);
-        // No surface has a panel's ID (cmux reporting them differently): titles decide.
-        assert_eq!(with_ids("X2", new_id)[0].tabs[1].agent.as_ref().unwrap().session_id, A);
-        // A changed title alone does not lose a session whose IDs match.
         let tree = TEST_TREE
-            .replace(r#""ref":"surface:1","#, r#""ref":"surface:1","id":"P1","#)
-            .replace(r#""title":"✳ fix login""#, r#""title":"⠂ new title""#);
-        assert_eq!(join(parse(&tree).unwrap(), &file)[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+            .replace("5E55A0A0-0000-4000-8000-000000000001", "5E55A0A0-0000-4000-8000-0000000000AA")
+            .replace(r#""title":"✳ fix login""#, r#""title":"zsh""#);
+        let (ws, _) = join(parse(&tree).unwrap(), &file);
+        assert_eq!(ws[0].tabs[1].agent, None);
+        // Even with the old title.
+        let tree = TEST_TREE.replace("5E55A0A0-0000-4000-8000-000000000001", "5E55A0A0-0000-4000-8000-0000000000AA");
+        assert_eq!(join(parse(&tree).unwrap(), &file).0[0].tabs[1].agent, None);
+    }
+
+    /// A cmux that reports no surface IDs at all: matched by tty as before, with a warning.
+    #[test]
+    fn without_ids_ttys_match_with_a_warning() {
+        let (_, file) = state_file::parse(FIXTURE).unwrap();
+        let mut tree = parse(TEST_TREE).unwrap();
+        tree.iter_mut().flat_map(|w| w.surfaces.iter_mut()).for_each(|s| s.id = None);
+        let (ws, warning) = join(tree, &file);
+        assert_eq!(ws[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+        assert!(warning.unwrap().contains("surface IDs"));
     }
 
     #[test]

@@ -97,8 +97,13 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         if !self.is_running() {
             return Ok(OpenState { live: false, state_version: Some(version), workspaces: tree::from_file(&file) });
         }
-        let tree = tree::parse(&self.cmux_ok(&["--json", "tree", "--all"])?)?;
-        Ok(OpenState { live: true, state_version: Some(version), workspaces: tree::join(tree, &file) })
+        // `--id-format both` keeps surface IDs, which match panels in the state file.
+        let tree = tree::parse(&self.cmux_ok(&["--json", "--id-format", "both", "tree", "--all"])?)?;
+        let (workspaces, warning) = tree::join(tree, &file);
+        if let Some(warning) = warning {
+            eprintln!("sessionsnap: {warning}");
+        }
+        Ok(OpenState { live: true, state_version: Some(version), workspaces })
     }
 
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {
@@ -421,7 +426,11 @@ mod tests {
 
     #[test]
     fn reads_live_state_when_running() {
-        let s = backend(true).read_open_state().unwrap();
+        let b = backend(true);
+        let s = b.read_open_state().unwrap();
+        // Without `--id-format both` cmux leaves out surface IDs, and tabs can't be told apart.
+        let tree_call = ["cmux", "--json", "--id-format", "both", "tree", "--all"].map(String::from).to_vec();
+        assert!(b.runner.calls.borrow().contains(&tree_call), "{:?}", b.runner.calls.borrow());
         assert!(s.live);
         assert_eq!(s.state_version, Some(1));
         assert_eq!(s.workspaces[0].tabs[1].agent.as_ref().unwrap().session_id, A);
