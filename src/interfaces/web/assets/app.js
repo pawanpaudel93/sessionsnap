@@ -119,6 +119,7 @@ const ICONS = {
   warn: "M8 2.5 14 13H2zM8 6.5v3M8 11.2h.01",
   branch: "M5 2.5v11M11 6.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM11 6.5c0 3.5-6 2.5-6 5.5",
   plug: "M6 2.5v3M10 2.5v3M4.5 5.5h7v2a3.5 3.5 0 0 1-7 0zM8 11v2.5",
+  open: "M7 3.5H3.5v9h9V9M9.5 3.5h3v3M12.5 3.5 7.5 8.5",
 };
 function icon(name, cls = "") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -550,6 +551,11 @@ function editTab(w, t, pos) {
       agentLabel(t),
       where ? h("span", { class: "mono faint ellipsis", title: t.cwd }, where) : null),
     h("div", { class: "actions" },
+      iconButton("open", "Restore this tab", () => {
+        // Unsaved edits move tabs around; restore reads the saved version.
+        if (opsOf(state.snapshot).length) return toast("Save or discard your edits first.", "error");
+        go("snapshot", { tab: "restore", version: null, pick: ref });
+      }),
       iconButton("pencil", "Rename tab", () => title.startEdit()),
       iconButton("close", "Remove tab from the snapshot", () => pushOp(said({ op: "tab-remove", tab: ref }, `Removed tab ${t.title}`)), "remove")));
   li.addEventListener("dragstart", (e) => {
@@ -819,7 +825,14 @@ async function renderHistory(name) {
 async function renderRestore(name) {
   await loadAgents();
   const ref = state.version ? `${name}@${state.version}` : name;
+  // A tab picked with "Restore this tab" (`Workspace#n`): only it is ticked, and its plan shown.
+  const pick = state.pick;
+  state.pick = null;
   const { result } = await sessionsnap(["show", ref]);
+  if (pick) {
+    const w = result.version.workspaces.find((x) => pick.startsWith(`${x.name}#`));
+    if (w) expanded.add(`restore/${ref}/${w.name}`);
+  }
   const boxes = []; // { ws, pos, box }
   const out = h("div", {});
   const count = h("span", { class: "muted small grow" });
@@ -837,7 +850,8 @@ async function renderRestore(name) {
     const key = `restore/${ref}/${w.name}`;
     const wsBox = h("input", { type: "checkbox", checked: true, "aria-label": `All tabs of ${w.name}` });
     const tabBoxes = w.tabs.map((t, i) => {
-      const box = h("input", { type: "checkbox", checked: true });
+      const box = h("input", { type: "checkbox", checked: !pick || pick === `${w.name}#${i + 1}`,
+        "aria-label": `Restore ${t.title}` });
       boxes.push({ ws: w.name, pos: i + 1, box });
       box.addEventListener("change", () => {
         syncWs();
@@ -879,19 +893,23 @@ async function renderRestore(name) {
     const chosen = boxes.filter((b) => b.box.checked);
     if (chosen.length === 0) return toast("Pick at least one tab.", "error");
     const args = ["restore", ref, "--plan"];
-    if (chosen.length < boxes.length) {
+    // Named tabs are added to open workspaces even when they are shells; all ticked is a full restore.
+    if (pick || chosen.length < boxes.length) {
       for (const b of chosen) args.push("--tab", `${b.ws}#${b.pos}`);
     }
     out.replaceChildren(renderPlan(await sessionsnap(args)));
     out.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, { class: "primary" });
+  wsBoxes.forEach((f) => f());
   sync();
+  if (pick && boxes.some((b) => b.box.checked)) setTimeout(() => preview.click(), 0);
   return h("div", { class: "stack" },
     state.version
       ? h("div", { class: "banner" }, h("span", { class: "grow" }, `Restoring from v${state.version}, an older version.`),
         h("button", { class: "link", onclick: () => go("snapshot", { tab: "restore", version: null }) }, "Use latest"))
       : null,
-    h("p", { class: "hint" }, "Only tabs that are not already open in cmux will open. Nothing is closed."),
+    h("p", { class: "hint" }, "Only tabs that are not already open in cmux will open. Nothing is closed. ",
+      "Open a workspace to pick single tabs: a tab you pick is added to its workspace if that is open, shells included."),
     h("div", { class: "row tree" }, h("label", {}, all, count)),
     h("div", { class: "tree" }, tree),
     h("div", { class: "footer-actions" }, preview),
