@@ -43,7 +43,7 @@ fn current(store: &Store, agents: &Agents, lock: &Lock) -> Result<KnownSessions>
     };
     let versions = saved_versions(store, agents)?;
     let since = dirty.unwrap_or_default();
-    known.fill_from_dated(versions.iter().map(|(at, ws)| (at.as_str(), ws.as_slice())), &since, agents);
+    known.fill_from_dated(versions.iter().map(|(at, ws)| (at.as_str(), ws.as_slice())), &since, &now(), agents);
     store.write_sessions(lock, &known)?;
     store.clear_sessions_dirty(lock);
     Ok(known)

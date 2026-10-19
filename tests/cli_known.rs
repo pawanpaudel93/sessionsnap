@@ -504,7 +504,8 @@ fn a_live_save_decides_an_undecided_session() {
     // Any plan reads the record, rebuilding it.
     env.run(&["restore", "old", "--plan"]).unwrap();
     assert_eq!(recorded_a(&env)["leftOut"], "its flags differ between saved versions; resume it by hand");
-    // A still runs in plan mode: a live save sees it.
+    // A still runs in plan mode: a live save sees it, later than the versions (to the second).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     env.run(&["save", "work2"]).unwrap();
     assert_eq!(args(&recorded_a(&env)), PLAN);
     assert!(recorded_a(&env).get("leftOut").is_none(), "{}", recorded_a(&env));
