@@ -42,7 +42,8 @@ it, `sessionsnap uninstall [--keep-data]` removes sessionsnap (asks first). The 
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) first: ports and adapters, the layer rules, and recipes
   for adding an agent or a terminal. `src/testing.rs` has fakes for every port.
-- Verify with `scripts/check.sh`: fmt, clippy, tests, `node --check` on the web page's script,
+- Verify with `scripts/check.sh`: fmt, clippy, tests, `node --check` on the web page's script plus
+  `scripts/test-web-args.mjs` (how it builds arguments),
   `sh -n` plus shellcheck on `install.sh` and `scripts/*.sh`, `scripts/test-install.sh` (install.sh
   offline against fake releases) and `scripts/test-site.py`. CI runs the same script on macOS and
   Linux; `scripts/release.sh` runs it too. No test may run cmux, an agent, a browser, or touch

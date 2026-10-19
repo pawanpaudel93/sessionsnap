@@ -39,6 +39,9 @@ header::after {
   background: var(--accent); opacity: 0; transition: opacity .2s;
 }
 body.busy header::after { opacity: 1; animation: slide 1s ease-in-out infinite; }
+/* Said too once a command has taken a while, so a slow one doesn't look like a frozen page. */
+header .working { color: var(--accent); font-size: 12px; }
+header .working[hidden] { display: none; }
 @keyframes slide { from { left: -30%; } to { left: 100%; } }
 
 main { padding: 12px 12px 24px; }

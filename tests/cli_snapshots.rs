@@ -131,3 +131,34 @@ fn an_empty_leftover_folder_is_a_new_snapshot() {
     assert_eq!((o.json["version"].as_u64(), o.json["message"].as_str()), (Some(1), Some("initial save")), "{}", o.json);
     assert!(!sessionsnap::app::snapshots::is_new(&env.ctx(true, false, None), "fresh"));
 }
+
+/// An empty leftover folder can't be used to make a new snapshot whose name starts with `--`.
+#[test]
+fn an_empty_leftover_folder_does_not_allow_a_double_dash_name() {
+    let env = setup();
+    std::fs::create_dir_all(env.dir.path().join("store/snapshots/--y")).unwrap();
+    let err = env.run(&["save", "--", "--y"]).unwrap_err();
+    assert!(format!("{err:#}").contains("can't start with '--'"), "{err:#}");
+}
+
+/// A name that starts with `--` can't be made any more, but one made before still works.
+#[test]
+fn an_existing_double_dash_snapshot_still_works_but_no_new_one_is_made() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    env.fake.state.borrow_mut().workspaces.pop();
+    env.run(&["save", "work"]).unwrap();
+    let snapshots = env.dir.path().join("store").join("snapshots");
+    std::fs::rename(snapshots.join("work"), snapshots.join("--x")).unwrap();
+    let list = env.run(&["list", "--json"]).unwrap().json;
+    assert_eq!(list["snapshots"][0]["name"], "--x", "{list}");
+    assert!(env.run(&["show", "--", "--x@1"]).unwrap().text.contains("login fix"));
+    assert_eq!(env.run(&["history", "--", "--x"]).unwrap().json["versions"].as_array().unwrap().len(), 2);
+    env.run(&["prune", "--keep", "1", "--yes", "--", "--x"]).unwrap();
+    env.run(&["delete", "--yes", "--", "--x"]).unwrap();
+    assert_eq!(exit_of(&env.run(&["show", "--", "--x"]).unwrap_err()), Exit::NotFound);
+    let err = env.run(&["save", "--", "--y"]).unwrap_err();
+    assert!(format!("{err:#}").contains("can't start with '--'"), "{err:#}");
+    let err = env.run(&["save", "--from", "work@1", "--", "--z"]).unwrap_err();
+    assert!(format!("{err:#}").contains("can't start with '--'"), "{err:#}");
+}

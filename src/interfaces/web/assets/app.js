@@ -45,42 +45,110 @@ class CommandError extends Error {
 
 const START_HINT = "Start it with the palette command \"sessionsnap: Open UI\" or `sessionsnap ui`.";
 
-// While any command runs, a bar slides under the header.
-let running = 0;
-function setBusy(delta) {
-  running += delta;
-  document.body.classList.toggle("busy", running > 0);
+// Counts commands queued or running. Calls onChange("busy") when the first is queued, "slow"
+// once that has lasted `slowAfter` ms, and "idle" when the last one ends.
+function pendingTracker(onChange, slowAfter) {
+  let pending = 0;
+  let timer = null;
+  return {
+    start() {
+      if (pending++ === 0) {
+        onChange("busy");
+        timer = setTimeout(() => onChange("slow"), slowAfter);
+      }
+    },
+    end() {
+      if (--pending === 0) {
+        clearTimeout(timer);
+        onChange("idle");
+      }
+    },
+  };
+}
+// While commands are queued or running, a bar slides under the header; after 1.5 s it also says
+// "Working…", so a slow command never looks like a frozen page. Clicks meanwhile wait their turn.
+const commands = pendingTracker((state) => {
+  document.body.classList.toggle("busy", state !== "idle");
+  document.getElementById("working").hidden = state !== "slow";
+}, 1500);
+
+// clap reads a value that starts with `-` as a flag. So an option's value goes in its
+// `--opt=value` form, and the command's positionals (snapshot names, refs) go last, after a `--`
+// when one starts with `-`: the only place the server allows a `--`.
+function cliArgs(args) {
+  // How many positionals follow each command the page sends; its options come after them.
+  const positionals = { save: 1, delete: 1, edit: 1, show: 1, history: 1, diff: 2, restore: 1, apply: 1 };
+  const valued = { "-m": "--message", "--message": "--message", "--search": "--search", "--tab": "--tab",
+    "--days": "--days", "--hours": "--hours", "--base": "--base" };
+  const [command, ...rest] = args;
+  const n = positionals[command] || 0;
+  const values = rest.slice(0, n);
+  const options = [];
+  for (let i = n; i < rest.length; i++) {
+    const long = valued[rest[i]];
+    if (long && i + 1 < rest.length) options.push(`${long}=${rest[++i]}`);
+    else options.push(rest[i]);
+  }
+  const dashed = values.some((v) => v.startsWith("-"));
+  return [command, ...options, ...(dashed ? ["--"] : []), ...values];
 }
 
+// Returns `inTurn(task, wanted)`, which runs `task` once every task given before it has settled.
+// If `wanted()` is false by then (a search a newer one replaced), it resolves to undefined
+// without running.
+function serializer() {
+  let tail = Promise.resolve();
+  return (task, wanted) => {
+    const go = () => (!wanted || wanted() ? task() : undefined);
+    const run = tail.then(go, go);
+    tail = run.catch(() => {});
+    return run;
+  };
+}
+// The server runs one command at a time and refuses one that waits too long behind another, so
+// the page sends its own one at a time.
+const inTurn = serializer();
+
 // Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
-async function sessionsnap(args, input) {
+// With `wanted`, resolves to undefined without sending when it is false by the command's turn.
+function sessionsnap(args, input, wanted) {
+  commands.start();
+  return inTurn(() => runCommand(cliArgs(args), input), wanted).finally(() => commands.end());
+}
+
+async function runCommand(args, input) {
   if (!TOKEN) {
     throw new CommandError(
       "This page has no key yet. Click Reconnect to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
       1, true);
   }
-  setBusy(1);
+  let r;
   try {
-    let r;
-    try {
-      r = await fetch("/api/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sessionsnap-Token": TOKEN },
-        body: JSON.stringify(input === undefined ? { args } : { args, input }),
-      });
-    } catch {
-      throw new CommandError(`The sessionsnap UI server is not running. ${START_HINT}`, 1);
-    }
-    if (r.status === 401) {
-      throw new CommandError("The sessionsnap UI was restarted, so this page's key is old.", 1, true);
-    }
-    if (!r.ok) throw new CommandError(await r.text(), 1);
-    const body = await r.json();
-    if (body.result && body.result.error) throw new CommandError(body.result.error.message, body.exit);
-    return body;
-  } finally {
-    setBusy(-1);
+    r = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sessionsnap-Token": TOKEN },
+      body: JSON.stringify(input === undefined ? { args } : { args, input }),
+    });
+  } catch {
+    throw new CommandError(`The sessionsnap UI server is not running. ${START_HINT}`, 1);
   }
+  if (r.status === 401) {
+    throw new CommandError("The sessionsnap UI was restarted, so this page's key is old.", 1, true);
+  }
+  if (!r.ok) {
+    // Some refusals come as JSON (409: another command is still running).
+    const text = await r.text();
+    let message = text;
+    try {
+      message = JSON.parse(text).error.message || text;
+    } catch {
+      // Plain text.
+    }
+    throw new CommandError(message, 1);
+  }
+  const body = await r.json();
+  if (body.result && body.result.error) throw new CommandError(body.result.error.message, body.exit);
+  return body;
 }
 
 // h("div", { class: "x", onclick: f }, child, "text", [more])
@@ -284,6 +352,11 @@ function reconnectView(message) {
       } catch {
         throw new Error("The sessionsnap UI server is not running.");
       }
+      if (r.status === 429) {
+        status.className = "error small";
+        status.textContent = await r.text();
+        return;
+      }
       if (!r.ok) throw new Error(await r.text());
       const { shown, keyed } = await r.json();
       if (keyed === false) {
@@ -309,8 +382,16 @@ function reconnectView(message) {
 
 // ---- Snapshots ----
 
+// Snapshots named `--x` date from before such names were refused. The server won't pass that
+// name from the page (it would read as an option), so the list leaves them to the CLI.
+function listable(snapshots) {
+  const shown = snapshots.filter((s) => !s.name.startsWith("--"));
+  return { shown, hidden: snapshots.length - shown.length };
+}
+
 async function viewList() {
   const { result } = await sessionsnap(["list"]);
+  const { shown, hidden } = listable(result.snapshots);
   const name = h("input", { class: "grow", placeholder: "Name, e.g. main", "aria-label": "Snapshot name" });
   const save = actionButton("Save open tabs", async () => {
     const n = name.value.trim();
@@ -326,10 +407,10 @@ async function viewList() {
   const open = (s) => go("snapshot", { snapshot: s.name, tab: "edit", version: null });
   return h("section", { class: "stack" },
     h("div", { class: "row" }, name, save),
-    result.snapshots.length === 0
+    shown.length === 0
       ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
         "Name one above to save the workspaces and tabs open in cmux now.")
-      : h("ul", { class: "list" }, result.snapshots.map((s) => {
+      : h("ul", { class: "list" }, shown.map((s) => {
         const pend = opsOf(s.name).length;
         const li = h("li", { class: "item clickable", tabindex: "0", role: "button", onclick: () => open(s),
           onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(s); } } },
@@ -347,7 +428,9 @@ async function viewList() {
           s.message ? h("div", { class: "faint small ellipsis" }, s.message) : null),
         icon("chevron", "chev"));
         return li;
-      })));
+      })),
+    hidden ? h("p", { class: "muted small" },
+      `${plural(hidden, "snapshot")} with a name starting with "--" ${hidden === 1 ? "is" : "are"} not shown here. Use the CLI: sessionsnap list, then sessionsnap show -- <name>.`) : null);
 }
 
 async function viewSnapshot() {
@@ -598,7 +681,8 @@ function editTab(w, t, pos) {
   return li;
 }
 
-// A search box over a list: `load(query)` returns [{ label, sub, pick }].
+// A search box over a list: `load(query, wanted)` returns [{ label, sub, pick }]. It passes
+// `wanted` to its commands, which a newer search then skips; it returns null when one was skipped.
 function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to add." } = {}) {
   const results = h("ul", {});
   const input = h("input", { placeholder, "aria-label": placeholder });
@@ -611,8 +695,12 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
       : [h("li", { class: "note" }, input.value.trim() ? "No matches." : emptyNote)]));
   };
   // `load` returns null for "nothing typed yet": the list then stays empty.
+  // Only the newest search shows its results; one that finishes later is dropped.
+  let latest = 0;
   const run = () => guard(async () => {
-    const items = await load(input.value.trim());
+    const mine = ++latest;
+    const items = await load(input.value.trim(), () => mine === latest);
+    if (mine !== latest) return;
     if (items) show(items);
     else results.replaceChildren();
   });
@@ -634,9 +722,10 @@ function addTabRow(w) {
   const slot = h("div", {});
   const sessions = h("button", { class: "ghost", onclick: () => {
     if (slot.firstChild) return slot.replaceChildren();
-    const p = picker("Search agent sessions by title, prompt or folder", async (q) => {
+    const p = picker("Search agent sessions by title, prompt or folder", async (q, wanted) => {
       if (!q) return null;
-      const r = await sessionsnap(["sessions", "--search", q, "--days", "365"]);
+      const r = await sessionsnap(["sessions", "--search", q, "--days", "365"], undefined, wanted);
+      if (!r) return null;
       return r.result.sessions.slice(0, 30).map(({ session: s, open }) => ({
         label: s.title || s.firstPrompt || s.sessionId,
         sub: `${agentName(s.agent)} · ${tilde(s.cwd)}${open ? " · open in cmux" : ""}`,
@@ -659,8 +748,9 @@ function addWorkspace(name, have) {
   const panel = () => {
     const slot = h("div", {});
     const fromOpen = () => {
-      const p = picker("Filter workspaces open in cmux", async (q) => {
-        const r = await sessionsnap(["open"]);
+      const p = picker("Filter workspaces open in cmux", async (q, wanted) => {
+        const r = await sessionsnap(["open"], undefined, wanted);
+        if (!r) return null;
         return r.result.workspaces
           .filter((w) => !have.has(w.name))
           .filter((w) => !q || w.name.toLowerCase().includes(q.toLowerCase()))
@@ -670,11 +760,14 @@ function addWorkspace(name, have) {
       p.focusInput();
     };
     const fromSnapshot = () => {
-      const p = picker("Filter workspaces in other snapshots", async (q) => {
-        const r = await sessionsnap(["list"]);
+      const p = picker("Filter workspaces in other snapshots", async (q, wanted) => {
+        const r = await sessionsnap(["list"], undefined, wanted);
+        if (!r) return null;
         const items = [];
-        for (const s of r.result.snapshots.filter((x) => x.name !== name)) {
-          const v = await sessionsnap(["show", s.name]);
+        for (const s of listable(r.result.snapshots).shown.filter((x) => x.name !== name)) {
+          // A newer filter skips the rest of this load.
+          const v = await sessionsnap(["show", s.name], undefined, wanted);
+          if (!v) return null;
           for (const w of v.result.version.workspaces) {
             if (have.has(w.name)) continue;
             if (q && !`${s.name} ${w.name}`.toLowerCase().includes(q.toLowerCase())) continue;

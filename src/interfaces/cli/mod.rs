@@ -34,7 +34,7 @@ pub struct Cli {
 pub enum Command {
     /// Save what is open in cmux as a new version of a snapshot
     Save {
-        /// Snapshot name (letters, digits, '.', '_', '-')
+        /// Snapshot name (letters, digits, '.', '_', '-'; a new one can't start with '--')
         name: Option<String>,
         /// Only capture these open workspaces; the rest of the snapshot is kept
         #[arg(long = "workspace", short = 'w')]

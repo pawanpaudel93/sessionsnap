@@ -7,7 +7,7 @@ use crate::adapters::store::lock::Lock;
 use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
-use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name};
+use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name, validate_new_name};
 
 /// What writing a version did.
 #[derive(Debug)]
@@ -25,6 +25,9 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     validate_name(name)?;
     let lock = ctx.store.lock(name)?;
     let new = is_new(ctx, name);
+    if new {
+        validate_new_name(name)?;
+    }
     let latest = if new { None } else { ctx.store.versions(name)?.last().copied() };
     let (previous, unreadable) = if new { (None, None) } else { newest_readable(ctx, name)? };
     let mut live = None;

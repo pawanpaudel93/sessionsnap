@@ -194,6 +194,15 @@ pub fn find_by_name(names: &[&str], query: &str, noun: &str) -> anyhow::Result<u
     }
 }
 
+/// A name for a new snapshot: `validate_name`, and no leading `--`, which reads as an option on a
+/// command line. Snapshots made before this rule keep working.
+pub fn validate_new_name(name: &str) -> Result<()> {
+    if name.starts_with("--") {
+        return Err(failure(Exit::Error, format!("invalid snapshot name '{name}': it can't start with '--'")));
+    }
+    validate_name(name)
+}
+
 pub fn validate_name(name: &str) -> Result<()> {
     let ok = !name.is_empty()
         && name != "."
@@ -299,5 +308,13 @@ mod tests {
         assert!(parse_ref("work@x").is_err());
         assert!(validate_name("../etc").is_err());
         assert!(validate_name("my-day_2.0").is_ok());
+        assert!(validate_name("-x").is_ok());
+        assert!(validate_new_name("-x").is_ok());
+        // A new name would read as an option; an existing one still works.
+        for name in ["--", "--x", "--yes"] {
+            assert!(validate_name(name).is_ok(), "{name}");
+            let err = validate_new_name(name).unwrap_err().to_string();
+            assert!(err.contains("can't start with '--'"), "{name}: {err}");
+        }
     }
 }
