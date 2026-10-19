@@ -44,32 +44,55 @@ pub const RUN_WAIT: Duration = Duration::from_secs(3);
 
 /// Shortest time between the starts of two shows.
 pub const SHOW_GAP: Duration = Duration::from_secs(1);
+/// A show still running after this counts as hung (cmux may never answer); a new one may start.
+pub const SHOW_HANG: Duration = Duration::from_secs(30);
 
-/// One show at a time, at most one per `SHOW_GAP`: each runs cmux, and `/api/show` needs no key.
-#[derive(Default)]
+/// One show at a time, at most one per `gap`: each runs cmux, and `/api/show` needs no key.
 struct ShowGate {
-    /// Whether a show runs, and when the last one started.
-    state: Mutex<(bool, Option<Instant>)>,
+    gap: Duration,
+    hang: Duration,
+    state: Mutex<GateState>,
 }
 
-impl ShowGate {
-    /// `None` when a show runs or one started too recently.
-    fn enter(&self) -> Option<ShowTurn<'_>> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.0 || state.1.is_some_and(|t| t.elapsed() < SHOW_GAP) {
-            return None;
-        }
-        *state = (true, Some(Instant::now()));
-        Some(ShowTurn(self))
+#[derive(Default)]
+struct GateState {
+    /// The running show's turn number and start.
+    running: Option<(u64, Instant)>,
+    last_start: Option<Instant>,
+    turns: u64,
+}
+
+impl Default for ShowGate {
+    fn default() -> Self {
+        ShowGate { gap: SHOW_GAP, hang: SHOW_HANG, state: Mutex::default() }
     }
 }
 
-/// Ends the show when dropped.
-struct ShowTurn<'a>(&'a ShowGate);
+impl ShowGate {
+    /// `None` while a show runs (and has not hung) or when one started under `gap` ago.
+    fn enter(&self) -> Option<ShowTurn<'_>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let busy = state.running.is_some_and(|(_, since)| since.elapsed() < self.hang);
+        if busy || state.last_start.is_some_and(|t| t.elapsed() < self.gap) {
+            return None;
+        }
+        state.turns += 1;
+        let turn = state.turns;
+        state.running = Some((turn, Instant::now()));
+        state.last_start = Some(Instant::now());
+        Some(ShowTurn(self, turn))
+    }
+}
+
+/// Ends its show when dropped; a hung show that ends late leaves a newer one alone.
+struct ShowTurn<'a>(&'a ShowGate, u64);
 
 impl Drop for ShowTurn<'_> {
     fn drop(&mut self) {
-        self.0.state.lock().unwrap_or_else(|e| e.into_inner()).0 = false;
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.running.is_some_and(|(turn, _)| turn == self.1) {
+            state.running = None;
+        }
     }
 }
 
@@ -83,6 +106,14 @@ struct RunBody {
 impl<'a> Server<'a> {
     pub fn new(port: u16, token: String, show: Box<ShowFn<'a>>) -> Self {
         Server { port, token, show, shows: ShowGate::default(), runs: Mutex::new(()) }
+    }
+
+    /// Tests set shorter limits for shows.
+    #[cfg(test)]
+    pub(crate) fn with_show_limits(mut self, gap: Duration, hang: Duration) -> Self {
+        self.shows.gap = gap;
+        self.shows.hang = hang;
+        self
     }
 
     pub fn handle(&self, req: &Request, make_ctx: &MakeCtx<'_>) -> Response {
@@ -154,7 +185,7 @@ impl<'a> Server<'a> {
     }
 
     /// Shows the keyed link in cmux: `200 {"shown": …, "keyed": …}`, `502` with the reason, or
-    /// `429` while another show runs or one started under `SHOW_GAP` ago. When cmux showed the
+    /// `429` while another show runs (for up to `SHOW_HANG`) or one started under `SHOW_GAP` ago. When cmux showed the
     /// page but could not be handed its key, the keyed link is printed to this server's own
     /// terminal instead, for the user to open.
     pub fn show_page(&self) -> Response {
@@ -507,7 +538,7 @@ mod tests {
         let show = || s.handle(&show_req(&[("content-type", "application/json")]), &|_, _| anyhow::bail!("no run"));
         std::thread::scope(|scope| {
             let first = scope.spawn(show);
-            started_rx.recv().unwrap();
+            started_rx.recv_timeout(Duration::from_secs(10)).expect("the show started");
             let busy = show();
             assert_eq!(busy.status, 429, "a second show while one runs");
             finish_tx.send(()).unwrap();
@@ -519,6 +550,45 @@ mod tests {
         finish_tx.send(()).unwrap();
         assert_eq!(show().status, 200, "once the gap has passed");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_hung_show_blocks_later_ones_only_for_a_while() {
+        use std::sync::mpsc::channel;
+        let ((started, started_rx), (release1, released1), (release2, released2)) =
+            (channel(), channel::<()>(), channel::<()>());
+        let (started, released) = (Mutex::new(started), [Mutex::new(released1), Mutex::new(released2)]);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        // The first two shows hang, like a cmux that never answers, until released.
+        let s = Server::new(
+            PORT,
+            "t0k".into(),
+            Box::new(|_| {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if let Some(released) = released.get(n) {
+                    started.lock().unwrap().send(()).unwrap();
+                    let _ = released.lock().unwrap().recv_timeout(Duration::from_secs(20));
+                }
+                Ok(Shown::whole("dock"))
+            }),
+        )
+        .with_show_limits(Duration::ZERO, Duration::from_millis(300));
+        let show = || s.handle(&show_req(&[("content-type", "application/json")]), &|_, _| anyhow::bail!("no run"));
+        std::thread::scope(|scope| {
+            let hung = scope.spawn(show);
+            started_rx.recv_timeout(Duration::from_secs(10)).expect("the show started");
+            assert_eq!(show().status, 429, "while the first runs");
+            std::thread::sleep(Duration::from_millis(400));
+            let second = scope.spawn(show);
+            started_rx.recv_timeout(Duration::from_secs(10)).expect("the show started");
+            release1.send(()).unwrap();
+            assert_eq!(hung.join().unwrap().status, 200);
+            assert_eq!(show().status, 429, "the first ending late leaves the second's turn alone");
+            release2.send(()).unwrap();
+            assert_eq!(second.join().unwrap().status, 200);
+        });
+        assert_eq!(show().status, 200);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]
