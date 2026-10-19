@@ -44,12 +44,32 @@ class CommandError extends Error {
 
 const START_HINT = "Start it with the palette command \"sessionsnap: Open UI\" or `sessionsnap ui`.";
 
-// While any command runs, a bar slides under the header.
-let running = 0;
-function setBusy(delta) {
-  running += delta;
-  document.body.classList.toggle("busy", running > 0);
+// Counts commands queued or running. Calls onChange("busy") when the first is queued, "slow"
+// once that has lasted `slowAfter` ms, and "idle" when the last one ends.
+function pendingTracker(onChange, slowAfter) {
+  let pending = 0;
+  let timer = null;
+  return {
+    start() {
+      if (pending++ === 0) {
+        onChange("busy");
+        timer = setTimeout(() => onChange("slow"), slowAfter);
+      }
+    },
+    end() {
+      if (--pending === 0) {
+        clearTimeout(timer);
+        onChange("idle");
+      }
+    },
+  };
 }
+// While commands are queued or running, a bar slides under the header; after 1.5 s it also says
+// "Working…", so a slow command never looks like a frozen page. Clicks meanwhile wait their turn.
+const commands = pendingTracker((state) => {
+  document.body.classList.toggle("busy", state !== "idle");
+  document.getElementById("working").hidden = state !== "slow";
+}, 1500);
 
 // clap reads a value that starts with `-` as a flag. So an option's value goes in its
 // `--opt=value` form, and the command's positionals (snapshot names, refs) go last, after a `--`
@@ -91,7 +111,8 @@ const inTurn = serializer();
 // Runs `sessionsnap <args> --json`. Resolves to { exit, code, result }; rejects on errors.
 // With `wanted`, resolves to undefined without sending when it is false by the command's turn.
 function sessionsnap(args, input, wanted) {
-  return inTurn(() => runCommand(cliArgs(args), input), wanted);
+  commands.start();
+  return inTurn(() => runCommand(cliArgs(args), input), wanted).finally(() => commands.end());
 }
 
 async function runCommand(args, input) {
@@ -100,38 +121,33 @@ async function runCommand(args, input) {
       "This page has no key yet. Click Reconnect to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
       1, true);
   }
-  setBusy(1);
+  let r;
   try {
-    let r;
-    try {
-      r = await fetch("/api/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sessionsnap-Token": TOKEN },
-        body: JSON.stringify(input === undefined ? { args } : { args, input }),
-      });
-    } catch {
-      throw new CommandError(`The sessionsnap UI server is not running. ${START_HINT}`, 1);
-    }
-    if (r.status === 401) {
-      throw new CommandError("The sessionsnap UI was restarted, so this page's key is old.", 1, true);
-    }
-    if (!r.ok) {
-      // Some refusals come as JSON (409: another command is still running).
-      const text = await r.text();
-      let message = text;
-      try {
-        message = JSON.parse(text).error.message || text;
-      } catch {
-        // Plain text.
-      }
-      throw new CommandError(message, 1);
-    }
-    const body = await r.json();
-    if (body.result && body.result.error) throw new CommandError(body.result.error.message, body.exit);
-    return body;
-  } finally {
-    setBusy(-1);
+    r = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sessionsnap-Token": TOKEN },
+      body: JSON.stringify(input === undefined ? { args } : { args, input }),
+    });
+  } catch {
+    throw new CommandError(`The sessionsnap UI server is not running. ${START_HINT}`, 1);
   }
+  if (r.status === 401) {
+    throw new CommandError("The sessionsnap UI was restarted, so this page's key is old.", 1, true);
+  }
+  if (!r.ok) {
+    // Some refusals come as JSON (409: another command is still running).
+    const text = await r.text();
+    let message = text;
+    try {
+      message = JSON.parse(text).error.message || text;
+    } catch {
+      // Plain text.
+    }
+    throw new CommandError(message, 1);
+  }
+  const body = await r.json();
+  if (body.result && body.result.error) throw new CommandError(body.result.error.message, body.exit);
+  return body;
 }
 
 // h("div", { class: "x", onclick: f }, child, "text", [more])

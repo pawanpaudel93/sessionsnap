@@ -72,3 +72,27 @@ console.log("web page list: leaves out names starting with --");
   assert.deepEqual(results, ["save", undefined, undefined, "auth"]);
   console.log("web page commands: a replaced search is skipped");
 }
+
+// `pendingTracker` in app.js: "busy" while commands are queued or running, "slow" once that has
+// lasted `slowAfter` ms, "idle" when the last one ends.
+{
+  const trk = src.match(/^function pendingTracker\(onChange, slowAfter\) \{\n[\s\S]*?\n\}\n/m);
+  assert.ok(trk, "app.js has no top-level function pendingTracker");
+  const pendingTracker = new Function(`${trk[0]}; return pendingTracker;`)();
+  const states = [];
+  const t = pendingTracker((s) => states.push(s), 30);
+  t.start();
+  t.start();
+  t.end();
+  await sleep(10);
+  assert.deepEqual(states, ["busy"], "a quick command never says it is slow");
+  await sleep(40);
+  assert.deepEqual(states, ["busy", "slow"]);
+  t.end();
+  assert.deepEqual(states, ["busy", "slow", "idle"]);
+  t.start();
+  t.end();
+  await sleep(50);
+  assert.deepEqual(states, ["busy", "slow", "idle", "busy", "idle"], "the slow timer is cleared");
+  console.log("web page commands: a slow command shows as working");
+}
