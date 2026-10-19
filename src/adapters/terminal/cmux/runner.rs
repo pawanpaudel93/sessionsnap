@@ -106,12 +106,14 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("fake");
-        std::fs::write(&fake, "#!/bin/sh\nsleep 20 &\necho $! >> \"$(dirname \"$0\")/pids\"\necho ok\nexit 0\n")
+        std::fs::write(&fake, "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nsleep 20 &\necho $! >> \"$(dirname \"$0\")/pids\"\necho ok\nexit 0\n")
             .unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // macOS checks a new script the first time it runs, which can take seconds under load.
+        Command::new(&fake).arg("warm").status().unwrap();
         let started = Instant::now();
-        let err = ProcessRunner.run_timeout(fake.to_str().unwrap(), &[], Duration::from_secs(2)).unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(10), "took {:?}", started.elapsed());
+        let err = ProcessRunner.run_timeout(fake.to_str().unwrap(), &[], Duration::from_secs(3)).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(15), "took {:?}", started.elapsed());
         assert!(err.to_string().contains("did not answer"), "{err}");
         let pids = std::fs::read_to_string(dir.path().join("pids")).unwrap();
         for pid in pids.split_whitespace() {

@@ -347,11 +347,13 @@ mod tests {
             launcher: None,
             socket: None,
             // Long enough for the first run of a new script (macOS checks it), short for the test.
-            call_timeout: Duration::from_secs(2),
+            call_timeout: Duration::from_secs(3),
         };
+        // macOS checks a new script the first time it runs, which can take seconds under load.
+        std::process::Command::new(&cmux).arg("ping").status().unwrap();
         let started = Instant::now();
         let err = b.read_open_state().unwrap_err().to_string();
-        assert!(started.elapsed() < Duration::from_secs(10), "took {:?}", started.elapsed());
+        assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
         assert!(err.contains("did not answer"), "{err}");
         assert!(b.call_timeout < crate::adapters::store::lock::STALE);
         assert_stopped(dir.path());
