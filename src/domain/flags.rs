@@ -474,8 +474,7 @@ pub fn holds_credential(v: &str) -> bool {
 
 /// `v` holds an HTTP credential: `Bearer <token>` (the token at least 12 characters), or a value
 /// after an `Authorization:`, `X-Api-Key:` or `Api-Key:` header (after one scheme word such as
-/// `Basic`, at least 4 characters), any case; or curl's `-u`/`--user` with `user:password`, also
-/// attached (`-uuser:password`, `--user=user:password`).
+/// `Basic`, at least 4 characters), any case.
 fn auth_header(v: &str) -> bool {
     let lower = v.to_ascii_lowercase();
     let token = |s: &str| s.chars().take_while(|c| c.is_ascii_alphanumeric() || "._~+/=-".contains(*c)).count();
@@ -492,83 +491,7 @@ fn auth_header(v: &str) -> bool {
             token(after) >= 4
         })
     });
-    // Any value with a password after its `:` (a numeric `uid:gid` too: it can't be told from a
-    // numeric password, so `docker -u 1000:1000` is dropped as well, failing safe).
-    let user_pass = |w: &str| w.split_once(':').is_some_and(|(_, p)| !p.is_empty());
-    let curl_user = |words: &[String]| {
-        words.iter().enumerate().any(|(i, w)| {
-            (matches!(w.as_str(), "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
-                || w.strip_prefix("--user=").is_some_and(user_pass)
-                // The attached short form, `-uuser:password`.
-                || w.strip_prefix("-u").is_some_and(|rest| !rest.starts_with('-') && user_pass(rest))
-        })
-    };
-    // Found in any reading of the words counts (see `readings`).
-    let curl_user = readings(v).iter().any(|words| curl_user(words));
-    bearer || header || curl_user
-}
-
-/// Several ways to split `v` into words; a check that finds a credential in any of them drops the
-/// value, so no one reading can hide it:
-/// - split on whitespace, quotes and parentheses (the `Bash(…)` of a rule);
-/// - the way a shell joins them (`admin:"pw"` is one word `admin:pw`), where a word ending in `:`
-///   also takes the quoted word after it (`-u 'admin:' "pw"`);
-/// - the readings of the text inside each quoted part (`sh -c 'curl -u …'`).
-///
-/// A quote with no closing one is only a separator, never the start of one long word.
-fn readings(v: &str) -> Vec<Vec<String>> {
-    let plain =
-        v.split(|c: char| c.is_whitespace() || "\"'()".contains(c)).filter(|w| !w.is_empty()).map(str::to_string);
-    let mut out = vec![plain.collect()];
-    let mut words: Vec<(String, bool)> = vec![];
-    let mut inner: Vec<String> = vec![];
-    let (mut word, mut started, mut quoted) = (String::new(), false, false);
-    let chars: Vec<char> = v.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        let close = if c == '\'' || c == '"' { chars[i + 1..].iter().position(|&q| q == c) } else { None };
-        match close {
-            Some(n) => {
-                let part: String = chars[i + 1..i + 1 + n].iter().collect();
-                if !started {
-                    quoted = true;
-                }
-                started = true;
-                word.push_str(&part);
-                inner.push(part);
-                i += n + 2;
-                continue;
-            }
-            None if c.is_whitespace() || "\"'()".contains(c) => {
-                if started {
-                    words.push((std::mem::take(&mut word), quoted));
-                }
-                (started, quoted) = (false, false);
-            }
-            None => {
-                started = true;
-                word.push(c);
-            }
-        }
-        i += 1;
-    }
-    if started {
-        words.push((word, quoted));
-    }
-    let mut joined: Vec<String> = vec![];
-    for (w, quoted) in words {
-        match joined.last_mut() {
-            Some(last) if quoted && last.ends_with(':') => last.push_str(&w),
-            _ => joined.push(w),
-        }
-    }
-    out.push(joined);
-    // Each quoted part is shorter than `v`, so this ends.
-    for part in inner {
-        out.extend(readings(&part));
-    }
-    out
+    bearer || header
 }
 
 fn token_in(v: &str) -> bool {
@@ -900,25 +823,6 @@ mod tests {
             format!("authorization:{}", "q7Zr9"),
             format!("Bash(curl -H 'X-Api-Key: {}' https://x)", "q7Zr9"),
             format!("api-key: {}", "q7Zr9"),
-            format!("Bash(curl -u admin:{} https://x)", "pw12"),
-            format!("Bash(curl --user=admin:{} https://x)", "pw12"),
-            // The attached forms.
-            format!("Bash(curl -uadmin:{} https://x)", "pw12"),
-            format!("curl -u'admin:{}' https://x", "pw12"),
-            format!("Bash(curl --user admin:{} https://x)", "pw12"),
-            // Numeric passwords, and passwords in quotes.
-            format!("Bash(curl -u 1234:{} https://x)", "567890"),
-            format!("curl --user=4242:{}", "20240101"),
-            format!("curl -uadmin:\"{}\" https://x", "s3cret"),
-            format!("curl -u 'admin:' \"{}\" https://x", "pw"),
-            format!("Bash(curl -u :{} https://x)", "pw12"),
-            // Inside a quoted command, after an unclosed quote, in a quoted `-c` script.
-            format!("Bash(sh -c 'curl -u admin:{} https://x')", "pw"),
-            format!("Bash(echo don't && curl -u admin:{} https://x)", "pw"),
-            format!("bash -lc \"curl --user=a:{} x\"", "b"),
-            format!("Bash(sh -c 'curl -u \"admin:\" \"{}\"')", "pw"),
-            // Fails safe: a numeric uid:gid can't be told from a numeric password.
-            "Bash(docker run -u 1000:1000 img)".to_string(),
         ];
         for v in &found {
             assert!(holds_credential(v), "{v}");
@@ -939,14 +843,12 @@ mod tests {
             "api-key",
             "Bash(git push -u origin main)",
             "Bash(npm i -u)",
-            // A user without a password.
-            "Bash(curl -u admin https://x)",
-            "Bash(curl -u 'admin' https://x)",
-            "Bash(curl -uadmin: https://x)",
-            "Bash(docker run -u 1000 img)",
-            "Bash(git log:*)",
-            "Bash(sh -c 'git push -u origin main')",
-            "Bash(echo don't)",
+            // Rules whose `:*` is the wildcard, not a password.
+            "Bash(diff -u:*)",
+            "Bash(sort -u:*)",
+            "Bash(date -u:*)",
+            "Bash(python3 -u:*)",
+            "Bash(git push -u origin:*)",
         ] {
             assert!(!holds_credential(v), "{v}");
         }

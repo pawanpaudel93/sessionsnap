@@ -199,10 +199,9 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
   `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…-`/`xapp-`, GitLab `glpat-`, Hugging
   Face `hf_`, npm `npm_`, AWS `AKIA`/`ASIA` plus 16, Google `AIza` plus 35), a JWT, a URL with a
   password (`scheme://user:pass@host`), a `Bearer` token, an `Authorization:`, `X-Api-Key:` or
-  `Api-Key:` header value, or curl's `-u user:password` (also `-uuser:password` and
-  `--user=user:password`, quoted or not; a numeric `uid:gid` such as `docker -u 1000:1000` looks the
-  same and is left out too). Other opaque secrets (a password with no marker around it) are not
-  recognised: keep them out of permission rules and flag values.
+  `Api-Key:` header value. A password typed inside a permission rule or other free text (such as
+  `curl -u user:password`) is not detected; only token formats, auth headers and URLs with a
+  password are. Keep passwords out of permission rules and flag values.
 
 A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
 the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
@@ -318,7 +317,9 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   left out, and `save` names what it left out. A flag sessionsnap doesn't know (`--api-key`,
   `--header`, …) leaves out the whole agent session. Kept values are checked for their kind (inline
   JSON is not a path) and for known credential formats (see
-  [How flags are restored](#how-flags-are-restored)). A flag that limits the agent (deny rules,
+  [How flags are restored](#how-flags-are-restored)). A password typed inside a permission rule or
+  other free text is not detected; recognised are token formats, auth headers and URLs with a
+  password. A flag that limits the agent (deny rules,
   sandbox, permission mode, settings) that can't be saved exactly as given leaves out the whole
   agent session rather than resume it with fewer limits; so does any flag of an agent whose flags
   are untested. Restore filters old snapshots through the same rules.
