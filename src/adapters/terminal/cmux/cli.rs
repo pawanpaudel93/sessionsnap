@@ -118,7 +118,15 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         // `--id-format both` keeps surface IDs, which match panels in the state file.
         // Bounded: `save` holds its snapshot's lock meanwhile, and a lock is broken as stale after
         // `lock::STALE`.
-        let tree = tree::parse(&self.cmux_ok_within(&["--json", "--id-format", "both", "tree", "--all"])?)?;
+        let with_ids = ["--json", "--id-format", "both", "tree", "--all"];
+        let out = self.cmux_within(&with_ids)?;
+        let text = if !out.success && out.stderr.contains("id-format") {
+            // A cmux without the flag: its tree has no surface IDs, and `join` matches by tty.
+            self.cmux_ok_within(&["--json", "tree", "--all"])?
+        } else {
+            Self::stdout_of(&with_ids, out)?
+        };
+        let tree = tree::parse(&text)?;
         let (workspaces, warning) = tree::join(tree, &file);
         if let Some(warning) = warning {
             eprintln!("sessionsnap: {warning}");
@@ -268,6 +276,8 @@ mod tests {
         ping_ok: bool,
         dock_ok: bool,
         tree: &'static str,
+        /// A cmux that doesn't know `--id-format` (and so prints no surface IDs).
+        old_cmux: bool,
     }
 
     impl Runner for FakeRunner {
@@ -278,6 +288,15 @@ mod tests {
             let ok = |s: &str| Ok(Output { success: true, stdout: s.into(), stderr: String::new() });
             match args.first().map(String::as_str) {
                 Some("ping") => Ok(Output { success: self.ping_ok, ..Default::default() }),
+                Some("--json") if self.old_cmux && args.iter().any(|a| a == "--id-format") => Ok(Output {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "Error: unknown option '--id-format'".into(),
+                }),
+                Some("--json") if self.old_cmux => {
+                    let tree: Value = serde_json::from_str(self.tree).unwrap();
+                    ok(&strip_ids(tree).to_string())
+                }
                 Some("--json") => ok(self.tree),
                 Some("new-workspace") => ok("OK workspace:12\n"),
                 Some("new-surface") if !self.dock_ok && args.iter().any(|a| a == "dock") => Ok(Output {
@@ -294,7 +313,13 @@ mod tests {
 
     fn backend(ping_ok: bool) -> CmuxCli<FakeRunner> {
         CmuxCli {
-            runner: FakeRunner { calls: RefCell::new(vec![]), ping_ok, dock_ok: true, tree: TEST_TREE },
+            runner: FakeRunner {
+                calls: RefCell::new(vec![]),
+                ping_ok,
+                dock_ok: true,
+                tree: TEST_TREE,
+                old_cmux: false,
+            },
             program: "cmux".into(),
             state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
             launch_timeout: Duration::from_millis(10),
@@ -509,6 +534,34 @@ mod tests {
         assert!(!why.contains(KEY), "{why}");
         server.join().unwrap().unwrap();
         assert_no_key_in_argv(&b);
+    }
+
+    /// `tree` as a cmux prints it without `--id-format both`: no surface IDs.
+    fn strip_ids(mut v: Value) -> Value {
+        if let Some(surfaces) = v.get_mut("surfaces").and_then(Value::as_array_mut) {
+            for s in surfaces {
+                s.as_object_mut().unwrap().remove("id");
+            }
+        }
+        match &mut v {
+            Value::Object(map) => map.values_mut().for_each(|c| *c = strip_ids(c.take())),
+            Value::Array(items) => items.iter_mut().for_each(|c| *c = strip_ids(c.take())),
+            _ => {}
+        }
+        v
+    }
+
+    /// A cmux that rejects `--id-format`: asked again without it, matched by tty (never titles).
+    #[test]
+    fn a_cmux_without_id_format_is_matched_by_tty() {
+        let mut b = backend(true);
+        b.runner.old_cmux = true;
+        let s = b.read_open_state().unwrap();
+        assert_eq!(s.workspaces[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+        let trees: Vec<Vec<String>> =
+            b.runner.calls.borrow().iter().filter(|c| c.get(1).is_some_and(|a| a == "--json")).cloned().collect();
+        assert_eq!(trees.len(), 2, "{trees:?}");
+        assert_eq!(trees[1], ["cmux", "--json", "tree", "--all"].map(String::from));
     }
 
     #[test]
