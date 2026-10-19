@@ -474,7 +474,8 @@ pub fn holds_credential(v: &str) -> bool {
 
 /// `v` holds an HTTP credential: `Bearer <token>` (the token at least 12 characters), or a value
 /// after an `Authorization:`, `X-Api-Key:` or `Api-Key:` header (after one scheme word such as
-/// `Basic`, at least 4 characters), any case; or curl's `-u`/`--user` with `user:password`.
+/// `Basic`, at least 4 characters), any case; or curl's `-u`/`--user` with `user:password`, also
+/// attached (`-uuser:password`, `--user=user:password`).
 fn auth_header(v: &str) -> bool {
     let lower = v.to_ascii_lowercase();
     let token = |s: &str| s.chars().take_while(|c| c.is_ascii_alphanumeric() || "._~+/=-".contains(*c)).count();
@@ -493,10 +494,15 @@ fn auth_header(v: &str) -> bool {
     });
     let words: Vec<&str> =
         v.split(|c: char| c.is_whitespace() || "\"'()".contains(c)).filter(|w| !w.is_empty()).collect();
-    let user_pass = |w: &str| w.split_once(':').is_some_and(|(u, p)| !u.is_empty() && !p.is_empty());
+    // `user:password`, but not a numeric `uid:gid` (`docker -u 1000:1000`).
+    let numeric = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+    let user_pass =
+        |w: &str| w.split_once(':').is_some_and(|(u, p)| !(u.is_empty() || p.is_empty() || (numeric(u) && numeric(p))));
     let curl_user = words.iter().enumerate().any(|(i, w)| {
         (matches!(*w, "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
             || w.strip_prefix("--user=").is_some_and(user_pass)
+            // The attached short form, `-uuser:password`.
+            || w.strip_prefix("-u").is_some_and(|rest| !rest.starts_with('-') && user_pass(rest))
     });
     bearer || header || curl_user
 }
@@ -832,6 +838,10 @@ mod tests {
             format!("api-key: {}", "q7Zr9"),
             format!("Bash(curl -u admin:{} https://x)", "pw12"),
             format!("Bash(curl --user=admin:{} https://x)", "pw12"),
+            // The attached forms.
+            format!("Bash(curl -uadmin:{} https://x)", "pw12"),
+            format!("curl -u'admin:{}' https://x", "pw12"),
+            format!("Bash(curl --user admin:{} https://x)", "pw12"),
         ];
         for v in &found {
             assert!(holds_credential(v), "{v}");
@@ -852,6 +862,12 @@ mod tests {
             "api-key",
             "Bash(git push -u origin main)",
             "Bash(npm i -u)",
+            // A user without a password, and docker's numeric uid:gid.
+            "Bash(curl -u admin https://x)",
+            "Bash(curl -uadmin: https://x)",
+            "Bash(docker run -u 1000:1000 img)",
+            "Bash(docker run -u1000:1000 img)",
+            "Bash(docker run --user=1000:1000 img)",
         ] {
             assert!(!holds_credential(v), "{v}");
         }

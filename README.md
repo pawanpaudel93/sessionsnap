@@ -199,8 +199,10 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
   `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…-`/`xapp-`, GitLab `glpat-`, Hugging
   Face `hf_`, npm `npm_`, AWS `AKIA`/`ASIA` plus 16, Google `AIza` plus 35), a JWT, a URL with a
   password (`scheme://user:pass@host`), a `Bearer` token, an `Authorization:`, `X-Api-Key:` or
-  `Api-Key:` header value, or curl's `-u user:password`. Other opaque secrets (a password with no
-  marker around it) are not recognised: keep them out of permission rules and flag values.
+  `Api-Key:` header value, or curl's `-u user:password` (also `-uuser:password` and
+  `--user=user:password`; a numeric `uid:gid` such as `1000:1000` is not taken for one). Other
+  opaque secrets (a password with no marker around it) are not recognised: keep them out of
+  permission rules and flag values.
 
 A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
 the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
