@@ -45,7 +45,7 @@ without flags (`sessionsnap agents --json` lists them).
 | Contents | `sessionsnap show <name>[@v] --json` |
 | Versions | `sessionsnap history <name> --json` |
 | Compare | `sessionsnap diff <name>@a <name>@b --json` |
-| Restore (plan) | `sessionsnap restore <name>[@v] [-w <ws>] [--tab <ws>#<n>] --plan --json` |
+| Restore (plan) | `sessionsnap restore <name>[@v] [-w <ws>] [--tab <ws>#<n>] --plan --json` (a `--tab` tab is added to its open workspace, shells too) |
 | Apply a plan | `sessionsnap apply <planId> --json` |
 | Lost sessions not open in cmux | `sessionsnap recent [--hours 24] [--agent <kind>] --json`, then `sessionsnap recent --plan --json` |
 | Find a session | `sessionsnap sessions --search "<text>" [--agent <kind>] --json` |

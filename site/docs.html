@@ -313,7 +313,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                       Make the plan, ask, then reopen what is missing. <code translate="no">--plan</code>
                       (alias <code translate="no">--dry-run</code>): only make and print the plan.
                       <code translate="no">-w, --workspace &lt;ws&gt;</code> and
-                      <code translate="no">--tab &lt;ws&gt;#&lt;n&gt;</code> (both repeatable): only these.
+                      <code translate="no">--tab &lt;ws&gt;#&lt;n&gt;</code> (both repeatable): only these. A tab
+                      named with <code translate="no">--tab</code> is added to its workspace if that is open,
+                      even a shell tab (a full restore adds only missing agent tabs to open workspaces).
                       <code translate="no">--pick</code>: choose the snapshot interactively.
                     </td>
                   </tr>

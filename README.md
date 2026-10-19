@@ -107,6 +107,7 @@ sessionsnap history work              # versions
 sessionsnap diff work@3 work@4
 sessionsnap restore work --plan       # what would be reopened
 sessionsnap restore work              # plan, confirm, reopen what is missing
+sessionsnap restore work --tab 'Cascadia#3'   # just that tab, into Cascadia if it is open
 sessionsnap recent                    # agent sessions from the last 24h not open in cmux
 sessionsnap sessions --agent codex    # Codex sessions on disk
 sessionsnap tab work Cascadia#4 --move "Cascadia Community"
@@ -251,7 +252,12 @@ workspace).
   previewed and saved together as one version. Hover an agent tab's icon for the flags it resumes
   with.
 - **History:** compare two versions; restore an older one.
-- **Restore:** tick workspaces and tabs, see what would open, then restore.
+- **Restore:** tick workspaces and tabs, see what would open, then restore. Each tab in the
+  Workspaces view also has a **Restore this tab** button.
+
+A full restore adds only missing agent tabs to a workspace that is already open (a shell might be
+a duplicate). A tab you pick (`--tab`, or a subset ticked in the UI) is added to its open workspace
+even when it is a shell, or as a plain shell, with the reason, when its session can't be resumed.
 - **Recent:** agent sessions (Claude Code, Codex) from the last days that are not open in cmux.
 
 Details:
