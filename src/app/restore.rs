@@ -10,7 +10,9 @@ use crate::adapters::agents::Agents;
 use crate::adapters::home_dir;
 use crate::adapters::store::Store;
 use crate::domain::model::{SessionRef, Tab, Workspace, has_control, parse_ref};
-use crate::domain::plan::{Action, ApplyStep, Plan, PlanSource, Selection, build_actions, recovered_workspace, select};
+use crate::domain::plan::{
+    Action, ApplyStep, Picked, Plan, PlanSource, Selection, build_actions_picked, recovered_workspace, select_picked,
+};
 use crate::error::{Exit, failure};
 use crate::ports::{LaunchTab, OpenState, SessionInfo, Terminal};
 
@@ -87,18 +89,20 @@ pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
     apply_plan(plan, &ctx.store, &ctx.agents, ctx.terminal.as_ref())
 }
 
-/// The workspaces a plan restores: a snapshot selection, or recovered sessions in one workspace.
-pub fn source_workspaces(source: &PlanSource, store: &Store, agents: &Agents) -> Result<Vec<Workspace>> {
+/// The workspaces a plan restores (a snapshot selection, or recovered sessions in one workspace),
+/// and which of their tabs were named with `--tab`.
+pub fn source_workspaces(source: &PlanSource, store: &Store, agents: &Agents) -> Result<(Vec<Workspace>, Picked)> {
     match source {
         PlanSource::Snapshot { snapshot, version, selection } => {
-            select(super::load_normalized(store, agents, snapshot, Some(*version))?.workspaces, selection)
+            select_picked(super::load_normalized(store, agents, snapshot, Some(*version))?.workspaces, selection)
         }
-        PlanSource::Sessions { sessions } => recovered_workspace(sessions, agents),
+        PlanSource::Sessions { sessions } => Ok((recovered_workspace(sessions, agents)?, Picked::new())),
     }
 }
 
 pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &OpenState) -> Result<Plan> {
-    let built = build_actions(&source_workspaces(&source, store, agents)?, open, agents);
+    let (saved, picked) = source_workspaces(&source, store, agents)?;
+    let built = build_actions_picked(&saved, open, agents, &picked);
     let now = chrono::Local::now();
     Ok(Plan {
         plan_id: format!("p{}", now.format("%Y%m%d%H%M%S%3f")),
@@ -113,7 +117,8 @@ pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &Open
 /// Applies a plan if it still matches what is open; continues past failed steps.
 pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Terminal) -> Result<Vec<ApplyStep>> {
     let open = read_open(terminal)?;
-    let rebuilt = build_actions(&source_workspaces(&plan.source, store, agents)?, &open, agents);
+    let (saved, picked) = source_workspaces(&plan.source, store, agents)?;
+    let rebuilt = build_actions_picked(&saved, &open, agents, &picked);
     if rebuilt.actions != plan.actions {
         return Err(failure(Exit::PlanStale, "what is open in cmux changed since this plan was made; make a new plan"));
     }

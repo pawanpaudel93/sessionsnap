@@ -24,6 +24,31 @@ fn restore_plans_then_applies_only_missing_tabs() {
     assert_eq!(env.run(&["restore", "work", "--yes"]).unwrap().exit, Exit::NothingToDo);
 }
 
+/// A shell tab is not added to its open workspace by a full restore, but is when named with --tab.
+#[test]
+fn a_shell_tab_named_with_tab_is_added_to_its_open_workspace() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    // Alpha is open with its Claude tab; its zsh tab was closed. Beta is open too.
+    env.fake.state.borrow_mut().workspaces.retain(|w| w.name != "Alpha");
+    env.fake
+        .state
+        .borrow_mut()
+        .workspaces
+        .insert(0, open_ws("WA", "Alpha", "/w/a", &[("t1", "/w/a", Some(sessionsnap::testing::A))]));
+    let full = env.run(&["restore", "work", "--plan"]).unwrap();
+    assert_eq!(full.exit, Exit::NothingToDo, "{}", full.json);
+    let picked = env.run(&["restore", "work", "--tab", "Alpha#2", "--plan"]).unwrap();
+    let actions = picked.json["plan"]["actions"].as_array().unwrap().clone();
+    assert_eq!(actions.len(), 1, "{}", picked.json);
+    assert_eq!(actions[0]["action"], "add-tabs");
+    assert_eq!(actions[0]["workspaceRef"], "workspace:WA");
+    assert_eq!(actions[0]["tabs"][0]["title"], "zsh");
+    let id = picked.json["plan"]["planId"].as_str().unwrap().to_string();
+    assert_eq!(env.run(&["apply", &id]).unwrap().json["failed"], 0);
+    assert_eq!(*env.fake.log.borrow(), ["add workspace:WA zsh"]);
+}
+
 #[test]
 fn restore_without_yes_only_plans() {
     let env = setup();

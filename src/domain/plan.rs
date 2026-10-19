@@ -74,32 +74,50 @@ pub struct ApplyStep {
     pub error: Option<String>,
 }
 
+/// Tabs named with `--tab` (not only covered by `-w`), as (workspace, tab) positions in the
+/// selected list: restore adds them to an open workspace even when they are shells.
+pub type Picked = HashSet<(usize, usize)>;
+
 /// Keeps the selected workspaces (whole) and tabs, in their saved order.
 pub fn select(workspaces: Vec<Workspace>, sel: &Selection) -> Result<Vec<Workspace>> {
+    Ok(select_picked(workspaces, sel)?.0)
+}
+
+/// As `select`, plus which of the kept tabs were named with `--tab`.
+pub fn select_picked(workspaces: Vec<Workspace>, sel: &Selection) -> Result<(Vec<Workspace>, Picked)> {
     if sel.workspaces.is_empty() && sel.tabs.is_empty() {
-        return Ok(workspaces);
+        return Ok((workspaces, Picked::new()));
     }
     let mut chosen: BTreeMap<usize, Option<BTreeSet<usize>>> = BTreeMap::new();
+    let mut named: BTreeSet<(usize, usize)> = BTreeSet::new();
     for w in &sel.workspaces {
         chosen.insert(find_ws(&workspaces, w)?, None);
     }
     for t in &sel.tabs {
         let (wi, ti) = locate(&workspaces, &parse_tab_ref(t)?)?;
-        if let Some(set) = chosen.entry(wi).or_insert_with(|| Some(BTreeSet::new())) {
-            set.insert(ti);
+        named.insert((wi, ti));
+        if let Some(tabs) = chosen.entry(wi).or_insert_with(|| Some(BTreeSet::new())) {
+            tabs.insert(ti);
         }
     }
-    Ok(workspaces
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, mut w)| {
-            let choice = chosen.get(&i)?;
-            if let Some(set) = choice {
-                w.tabs = w.tabs.into_iter().enumerate().filter(|(ti, _)| set.contains(ti)).map(|(_, t)| t).collect();
+    let mut picked = Picked::new();
+    let mut kept: Vec<Workspace> = vec![];
+    for (wi, mut w) in workspaces.into_iter().enumerate() {
+        let Some(choice) = chosen.get(&wi) else { continue };
+        let new_wi = kept.len();
+        let tabs = std::mem::take(&mut w.tabs);
+        for (ti, tab) in tabs.into_iter().enumerate() {
+            if choice.as_ref().is_some_and(|only| !only.contains(&ti)) {
+                continue;
             }
-            Some(w)
-        })
-        .collect())
+            if named.contains(&(wi, ti)) {
+                picked.insert((new_wi, w.tabs.len()));
+            }
+            w.tabs.push(tab);
+        }
+        kept.push(w);
+    }
+    Ok((kept, picked))
 }
 
 /// Recovered sessions as one "Recovered sessions" workspace, titled from their histories.
@@ -143,16 +161,29 @@ pub fn recovered_workspace(sessions: &[SessionRef], agents: &dyn AgentCatalog) -
 /// - A tab with a control character in a value that would be typed or used as its folder
 ///   (`Tab::control_field`) is never run either: it becomes a plain shell, in its folder when that
 ///   is clean, else in the workspace's (else in "", which the caller replaces with home).
-/// - A saved workspace matching an open one gets only its missing agent tabs added; shells are
-///   not added to open workspaces (they would duplicate). Unmatched workspaces are created.
+/// - A saved workspace matching an open one gets only its missing agent tabs added; shells and
+///   tabs that can't be resumed are not added to open workspaces (they would duplicate), unless
+///   the tab is in `picked` (named with `--tab`): then it is added, as a plain shell when it can't
+///   be resumed. Unmatched workspaces are created.
 pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCatalog) -> Built {
+    build_actions_picked(saved, open, agents, &Picked::new())
+}
+
+/// `build_actions`, adding the `picked` tabs to open workspaces too.
+pub fn build_actions_picked(
+    saved: &[Workspace],
+    open: &OpenState,
+    agents: &dyn AgentCatalog,
+    picked: &Picked,
+) -> Built {
     let open_sessions = open.open_sessions();
     let mut planned: HashSet<SessionRef> = HashSet::new();
     let mut b = Built::default();
-    for ws in saved {
+    for (wi, ws) in saved.iter().enumerate() {
         let live = match_workspace(ws, open);
-        let mut pending = vec![];
-        for tab in &ws.tabs {
+        let mut pending: Vec<(Tab, bool)> = vec![];
+        for (ti, tab) in ws.tabs.iter().enumerate() {
+            let is_picked = picked.contains(&(wi, ti));
             let label = format!("{} › {}", ws.name, tab.title());
             let control = tab.control_field();
             let shell = || Tab::Terminal { title: tab.title().to_string(), cwd: clean_cwd(tab, ws), command: None };
@@ -160,9 +191,9 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
                 match control {
                     Some(field) => {
                         b.warnings.push(format!("{label}: its {field} has control characters, opening a plain shell"));
-                        pending.push(shell());
+                        pending.push((shell(), is_picked));
                     }
-                    None => pending.push(tab.clone()),
+                    None => pending.push((tab.clone(), is_picked)),
                 }
                 continue;
             };
@@ -184,14 +215,14 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
             match why {
                 None => {
                     planned.insert(s);
-                    pending.push(tab.clone());
+                    pending.push((tab.clone(), is_picked));
                 }
-                Some(why) if live.is_some() => {
+                Some(why) if live.is_some() && !is_picked => {
                     b.skipped.push(format!("{label}: {why}; not added to an open workspace"));
                 }
                 Some(why) => {
                     b.warnings.push(format!("{label}: {why}, opening a plain shell"));
-                    pending.push(shell());
+                    pending.push((shell(), is_picked));
                 }
             }
         }
@@ -200,26 +231,31 @@ pub fn build_actions(saved: &[Workspace], open: &OpenState, agents: &dyn AgentCa
         }
         match live {
             Some(live) => {
-                let (agent_tabs, shells): (Vec<Tab>, Vec<Tab>) =
-                    pending.into_iter().partition(|t| t.session().is_some());
-                for s in shells {
-                    b.skipped.push(format!(
-                        "{} › {}: shell tabs are not added to an open workspace",
-                        ws.name,
-                        s.title()
-                    ));
+                let mut tabs = vec![];
+                for (t, is_picked) in pending {
+                    if t.session().is_some() || is_picked {
+                        tabs.push(t);
+                    } else {
+                        b.skipped.push(format!(
+                            "{} › {}: shell tabs are not added to an open workspace (pick the tab to add it)",
+                            ws.name,
+                            t.title()
+                        ));
+                    }
                 }
-                if !agent_tabs.is_empty() {
+                if !tabs.is_empty() {
                     b.actions.push(Action::AddTabs {
                         workspace_ref: live.reference.clone().unwrap_or_default(),
                         workspace_name: live.name.clone(),
-                        tabs: agent_tabs,
+                        tabs,
                     });
                 }
             }
-            None => {
-                b.actions.push(Action::CreateWorkspace { name: ws.name.clone(), cwd: ws.cwd.clone(), tabs: pending })
-            }
+            None => b.actions.push(Action::CreateWorkspace {
+                name: ws.name.clone(),
+                cwd: ws.cwd.clone(),
+                tabs: pending.into_iter().map(|(t, _)| t).collect(),
+            }),
         }
     }
     b
@@ -564,5 +600,62 @@ mod tests {
             select(saved(), &Selection { workspaces: vec!["gamma".into()], tabs: vec!["Alpha#2".into()] }).unwrap();
         assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Gamma"]);
         assert_eq!(ws[0].tabs, vec![claude_tab("two", "/w/a", B)]);
+    }
+
+    /// Only tabs named with `--tab` are picked, at their positions in the selected list; a whole
+    /// workspace chosen with `-w` picks nothing.
+    #[test]
+    fn selection_reports_the_tabs_named_with_tab() {
+        let sel = Selection { workspaces: vec!["gamma".into()], tabs: vec!["Alpha#3".into()] };
+        let (ws, picked) = select_picked(saved(), &sel).unwrap();
+        assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Gamma"]);
+        assert_eq!(picked, Picked::from([(0, 0)]));
+        let sel = Selection { workspaces: vec!["alpha".into()], tabs: vec!["Alpha#3".into()] };
+        let (ws, picked) = select_picked(saved(), &sel).unwrap();
+        assert_eq!(ws[0].tabs.len(), 3);
+        assert_eq!(picked, Picked::from([(0, 2)]));
+        let (_, picked) =
+            select_picked(saved(), &Selection { workspaces: vec!["alpha".into()], tabs: vec![] }).unwrap();
+        assert!(picked.is_empty());
+    }
+
+    /// A shell tab named with `--tab` is added to its open workspace; unnamed, it is skipped.
+    #[test]
+    fn a_picked_shell_tab_is_added_to_its_open_workspace() {
+        let history = history();
+        let zsh = Tab::Terminal { title: "zsh".into(), cwd: "/w/a".into(), command: Some("make dev".into()) };
+        let alpha = workspace("Alpha", "/w/a", Some("WA"), vec![claude_tab("one", "/w/a", A), zsh.clone()]);
+        let b = build_actions(std::slice::from_ref(&alpha), &alpha_with_one_open(), &history);
+        assert!(b.actions.is_empty(), "{:?}", b.actions);
+        assert_eq!(b.skipped.len(), 2, "{:?}", b.skipped);
+        let b = build_actions_picked(&[alpha], &alpha_with_one_open(), &history, &Picked::from([(0, 1)]));
+        assert_eq!(
+            b.actions,
+            vec![Action::AddTabs {
+                workspace_ref: "workspace:WA".into(),
+                workspace_name: "Alpha".into(),
+                tabs: vec![zsh]
+            }]
+        );
+    }
+
+    /// A picked agent tab that can't be resumed is added to its open workspace as a plain shell,
+    /// with the reason; an already open session is still skipped even when picked.
+    #[test]
+    fn a_picked_unresumable_tab_opens_a_shell_in_its_open_workspace() {
+        let history = history();
+        let alpha =
+            workspace("Alpha", "/w/a", Some("WA"), vec![claude_tab("one", "/w/a", A), claude_tab("lost", "/w/a", D)]);
+        let b = build_actions_picked(&[alpha], &alpha_with_one_open(), &history, &Picked::from([(0, 0), (0, 1)]));
+        assert_eq!(
+            b.actions,
+            vec![Action::AddTabs {
+                workspace_ref: "workspace:WA".into(),
+                workspace_name: "Alpha".into(),
+                tabs: vec![Tab::Terminal { title: "lost".into(), cwd: "/w/a".into(), command: None }]
+            }]
+        );
+        assert_eq!(b.warnings, ["Alpha › lost: transcript not found, opening a plain shell"]);
+        assert_eq!(b.skipped, ["Alpha › one: already open"]);
     }
 }
