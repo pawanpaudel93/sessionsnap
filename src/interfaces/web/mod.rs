@@ -8,6 +8,7 @@ pub mod http;
 
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -66,7 +67,14 @@ fn serve_until(
                     // The lock is held only while waiting; it ends when `queue` is dropped.
                     let next = inbox.lock().unwrap_or_else(|e| e.into_inner()).recv();
                     let Ok(stream) = next else { return };
-                    handle_connection(stream, server, make_ctx, &last);
+                    // A bug in a command must not take its worker, or the server, with it.
+                    let handled = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        handle_connection(&stream, server, make_ctx, &last);
+                    }));
+                    if handled.is_err() {
+                        let response = http::Response::text(500, "sessionsnap failed; see the terminal running it");
+                        let _ = http::write_response(&mut &stream, &response);
+                    }
                     busy.fetch_sub(1, Ordering::SeqCst);
                 }
             });
@@ -151,23 +159,23 @@ impl Read for Deadline<'_> {
     }
 }
 
-fn handle_connection(stream: TcpStream, server: &Server<'_>, make_ctx: &MakeCtx<'_>, last: &Mutex<Instant>) {
+fn handle_connection(stream: &TcpStream, server: &Server<'_>, make_ctx: &MakeCtx<'_>, last: &Mutex<Instant>) {
     let seen = || *last.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
     // Accepted sockets inherit non-blocking mode on macOS.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
-    let reader = Deadline { stream: &stream, until: Instant::now() + REQUEST_DEADLINE };
+    let reader = Deadline { stream, until: Instant::now() + REQUEST_DEADLINE };
     match http::read_request(&mut BufReader::new(reader)) {
         Ok(req) => {
             seen();
             let response = server.handle(&req, make_ctx);
-            let _ = http::write_response(&mut &stream, &response);
+            let _ = http::write_response(&mut &*stream, &response);
             // A command can run for long; idle counts from when it ended.
             seen();
         }
         Err(response) => {
-            let _ = http::write_response(&mut &stream, &response);
+            let _ = http::write_response(&mut &*stream, &response);
         }
     }
 }
@@ -503,6 +511,22 @@ mod tests {
             assert!(out.starts_with("HTTP/1.1 409 "), "{out}");
             assert!(out.contains(r#""code":"busy""#), "{out}");
         }
+    }
+
+    #[test]
+    fn a_panicking_command_answers_500_and_keeps_its_worker() {
+        let (listener, port) = listen();
+        let server = Server::new(port, "k".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let make = |_: &Cli, _: Option<String>| -> Result<Ctx> { panic!("a bug in a command") };
+        let (failed, after) = serve_while(listener, &server, &make, false, move || {
+            // More than there are workers: none may be lost.
+            let failed: Vec<_> = (0..WORKERS + 2).map(|_| answer(post_run(port, "k", r#"["list"]"#))).collect();
+            (failed, get(port, "/api/hello"))
+        });
+        for out in &failed {
+            assert!(out.starts_with("HTTP/1.1 500 "), "{out}");
+        }
+        assert!(after.starts_with("HTTP/1.1 200 OK"), "{after}");
     }
 
     /// The one test that waits for the idle timeout.
