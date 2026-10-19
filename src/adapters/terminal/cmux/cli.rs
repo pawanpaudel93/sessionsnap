@@ -19,6 +19,9 @@ pub struct CmuxCli<R: Runner> {
     pub launcher: Option<Vec<String>>,
     /// cmux's control socket, for links that must stay off command lines; None when unknown.
     pub socket: Option<PathBuf>,
+    /// How long each cmux call of `show_url` may take before it is killed: the web UI calls it,
+    /// and a hung cmux must not hold one of its workers.
+    pub call_timeout: Duration,
 }
 
 /// How to start cmux on `os`: `open -a cmux` on macOS. On Linux cmux ships as a separate app
@@ -36,6 +39,7 @@ impl CmuxCli<ProcessRunner> {
             launch_timeout: Duration::from_secs(30),
             launcher: launcher_for(std::env::consts::OS),
             socket: socket::default_path(),
+            call_timeout: Duration::from_secs(15),
         })
     }
 }
@@ -43,7 +47,7 @@ impl CmuxCli<ProcessRunner> {
 impl<R: Runner> CmuxCli<R> {
     /// Brings up the Dock in the right sidebar: cmux pauses pages in a hidden Dock.
     fn show_dock(&self) -> Result<()> {
-        self.cmux_ok(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
+        self.cmux_ok_within(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
     }
 
     fn cmux(&self, args: &[&str]) -> Result<Output> {
@@ -51,9 +55,23 @@ impl<R: Runner> CmuxCli<R> {
         self.runner.run(&self.program, &args)
     }
 
+    /// `cmux`, killed after `call_timeout`.
+    fn cmux_within(&self, args: &[&str]) -> Result<Output> {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        self.runner.run_timeout(&self.program, &args, self.call_timeout)
+    }
+
     /// Runs a cmux command and returns its stdout, failing on a non-zero exit.
     fn cmux_ok(&self, args: &[&str]) -> Result<String> {
-        let out = self.cmux(args)?;
+        Self::stdout_of(args, self.cmux(args)?)
+    }
+
+    /// `cmux_ok`, killed after `call_timeout`.
+    fn cmux_ok_within(&self, args: &[&str]) -> Result<String> {
+        Self::stdout_of(args, self.cmux_within(args)?)
+    }
+
+    fn stdout_of(args: &[&str], out: Output) -> Result<String> {
         if !out.success {
             return Err(failure(
                 Exit::Error,
@@ -143,26 +161,27 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         // The `#` part may carry the UI's key, and any local user can read a command line with
         // `ps`: cmux's command line gets only the address, the whole link goes over its socket.
         let (base, fragment) = url.split_once('#').map_or((url, None), |(b, f)| (b, Some(f).filter(|f| !f.is_empty())));
-        let (surface, place) =
-            if let Some((surface, in_dock)) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
-                if fragment.is_none() {
-                    self.cmux_ok(&["browser", surface.as_str(), "goto", base])?;
-                }
-                if in_dock {
-                    self.show_dock()?;
-                }
-                (Some(surface), "reused")
+        let (surface, place) = if let Some((surface, in_dock)) =
+            tree::find_browser(&self.cmux_ok_within(&["--json", "tree", "--all"])?, base)?
+        {
+            if fragment.is_none() {
+                self.cmux_ok_within(&["browser", surface.as_str(), "goto", base])?;
+            }
+            if in_dock {
+                self.show_dock()?;
+            }
+            (Some(surface), "reused")
+        } else {
+            let out = self.cmux_within(&["new-surface", "--type", "browser", "--placement", "dock", "--url", base])?;
+            if out.success {
+                self.show_dock()?;
+                (find_ref(&out.stdout, "surface"), "dock")
             } else {
-                let out = self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", base])?;
-                if out.success {
-                    self.show_dock()?;
-                    (find_ref(&out.stdout, "surface"), "dock")
-                } else {
-                    // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
-                    let out = self.cmux_ok(&["browser", "open", base])?;
-                    (find_ref(&out, "surface"), "tab")
-                }
-            };
+                // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
+                let out = self.cmux_ok_within(&["browser", "open", base])?;
+                (find_ref(&out, "surface"), "tab")
+            }
+        };
         let Some(fragment) = fragment else { return Ok(Shown::whole(place)) };
         let result = self.navigate(surface, base, url).map_err(|e| {
             // cmux's message could quote the link.
@@ -179,7 +198,7 @@ impl<R: Runner> CmuxCli<R> {
         let path = self.socket.as_deref().ok_or_else(|| anyhow::anyhow!("cmux's socket was not found"))?;
         let surface = match surface {
             Some(s) => s,
-            None => tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)?
+            None => tree::find_browser(&self.cmux_ok_within(&["--json", "tree", "--all"])?, base)?
                 .map(|(s, _)| s)
                 .ok_or_else(|| anyhow::anyhow!("cmux did not report the new browser tab"))?,
         };
@@ -279,7 +298,33 @@ mod tests {
             launch_timeout: Duration::from_millis(10),
             launcher: launcher_for("macos"),
             socket: None,
+            call_timeout: Duration::from_secs(15),
         }
+    }
+
+    /// A cmux that never answers: each call `show_url` makes is killed after `call_timeout`.
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_cmux_does_not_hold_show_url() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cmux = dir.path().join("cmux");
+        std::fs::write(&cmux, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&cmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let b = CmuxCli {
+            runner: ProcessRunner,
+            program: cmux.to_string_lossy().into_owned(),
+            state_path: dir.path().join("state.json"),
+            launch_timeout: Duration::from_millis(10),
+            launcher: None,
+            socket: None,
+            call_timeout: Duration::from_millis(300),
+        };
+        let started = Instant::now();
+        let err = b.show_url("http://127.0.0.1:1/#t=secret-key").unwrap_err().to_string();
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert!(err.contains("did not answer"), "{err}");
+        assert!(!err.contains("secret-key"), "{err}");
     }
 
     /// A cmux socket in a short temp folder (macOS caps socket paths at 104 bytes) that answers one
