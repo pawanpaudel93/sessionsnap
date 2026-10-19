@@ -9,6 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 
 use super::lock::{Lock, STALE};
+use crate::domain::known::KnownSessions;
 use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name};
 use crate::domain::plan::Plan;
 use crate::error::{Exit, failure};
@@ -206,6 +207,31 @@ impl Store {
         let dir = self.root.join("locks");
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         Lock::acquire(&dir.join(file))
+    }
+
+    /// The lock of `sessions.json`, the record of every saved session.
+    pub fn lock_sessions(&self) -> Result<Lock> {
+        self.lock_file("sessions.lock")
+    }
+
+    /// The record of every saved session (`<root>/sessions.json`); None when there is none yet, or
+    /// it can't be read (it is then built again from the snapshots).
+    pub fn read_sessions(&self) -> Result<Option<KnownSessions>> {
+        let path = self.root.join("sessions.json");
+        Ok(fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()))
+    }
+
+    /// Replaces the record of every saved session, while holding its lock; readable by the owner
+    /// only.
+    pub fn write_sessions(&self, _lock: &Lock, known: &KnownSessions) -> Result<()> {
+        make_private_dir(&self.root)?;
+        write_private_json_atomic(&self.root.join("sessions.json"), known)
+    }
+
+    /// Removes the record of every saved session, so the next read builds it again from the
+    /// snapshots.
+    pub fn forget_sessions(&self) {
+        let _ = fs::remove_file(self.root.join("sessions.json"));
     }
 
     /// Writes the next version of `name` and returns it (takes the snapshot's lock).

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::agents::{Resume, flags_problem, problem, resume_status, unknown_session};
 use crate::domain::edit::{find_ws, locate, parse_tab_ref};
+use crate::domain::known::{KnownSessions, UNKNOWN_FLAGS};
 use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, OpenWorkspace};
@@ -120,9 +121,16 @@ pub fn select_picked(workspaces: Vec<Workspace>, sel: &Selection) -> Result<(Vec
     Ok((kept, picked))
 }
 
-/// Recovered sessions as one "Recovered sessions" workspace, titled from their histories.
-pub fn recovered_workspace(sessions: &[SessionRef], agents: &dyn AgentCatalog) -> Result<Vec<Workspace>> {
+/// Recovered sessions as one "Recovered sessions" workspace, titled from their histories, each with
+/// the flags it was last saved with, or left out when it was (see `KnownSessions::launch`); and
+/// warnings about sessions whose flags are unknown.
+pub fn recovered_workspace(
+    sessions: &[SessionRef],
+    agents: &dyn AgentCatalog,
+    known: &KnownSessions,
+) -> Result<(Vec<Workspace>, Vec<String>)> {
     let mut tabs = vec![];
+    let mut warnings = vec![];
     for s in sessions {
         let status = resume_status(agents, s);
         if matches!(status, Resume::UnknownAgent | Resume::InvalidId) {
@@ -133,24 +141,29 @@ pub fn recovered_workspace(sessions: &[SessionRef], agents: &dyn AgentCatalog) -
             .ok_or_else(|| failure(Exit::Error, format!("sessionsnap cannot read {}'s sessions", s.agent)))?
             .find(&s.session_id)?
             .ok_or_else(|| unknown_session(&s.session_id))?;
+        let launch = known.launch(s, None, agents);
+        if !launch.known {
+            warnings.push(format!("Recovered sessions › {}: {UNKNOWN_FLAGS}", info.label()));
+        }
         tabs.push(Tab::Agent {
             title: info.label(),
             cwd: info.cwd.clone().unwrap_or_default(),
             agent: s.agent.clone(),
             session_id: s.session_id.clone(),
-            args: vec![],
-            left_out: None,
+            args: launch.args,
+            left_out: launch.left_out,
         });
     }
     let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
-    Ok(vec![Workspace {
+    let ws = Workspace {
         name: "Recovered sessions".into(),
         color: None,
         cwd,
         git_branch: None,
         cmux_workspace_id: None,
         tabs,
-    }])
+    };
+    Ok((vec![ws], warnings))
 }
 
 /// What to open so that `saved` is open, given what is open now.
@@ -385,12 +398,15 @@ mod tests {
 
     #[test]
     fn sessions_source_rejects_invalid_ids_and_unknown_agents() {
-        let err = recovered_workspace(&[SessionRef::new("claude", "../x")], &history()).unwrap_err();
+        let err =
+            recovered_workspace(&[SessionRef::new("claude", "../x")], &history(), &Default::default()).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Error);
-        let err = recovered_workspace(&[SessionRef::new("aider", A)], &history()).unwrap_err();
+        let err = recovered_workspace(&[SessionRef::new("aider", A)], &history(), &Default::default()).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Error);
-        let ws = recovered_workspace(&[SessionRef::new("claude", B)], &history()).unwrap();
+        let (ws, warnings) =
+            recovered_workspace(&[SessionRef::new("claude", B)], &history(), &Default::default()).unwrap();
         assert_eq!(ws[0].tabs, [claude_tab("two", "/w/a", B)]);
+        assert_eq!(warnings, ["Recovered sessions › two: launch flags unknown; resuming with defaults"]);
     }
 
     #[test]

@@ -10,5 +10,6 @@ pub mod capture;
 pub mod diff;
 pub mod edit;
 pub mod flags;
+pub mod known;
 pub mod model;
 pub mod plan;

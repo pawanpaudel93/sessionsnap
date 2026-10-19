@@ -231,9 +231,15 @@ untested agent's tab with flags) keeps its session ID but none of its flags, wit
 (`leftOut`): `show` gives it, and restore opens a plain shell in a new workspace, or skips the tab
 in an open one, with the reason. A `leftOut` edited by hand that is blank, longer than 200
 characters, or holds a control character or a credential is shown as "its flags were left out;
-resume it by hand". An edit that puts a session in a tab (`--add-session`, `--session`) keeps it
-left out, with the same reason, when any version of the snapshot has it left out or cmux has it open
-with flags that lose it.
+resume it by hand".
+
+sessionsnap keeps a record of every session it has saved, in any snapshot (`sessions.json`): the
+flags it was last saved with, or why it was left out. Pruning or deleting versions never removes
+from it, and it is built from every snapshot the first time it is needed. A session put in a tab or
+a plan without flags of its own (`--add-session`, `--session`, `ws --from`, `recent`) takes them
+from there: once left out, it stays left out; when it is open in cmux, the flags it runs with now
+win (and a launch that loses it leaves it out); a session saved nowhere resumes with no flags and a
+warning ("launch flags unknown; resuming with defaults").
 
 The tokens that pick another session are taken out before the list applies: the agent's own resume
 words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and
@@ -285,6 +291,7 @@ Details:
 | What | Where | Override |
 |---|---|---|
 | Snapshots | `~/.sessionsnap/snapshots/<name>/<NNNN>-<time>.json` | `SESSIONSNAP_HOME` |
+| Saved sessions' flags | `~/.sessionsnap/sessions.json` (lock files in `~/.sessionsnap/locks`) | `SESSIONSNAP_HOME` |
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |

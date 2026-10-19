@@ -48,29 +48,19 @@ pub fn edit(
         ));
     }
     let mut workspaces = previous.workspaces.clone();
-    let sets_session = ops.iter().any(|o| matches!(o, Op::TabAddSession { .. } | Op::TabSetSession { .. }));
+    // Ops that put a session in a tab take its flags from the record of saved sessions, or from
+    // cmux when it is open there.
+    let sets_session =
+        ops.iter().any(|o| matches!(o, Op::TabAddSession { .. } | Op::TabSetSession { .. } | Op::WsFrom { .. }));
     let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
         Some(super::read_open(ctx.terminal.as_ref())?)
     } else if sets_session {
-        // Only to see whether a session put in a tab is open with flags that lose it; without
-        // cmux's state the snapshot's own history still applies.
+        // Without cmux's state, the record still applies.
         super::read_open(ctx.terminal.as_ref()).ok()
     } else {
         None
     };
-    // Sessions left out in any readable version of this snapshot.
-    let left_out = if sets_session {
-        let mut versions = vec![];
-        for n in ctx.store.versions(name)? {
-            if let Ok(mut v) = ctx.store.read_version(name, n)? {
-                crate::domain::agents::normalize_tabs(&mut v.workspaces, &ctx.agents);
-                versions.push(v);
-            }
-        }
-        edit::left_out_sessions(&versions)
-    } else {
-        Default::default()
-    };
+    let known = if sets_session { super::known::load(&ctx.store, &ctx.agents)? } else { Default::default() };
     let notes = edit::apply_ops(
         &mut workspaces,
         &ops,
@@ -78,7 +68,7 @@ pub fn edit(
             agents: &ctx.agents,
             snapshots: &super::NormalizedSnapshots { store: &ctx.store, agents: &ctx.agents },
             open: open.as_ref(),
-            left_out,
+            known,
         },
     )?;
     if dry_run {

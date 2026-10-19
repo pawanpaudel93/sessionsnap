@@ -90,18 +90,28 @@ pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
 }
 
 /// The workspaces a plan restores (a snapshot selection, or recovered sessions in one workspace),
-/// and which of their tabs were named with `--tab`.
-pub fn source_workspaces(source: &PlanSource, store: &Store, agents: &Agents) -> Result<(Vec<Workspace>, Picked)> {
+/// which of their tabs were named with `--tab`, and warnings about them.
+pub fn source_workspaces(
+    source: &PlanSource,
+    store: &Store,
+    agents: &Agents,
+) -> Result<(Vec<Workspace>, Picked, Vec<String>)> {
     match source {
         PlanSource::Snapshot { snapshot, version, selection } => {
-            select_picked(super::load_normalized(store, agents, snapshot, Some(*version))?.workspaces, selection)
+            let ws = super::load_normalized(store, agents, snapshot, Some(*version))?.workspaces;
+            let (ws, picked) = select_picked(ws, selection)?;
+            Ok((ws, picked, vec![]))
         }
-        PlanSource::Sessions { sessions } => Ok((recovered_workspace(sessions, agents)?, Picked::new())),
+        PlanSource::Sessions { sessions } => {
+            let known = super::known::load(store, agents)?;
+            let (ws, warnings) = recovered_workspace(sessions, agents, &known)?;
+            Ok((ws, Picked::new(), warnings))
+        }
     }
 }
 
 pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &OpenState) -> Result<Plan> {
-    let (saved, picked) = source_workspaces(&source, store, agents)?;
+    let (saved, picked, notes) = source_workspaces(&source, store, agents)?;
     let built = build_actions_picked(&saved, open, agents, &picked);
     let now = chrono::Local::now();
     Ok(Plan {
@@ -110,14 +120,14 @@ pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &Open
         source,
         actions: built.actions,
         skipped: built.skipped,
-        warnings: built.warnings,
+        warnings: [notes, built.warnings].concat(),
     })
 }
 
 /// Applies a plan if it still matches what is open; continues past failed steps.
 pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Terminal) -> Result<Vec<ApplyStep>> {
     let open = read_open(terminal)?;
-    let (saved, picked) = source_workspaces(&plan.source, store, agents)?;
+    let (saved, picked, _) = source_workspaces(&plan.source, store, agents)?;
     let rebuilt = build_actions_picked(&saved, &open, agents, &picked);
     if rebuilt.actions != plan.actions {
         return Err(failure(Exit::PlanStale, "what is open in cmux changed since this plan was made; make a new plan"));

@@ -108,6 +108,11 @@ pub fn commit(
     let message = message
         .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
     let v = ctx.store.save_locked(base.lock, name, base.latest, &message, source, workspaces)?;
+    let mut notes = notes;
+    // The version is written either way; a record that can't be updated is built again later.
+    if let Err(e) = super::known::record(&ctx.store, &ctx.agents, &v.workspaces) {
+        notes.push(format!("could not update the record of saved sessions: {e:#}"));
+    }
     let warnings = [notes, edit::warnings(&v.workspaces, &ctx.agents)].concat();
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
 }

@@ -8,6 +8,7 @@
 pub mod agents;
 pub mod edit;
 pub mod install;
+pub mod known;
 pub mod restore;
 pub mod sessions;
 pub mod snapshots;

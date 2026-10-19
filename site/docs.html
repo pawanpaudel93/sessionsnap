@@ -389,8 +389,13 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               (<code translate="no">leftOut</code>): restore opens a plain shell in a new workspace,
               or skips the tab in an open one, with the reason (a hand-edited reason that is blank,
               too long, or holds a control character or a credential reads “its flags were left out;
-              resume it by hand”). An edit that puts a session in a tab keeps it left out when any
-              version of the snapshot has it left out, or cmux has it open with flags that lose it.
+              resume it by hand”). A record of every saved session, in any snapshot
+              (<code translate="no">sessions.json</code>, never pruned) gives a session put in a tab
+              or a plan without flags of its own (<code translate="no">--add-session</code>,
+              <code translate="no">--session</code>, <code translate="no">ws --from</code>,
+              <code translate="no">recent</code>) the flags it was last saved with; once left out, it
+              stays left out, and when it is open in cmux its live flags win. A session saved nowhere
+              resumes with no flags and a warning.
               Versions written before the
               allow-list may still hold their flags on disk until you prune or delete them; they are
               never shown or replayed. The tokens that pick another session are taken out first: the agent's
@@ -549,6 +554,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 </thead>
                 <tbody>
                   <tr><td>Snapshots</td><td><code translate="no">~/.sessionsnap/snapshots/&lt;name&gt;/&lt;NNNN&gt;-&lt;time&gt;.json</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
+                  <tr><td>Saved sessions' flags</td><td><code translate="no">~/.sessionsnap/sessions.json</code> (locks in <code translate="no">~/.sessionsnap/locks</code>); <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Claude Code transcripts (read)</td><td><code translate="no">~/.claude/projects</code>; <code translate="no">SESSIONSNAP_CLAUDE_DIR</code> (another <code translate="no">~/.claude</code>)</td></tr>
                   <tr><td>Codex sessions (read)</td><td><code translate="no">~/.codex/sessions</code>; <code translate="no">SESSIONSNAP_CODEX_DIR</code> (another <code translate="no">~/.codex</code>)</td></tr>
                   <tr><td>cmux binary</td><td><code translate="no">cmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_CMUX_BIN</code></td></tr>
