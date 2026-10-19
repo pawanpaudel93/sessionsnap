@@ -329,3 +329,64 @@ fn left_out_sticks_everywhere() {
     // The tab added now is left out (the one saved earlier stays as saved; restore leaves it out).
     assert_eq!(tabs.last().unwrap()["leftOut"], LOST, "{tabs:?}");
 }
+
+/// The launch command apply runs for session A, if any.
+fn launched_a(env: &Env) -> Option<String> {
+    env.fake.launched.borrow().iter().find_map(|t| t.command.clone().filter(|c| c.contains(A)))
+}
+
+/// An edit that reads A's live flags from cmux records them: restoring later uses them.
+#[test]
+fn an_edit_records_the_live_flags_it_reads() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.run(&["tab", "old", "Alpha#1", "--remove"]).unwrap();
+    env.run(&["tab", "old", "Alpha", "--add-session", A]).unwrap();
+    close_a(&env);
+    let p = env.run(&["restore", "old", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert!(!p["plan"]["warnings"].to_string().contains(NEWEST), "{p}");
+    let r = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&r)), PLAN, "{r}");
+    env.run(&["apply", p["plan"]["planId"].as_str().unwrap()]).unwrap();
+    assert!(launched_a(&env).unwrap().contains("plan"));
+}
+
+/// `ws --add-live` reads the live flags too.
+#[test]
+fn adding_a_live_workspace_records_its_flags() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.fake.state.borrow_mut().workspaces[0].name = "Gamma".into();
+    env.run(&["ws", "old", "--add-live", "Gamma"]).unwrap();
+    close_a(&env);
+    env.fake.state.borrow_mut().workspaces.clear();
+    let p = env.run(&["restore", "old", "--plan"]).unwrap().json;
+    let tabs: Vec<Value> = p["plan"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|a| a["tabs"].as_array().unwrap().clone())
+        .filter(|t| t["sessionId"] == A)
+        .collect();
+    assert!(!tabs.is_empty() && tabs.iter().all(|t| args(t) == PLAN), "{p}");
+}
+
+/// An edit that sees A's live launch left out leaves A out everywhere after.
+#[test]
+fn an_edit_that_sees_a_left_out_launch_records_it() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &["--frobnicate"]);
+    env.run(&["tab", "old", "Alpha#1", "--remove"]).unwrap();
+    env.run(&["tab", "old", "Alpha", "--add-session", A]).unwrap();
+    close_a(&env);
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    env.fake.state.borrow_mut().workspaces.clear();
+    env.run(&["save", "x", "--from", "old@1"]).unwrap();
+    let p = env.run(&["restore", "x", "--plan"]).unwrap().json;
+    assert_eq!(resumes_a(&p), (false, true), "{p}");
+}

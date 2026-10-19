@@ -47,17 +47,17 @@ fn current(store: &Store, agents: &Agents, lock: &Lock) -> Result<KnownSessions>
     Ok(known)
 }
 
-/// Records the live launches `save` just captured from the terminal (only those: not workspaces it
-/// kept from the previous version). When that fails, the record is kept and marked, so the next
+/// Records live launches just read from the terminal, read at `at` (see `now`): what `save`
+/// captured (not the workspaces it kept from the previous version), or every session open when an
+/// edit read cmux. When that fails, the record is kept and marked, so the next
 /// read adds what the snapshots tell rather than miss a launch.
-pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace]) -> Result<()> {
+pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace], at: &str) -> Result<()> {
     let mut captured = captured.to_vec();
     crate::domain::agents::normalize_tabs(&mut captured, agents);
-    let at = utc_now();
     let result = (|| {
         let lock = store.lock_sessions()?;
         let mut known = current(store, agents, &lock)?;
-        if known.record_live(&captured, &at) {
+        if known.record_live(&captured, at) {
             store.write_sessions(&lock, &known)?;
         }
         Ok(())
@@ -68,8 +68,9 @@ pub fn record_live(store: &Store, agents: &Agents, captured: &[Workspace]) -> Re
     result
 }
 
-/// Now, as the record stores times: UTC, RFC 3339, so they sort as text.
-fn utc_now() -> String {
+/// Now, as the record stores times: UTC, RFC 3339, so they sort as text. Taken before cmux is
+/// read, so a slow read never makes its launches look newer than ones read after it started.
+pub fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 

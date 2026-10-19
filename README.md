@@ -234,10 +234,11 @@ characters, or holds a control character or a credential is shown as "its flags 
 resume it by hand".
 
 sessionsnap keeps a record of every session it has seen (`sessions.json`): the flags of its newest
-launch, as `save` read them from cmux, or why it was left out. Only `save` writes it, and only with
-what it reads from cmux at that moment; edits, copies (`save --from`, `ws --from`) and restores
-never do, so an older copy of a session can't replace what was seen last. Once left out, a session
-stays left out. Pruning or deleting versions never removes from it, and it is built from every
+launch as read from cmux, or why it was left out. Every live read of cmux writes it, stamped with
+the time cmux was read: `save` (what it captured), and edits that read cmux (`--add-session`,
+`--session`, `ws --add-live`: every open session's launch). Copies (`save --from`, `ws --from`),
+other edits and restores never do, so an older copy of a session can't replace what was seen
+last. Once left out, a session stays left out. Pruning or deleting versions never removes from it, and it is built from every
 snapshot the first time it is needed. A record that can't be read is kept as
 `sessions.json.bad-<time>` and built again from the snapshots; when an update fails, the record is
 kept and completed from the snapshots the next time it is read.

@@ -28,6 +28,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     let latest = if new { None } else { ctx.store.versions(name)?.last().copied() };
     let (previous, unreadable) = if new { (None, None) } else { newest_readable(ctx, name)? };
     let mut live = None;
+    let mut read_at = String::new();
     let (workspaces, source, notes) = match from {
         Some(from) => {
             let (src_name, version) = parse_ref(from)?;
@@ -40,6 +41,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
             (src.workspaces, source, vec![])
         }
         None => {
+            read_at = super::known::now();
             let open = super::read_open(ctx.terminal.as_ref())?;
             let (captured, notes) = capture(&open, &ctx.agents, only)?;
             live = Some(captured.clone());
@@ -59,7 +61,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     // Only what was just read from cmux is a launch seen now: never the workspaces kept from the
     // previous version, nor a copy.
     if let Some(captured) = live
-        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &captured)
+        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &captured, &read_at)
         && let Commit::Saved { warnings, .. } = &mut result
     {
         warnings.push(format!("could not update the record of sessions: {e:#}"));
