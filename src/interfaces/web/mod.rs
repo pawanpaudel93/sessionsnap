@@ -218,7 +218,7 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
     };
     // Shows run on their own thread, so each opens its own cmux client. The key travels in the
     // link's fragment, which the browser keeps to itself.
-    let server = Server { port, token: new_token()?, show: Box::new(|u| CmuxCli::open_default()?.show_url(u)) };
+    let server = Server::new(port, new_token()?, Box::new(|u| CmuxCli::open_default()?.show_url(u)));
     eprintln!("sessionsnap UI at {url}. It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
     if !open {
         eprintln!("Run `sessionsnap ui` again to show it.");
@@ -244,7 +244,7 @@ mod tests {
     fn serves_requests_until_idle() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) };
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
         let client = std::thread::spawn(move || {
             let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
             write!(s, "GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
@@ -292,7 +292,7 @@ mod tests {
     fn a_silent_client_does_not_block_others() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) };
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
         let (tx, rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let silent = std::thread::spawn(move || {
@@ -323,7 +323,7 @@ mod tests {
     fn a_slow_drip_client_is_cut_off_at_the_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "t".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) };
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
         let drip = std::thread::spawn(move || {
             let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
             for _ in 0..14 {
@@ -347,14 +347,14 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = std::sync::Mutex::new(vec![]);
-        let server = Server {
+        let server = Server::new(
             port,
-            token: "k3y".into(),
-            show: Box::new(|u: &str| {
+            "k3y".into(),
+            Box::new(|u: &str| {
                 seen.lock().unwrap().push(u.to_string());
                 Ok(Shown::whole("reused"))
             }),
-        };
+        );
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
@@ -377,7 +377,7 @@ mod tests {
     fn the_page_loads_while_a_show_waits_for_it() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "k3y".into(), show: Box::new(show_that_loads_the_page(port)) };
+        let server = Server::new(port, "k3y".into(), Box::new(show_that_loads_the_page(port)));
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
@@ -391,15 +391,15 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let shown = std::sync::Mutex::new(None);
         let load = show_that_loads_the_page(port);
-        let server = Server {
+        let server = Server::new(
             port,
-            token: "k3y".into(),
-            show: Box::new(|u: &str| {
+            "k3y".into(),
+            Box::new(|u: &str| {
                 let r = load(u);
                 *shown.lock().unwrap() = Some(r.as_ref().map(|s| s.place.to_string()).map_err(|e| format!("{e:#}")));
                 r
             }),
-        };
+        );
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
         serve(listener, &server, &make, Duration::from_millis(300), true).unwrap();
@@ -411,11 +411,11 @@ mod tests {
     fn a_second_ui_hears_when_the_key_did_not_reach_the_page() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server {
+        let server = Server::new(
             port,
-            token: "k3y".into(),
-            show: Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("no socket".into()) })),
-        };
+            "k3y".into(),
+            Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("no socket".into()) })),
+        );
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());
@@ -427,7 +427,7 @@ mod tests {
     fn asking_a_server_that_cannot_show_is_an_error() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = Server { port, token: "k3y".into(), show: Box::new(|_| anyhow::bail!("no cmux")) };
+        let server = Server::new(port, "k3y".into(), Box::new(|_| anyhow::bail!("no cmux")));
         let client = std::thread::spawn(move || ask_to_show(port).map_err(|e| format!("{e:#}")));
         let dir = tempfile::tempdir().unwrap();
         let make = test_ctx_maker(dir.path());

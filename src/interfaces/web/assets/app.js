@@ -305,6 +305,11 @@ function reconnectView(message) {
       } catch {
         throw new Error("The sessionsnap UI server is not running.");
       }
+      if (r.status === 429) {
+        status.className = "error small";
+        status.textContent = await r.text();
+        return;
+      }
       if (!r.ok) throw new Error(await r.text());
       const { shown, keyed } = await r.json();
       if (keyed === false) {

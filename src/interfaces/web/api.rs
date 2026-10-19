@@ -1,5 +1,8 @@
 //! The UI server's routes. Every API call runs one sessionsnap command through `cli::run_json`.
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::json;
@@ -30,6 +33,38 @@ pub struct Server<'a> {
     pub token: String,
     /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes the cmux backend's.
     pub show: Box<ShowFn<'a>>,
+    shows: ShowGate,
+}
+
+/// Shortest time between the starts of two shows.
+pub const SHOW_GAP: Duration = Duration::from_secs(1);
+
+/// One show at a time, at most one per `SHOW_GAP`: each runs cmux, and `/api/show` needs no key.
+#[derive(Default)]
+struct ShowGate {
+    /// Whether a show runs, and when the last one started.
+    state: Mutex<(bool, Option<Instant>)>,
+}
+
+impl ShowGate {
+    /// `None` when a show runs or one started too recently.
+    fn enter(&self) -> Option<ShowTurn<'_>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.0 || state.1.is_some_and(|t| t.elapsed() < SHOW_GAP) {
+            return None;
+        }
+        *state = (true, Some(Instant::now()));
+        Some(ShowTurn(self))
+    }
+}
+
+/// Ends the show when dropped.
+struct ShowTurn<'a>(&'a ShowGate);
+
+impl Drop for ShowTurn<'_> {
+    fn drop(&mut self) {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner()).0 = false;
+    }
 }
 
 #[derive(Deserialize)]
@@ -39,7 +74,11 @@ struct RunBody {
     input: Option<String>,
 }
 
-impl Server<'_> {
+impl<'a> Server<'a> {
+    pub fn new(port: u16, token: String, show: Box<ShowFn<'a>>) -> Self {
+        Server { port, token, show, shows: ShowGate::default() }
+    }
+
     pub fn handle(&self, req: &Request, make_ctx: &MakeCtx<'_>) -> Response {
         // A page on another site that resolves its name to 127.0.0.1 still sends its own Host.
         if !self.own_host(req.header("host")) {
@@ -92,10 +131,14 @@ impl Server<'_> {
         self.show_page()
     }
 
-    /// Shows the keyed link in cmux: `200 {"shown": …, "keyed": …}`, or `502` with the reason.
-    /// When cmux showed the page but could not be handed its key, the keyed link is printed to
-    /// this server's own terminal instead, for the user to open.
+    /// Shows the keyed link in cmux: `200 {"shown": …, "keyed": …}`, `502` with the reason, or
+    /// `429` while another show runs or one started under `SHOW_GAP` ago. When cmux showed the
+    /// page but could not be handed its key, the keyed link is printed to this server's own
+    /// terminal instead, for the user to open.
     pub fn show_page(&self) -> Response {
+        let Some(_turn) = self.shows.enter() else {
+            return Response::text(429, "The sessionsnap UI is being shown already; try again in a moment.");
+        };
         let link = format!("http://127.0.0.1:{}/#t={}", self.port, self.token);
         match (self.show)(&link) {
             Ok(shown) => {
@@ -168,7 +211,7 @@ mod tests {
     const PORT: u16 = 47317;
 
     fn server() -> Server<'static> {
-        Server { port: PORT, token: "t0k".into(), show: Box::new(|_| Ok(Shown::whole("dock"))) }
+        Server::new(PORT, "t0k".into(), Box::new(|_| Ok(Shown::whole("dock"))))
     }
 
     fn req(method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Request {
@@ -338,14 +381,14 @@ mod tests {
     fn show_needs_no_token_and_shows_the_keyed_link() {
         with_store(|mk| {
             let seen = std::sync::Mutex::new(vec![]);
-            let s = Server {
-                port: PORT,
-                token: "t0k".into(),
-                show: Box::new(|u: &str| {
+            let s = Server::new(
+                PORT,
+                "t0k".into(),
+                Box::new(|u: &str| {
                     seen.lock().unwrap().push(u.to_string());
                     Ok(Shown::whole("reused"))
                 }),
-            };
+            );
             let origin = format!("http://127.0.0.1:{PORT}");
             let r = s.handle(&show_req(&[("content-type", "application/json"), ("origin", origin.as_str())]), mk);
             assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
@@ -353,19 +396,52 @@ mod tests {
             assert!(!String::from_utf8_lossy(&r.body).contains("t0k"), "never returns the key");
             assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{PORT}/#t=t0k")]);
             // Without an Origin (a local program such as `sessionsnap ui`) it works too.
-            assert_eq!(s.handle(&show_req(&[("content-type", "application/json")]), mk).status, 200);
+            assert_eq!(server().handle(&show_req(&[("content-type", "application/json")]), mk).status, 200);
             assert_eq!(s.handle(&req("GET", "/api/show", &[], ""), mk).status, 405);
         });
     }
 
     #[test]
+    fn shows_run_one_at_a_time_and_at_most_once_a_gap() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
+        let finish_rx = std::sync::Mutex::new(finish_rx);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let s = Server::new(
+            PORT,
+            "t0k".into(),
+            Box::new(|_| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                started_tx.send(()).unwrap();
+                let _ = finish_rx.lock().unwrap().recv_timeout(Duration::from_secs(5));
+                Ok(Shown::whole("dock"))
+            }),
+        );
+        let show = || s.handle(&show_req(&[("content-type", "application/json")]), &|_, _| anyhow::bail!("no run"));
+        std::thread::scope(|scope| {
+            let first = scope.spawn(show);
+            started_rx.recv().unwrap();
+            let busy = show();
+            assert_eq!(busy.status, 429, "a second show while one runs");
+            finish_tx.send(()).unwrap();
+            assert_eq!(first.join().unwrap().status, 200);
+        });
+        finish_tx.send(()).unwrap();
+        assert_eq!(show().status, 429, "too soon after the last");
+        std::thread::sleep(SHOW_GAP + Duration::from_millis(100));
+        finish_tx.send(()).unwrap();
+        assert_eq!(show().status, 200, "once the gap has passed");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn show_says_when_the_key_did_not_reach_the_page() {
         with_store(|mk| {
-            let s = Server {
-                port: PORT,
-                token: "t0k".into(),
-                show: Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("cmux refused t0k".into()) })),
-            };
+            let s = Server::new(
+                PORT,
+                "t0k".into(),
+                Box::new(|_| Ok(Shown { place: "dock", fragment_error: Some("cmux refused t0k".into()) })),
+            );
             let r = s.handle(&show_req(&[("content-type", "application/json")]), mk);
             assert_eq!(r.status, 200);
             assert_eq!(body(&r), json!({"shown": "dock", "keyed": false}));
@@ -390,11 +466,7 @@ mod tests {
     #[test]
     fn show_reports_a_failed_show() {
         with_store(|mk| {
-            let s = Server {
-                port: PORT,
-                token: "t0k".into(),
-                show: Box::new(|u| anyhow::bail!("cmux is not running ({u})")),
-            };
+            let s = Server::new(PORT, "t0k".into(), Box::new(|u| anyhow::bail!("cmux is not running ({u})")));
             let r = s.handle(&show_req(&[("content-type", "application/json")]), mk);
             assert_eq!(r.status, 502);
             let text = String::from_utf8(r.body).unwrap();
