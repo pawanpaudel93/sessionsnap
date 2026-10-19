@@ -58,6 +58,12 @@ impl Lock {
         }
     }
 
+    /// True while the lock file at the path is still this one: a holder that ran past `STALE` may
+    /// have had it broken and taken by another.
+    pub fn still_held(&self) -> bool {
+        fs::symlink_metadata(&self.path).is_ok_and(|m| FileId::of(&m) == self.id)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

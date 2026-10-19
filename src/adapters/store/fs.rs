@@ -270,7 +270,7 @@ impl Store {
     /// same moment never overwrite each other or share a number.
     pub fn save_locked(
         &self,
-        _lock: &Lock,
+        lock: &Lock,
         name: &str,
         latest: Option<u32>,
         message: &str,
@@ -306,6 +306,14 @@ impl Store {
                 source,
                 workspaces,
             };
+            // A lock broken while this save took too long may be another save's now, built on
+            // the same version: publish nothing.
+            if !lock.still_held() {
+                return Err(failure(
+                    Exit::PlanStale,
+                    format!("snapshot '{name}' was locked by another save meanwhile; try again"),
+                ));
+            }
             publish(&dir, &mut version, &now.format("%Y%m%dT%H%M%S").to_string(), |a, b| fs::hard_link(a, b))?;
             Ok(version)
         })
@@ -705,6 +713,22 @@ mod tests {
         let err = s.save_locked(&lock, "work", Some(1), "c", Source::default(), vec![]).unwrap_err();
         assert_eq!(exit_of(&err), Exit::PlanStale);
         assert_eq!(s.versions("work").unwrap(), vec![1, 2]);
+    }
+
+    /// A holder whose lock was broken (it took too long) and taken by another save publishes
+    /// nothing: the other save may be building on the same version.
+    #[test]
+    fn a_save_whose_lock_was_broken_is_refused() {
+        let (_d, s) = store();
+        s.save_new("work", "a", Source::default(), vec![]).unwrap();
+        let slow = s.lock("work").unwrap();
+        let f = fs::OpenOptions::new().write(true).open(s.root().join("locks/snapshot-work.lock")).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(120)).unwrap();
+        let other = s.lock("work").unwrap();
+        let err = s.save_locked(&slow, "work", Some(1), "b", Source::default(), vec![]).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::PlanStale, "{err}");
+        assert_eq!(s.versions("work").unwrap(), vec![1]);
+        s.save_locked(&other, "work", Some(1), "c", Source::default(), vec![]).unwrap();
     }
 
     /// Delete waits for a save in progress, and never leaves the folder behind.

@@ -84,7 +84,7 @@ impl<R: Runner> CmuxCli<R> {
 
 impl<R: Runner> Terminal for CmuxCli<R> {
     fn is_running(&self) -> bool {
-        self.cmux(&["ping"]).map(|o| o.success).unwrap_or(false)
+        self.cmux_within(&["ping"]).map(|o| o.success).unwrap_or(false)
     }
 
     fn ensure_running(&self) -> Result<()> {
@@ -116,7 +116,9 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             return Ok(OpenState { live: false, state_version: Some(version), workspaces: tree::from_file(&file) });
         }
         // `--id-format both` keeps surface IDs, which match panels in the state file.
-        let tree = tree::parse(&self.cmux_ok(&["--json", "--id-format", "both", "tree", "--all"])?)?;
+        // Bounded: `save` holds its snapshot's lock meanwhile, and a lock is broken as stale after
+        // `lock::STALE`.
+        let tree = tree::parse(&self.cmux_ok_within(&["--json", "--id-format", "both", "tree", "--all"])?)?;
         let (workspaces, warning) = tree::join(tree, &file);
         if let Some(warning) = warning {
             eprintln!("sessionsnap: {warning}");
@@ -302,6 +304,45 @@ mod tests {
         }
     }
 
+    /// A cmux that answers `ping` but hangs on `tree`: reading what is open fails after
+    /// `call_timeout` (well under a lock's stale age), so a save never holds its lock for long.
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_tree_does_not_hold_a_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cmux = dir.path().join("cmux");
+        std::fs::write(&cmux, "#!/bin/sh\necho $$ >> \"$(dirname \"$0\")/pids\"\n[ \"$1\" = ping ] && exit 0\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&cmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let b = CmuxCli {
+            runner: ProcessRunner,
+            program: cmux.to_string_lossy().into_owned(),
+            state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
+            launch_timeout: Duration::from_millis(10),
+            launcher: None,
+            socket: None,
+            // Long enough for the first run of a new script (macOS checks it), short for the test.
+            call_timeout: Duration::from_secs(2),
+        };
+        let started = Instant::now();
+        let err = b.read_open_state().unwrap_err().to_string();
+        assert!(started.elapsed() < Duration::from_secs(10), "took {:?}", started.elapsed());
+        assert!(err.contains("did not answer"), "{err}");
+        assert!(b.call_timeout < crate::adapters::store::lock::STALE);
+        assert_stopped(dir.path());
+    }
+
+    /// Every fake cmux started in `dir` (it writes its PID to `dir/pids`) is gone.
+    #[cfg(unix)]
+    fn assert_stopped(dir: &std::path::Path) {
+        let pids = std::fs::read_to_string(dir.join("pids")).unwrap_or_default();
+        for pid in pids.split_whitespace() {
+            let alive =
+                std::process::Command::new("kill").args(["-0", pid]).stderr(std::process::Stdio::null()).status();
+            assert!(!alive.unwrap().success(), "fake cmux {pid} is still running");
+        }
+    }
+
     /// A cmux that never answers: each call `show_url` makes is killed after `call_timeout`.
     #[cfg(unix)]
     #[test]
@@ -309,7 +350,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let cmux = dir.path().join("cmux");
-        std::fs::write(&cmux, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::write(&cmux, "#!/bin/sh\necho $$ >> \"$(dirname \"$0\")/pids\"\nwhile :; do sleep 1; done\n").unwrap();
         std::fs::set_permissions(&cmux, std::fs::Permissions::from_mode(0o755)).unwrap();
         let b = CmuxCli {
             runner: ProcessRunner,
@@ -325,6 +366,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
         assert!(err.contains("did not answer"), "{err}");
         assert!(!err.contains("secret-key"), "{err}");
+        assert_stopped(dir.path());
     }
 
     /// A cmux socket in a short temp folder (macOS caps socket paths at 104 bytes) that answers one
