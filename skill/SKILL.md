@@ -55,7 +55,7 @@ without flags (`sessionsnap agents --json` lists them).
 | Edit a workspace | `sessionsnap ws <name> <ws> --rename/--color/--index/--remove --json` |
 | Many edits as one version | `sessionsnap edit <name> --batch - --json` with a JSON array on stdin, e.g. `[{"op":"tab-move","tab":"Alpha#2","to":"Beta"}]` |
 | Workspaces and tabs open in cmux now | `sessionsnap open --json` |
-| Preview edits without saving | `sessionsnap edit <name> --batch - --dry-run --json` (ops on stdin) |
+| Preview edits without saving | `sessionsnap edit <name> --batch - --dry-run --json` (ops on stdin); save them with `--base <baseVersion>` from the preview, which exits 6 if the snapshot changed since |
 | Newer release? | `sessionsnap update --check --json` (`updateAvailable`) |
 | Install the latest release | `sessionsnap update --json` |
 | Remove sessionsnap | `sessionsnap uninstall [--keep-data] --yes --json` (lists each step's `status`) |

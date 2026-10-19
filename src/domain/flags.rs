@@ -474,7 +474,7 @@ pub fn holds_credential(v: &str) -> bool {
 
 /// `v` holds an HTTP credential: `Bearer <token>` (the token at least 12 characters), or a value
 /// after an `Authorization:`, `X-Api-Key:` or `Api-Key:` header (after one scheme word such as
-/// `Basic`, at least 4 characters), any case; or curl's `-u`/`--user` with `user:password`.
+/// `Basic`, at least 4 characters), any case.
 fn auth_header(v: &str) -> bool {
     let lower = v.to_ascii_lowercase();
     let token = |s: &str| s.chars().take_while(|c| c.is_ascii_alphanumeric() || "._~+/=-".contains(*c)).count();
@@ -491,14 +491,7 @@ fn auth_header(v: &str) -> bool {
             token(after) >= 4
         })
     });
-    let words: Vec<&str> =
-        v.split(|c: char| c.is_whitespace() || "\"'()".contains(c)).filter(|w| !w.is_empty()).collect();
-    let user_pass = |w: &str| w.split_once(':').is_some_and(|(u, p)| !u.is_empty() && !p.is_empty());
-    let curl_user = words.iter().enumerate().any(|(i, w)| {
-        (matches!(*w, "-u" | "--user") && words.get(i + 1).is_some_and(|n| user_pass(n)))
-            || w.strip_prefix("--user=").is_some_and(user_pass)
-    });
-    bearer || header || curl_user
+    bearer || header
 }
 
 fn token_in(v: &str) -> bool {
@@ -830,8 +823,6 @@ mod tests {
             format!("authorization:{}", "q7Zr9"),
             format!("Bash(curl -H 'X-Api-Key: {}' https://x)", "q7Zr9"),
             format!("api-key: {}", "q7Zr9"),
-            format!("Bash(curl -u admin:{} https://x)", "pw12"),
-            format!("Bash(curl --user=admin:{} https://x)", "pw12"),
         ];
         for v in &found {
             assert!(holds_credential(v), "{v}");
@@ -852,6 +843,12 @@ mod tests {
             "api-key",
             "Bash(git push -u origin main)",
             "Bash(npm i -u)",
+            // Rules whose `:*` is the wildcard, not a password.
+            "Bash(diff -u:*)",
+            "Bash(sort -u:*)",
+            "Bash(date -u:*)",
+            "Bash(python3 -u:*)",
+            "Bash(git push -u origin:*)",
         ] {
             assert!(!holds_credential(v), "{v}");
         }

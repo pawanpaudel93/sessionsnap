@@ -3,9 +3,12 @@
 
 use anyhow::Result;
 
-use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
+use crate::domain::model::{SessionRef, Tab, Workspace, canonical_id, has_control};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, SessionInfo};
+
+/// The reason given for a hand-written `left_out` that can't be shown as it is.
+const LEFT_OUT: &str = "its flags were left out; resume it by hand";
 
 /// Names every agent tab's agent by its registry kind ("Codex", "agy" → "codex", "antigravity"),
 /// so sessions compare equal however the tab was written (unknown agents are left as they are),
@@ -17,7 +20,8 @@ use crate::ports::{AgentCatalog, SessionInfo};
 /// plain shell. Every read of a snapshot goes through this (`app::load_normalized`).
 pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
     for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        let Tab::Agent { agent, args, left_out, .. } = tab else { continue };
+        let Tab::Agent { agent, session_id, args, left_out, .. } = tab else { continue };
+        *session_id = canonical_id(session_id);
         if let Some(kind) = agents.kind_of(agent)
             && kind != agent
         {
@@ -30,10 +34,14 @@ pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
             check.lost_reason(&agents.display_name(agent))
         };
         // A reason written by hand is shown and typed nowhere, but keep it to one short line of
-        // names: control characters, a long text or a token-like word get a plain reason instead.
+        // names: control characters, a long text or a token-like word get a plain reason instead,
+        // and so does a blank one, which would say nothing.
         let stored = left_out.clone().map(|r| {
-            let odd = has_control(&r) || r.chars().count() > 200 || crate::domain::flags::holds_credential(&r);
-            if odd { "its flags were left out; resume it by hand".to_string() } else { r }
+            let odd = r.trim().is_empty()
+                || has_control(&r)
+                || r.chars().count() > 200
+                || crate::domain::flags::holds_credential(&r);
+            if odd { LEFT_OUT.to_string() } else { r }
         });
         match stored.or(why) {
             Some(reason) => {
@@ -146,4 +154,58 @@ pub fn find_session(
 
 pub fn unknown_session(id: &str) -> anyhow::Error {
     failure(Exit::NotFound, format!("no transcript for session {id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{A, agent_tab, agents};
+
+    fn left_out_after_load(reason: &str) -> Option<String> {
+        let mut tab = agent_tab("claude", "t", "/w", A);
+        if let Tab::Agent { left_out, .. } = &mut tab {
+            *left_out = Some(reason.to_string());
+        }
+        let mut ws = vec![Workspace {
+            name: "W".into(),
+            color: None,
+            cwd: "/w".into(),
+            git_branch: None,
+            cmux_workspace_id: None,
+            tabs: vec![tab],
+        }];
+        normalize_tabs(&mut ws, &agents(vec![]));
+        match &ws[0].tabs[0] {
+            Tab::Agent { left_out, .. } => left_out.clone(),
+            Tab::Terminal { .. } => None,
+        }
+    }
+
+    #[test]
+    fn uuid_session_ids_load_in_lowercase() {
+        let mut ws = vec![Workspace {
+            name: "W".into(),
+            color: None,
+            cwd: "/w".into(),
+            git_branch: None,
+            cmux_workspace_id: None,
+            tabs: vec![
+                agent_tab("claude", "t", "/w", "ABCDEF12-3456-4789-8ABC-DEF012345678"),
+                agent_tab("opencode", "o", "/w", "ses_AB"),
+            ],
+        }];
+        normalize_tabs(&mut ws, &agents(vec![]));
+        assert_eq!(ws[0].tabs[0].session().unwrap().session_id, "abcdef12-3456-4789-8abc-def012345678");
+        // Other IDs are kept as they are.
+        assert_eq!(ws[0].tabs[1].session().unwrap().session_id, "ses_AB");
+    }
+
+    /// A reason edited down to nothing still says why the tab opens as a plain shell.
+    #[test]
+    fn blank_left_out_reasons_get_the_plain_reason() {
+        for blank in ["", "   "] {
+            assert_eq!(left_out_after_load(blank).as_deref(), Some(LEFT_OUT), "{blank:?}");
+        }
+        assert_eq!(left_out_after_load("a deny rule").as_deref(), Some("a deny rule"));
+    }
 }

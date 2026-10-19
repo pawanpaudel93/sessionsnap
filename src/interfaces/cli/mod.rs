@@ -81,6 +81,9 @@ pub enum Command {
         /// Show the result without saving a version
         #[arg(long)]
         dry_run: bool,
+        /// Refuse (exit 6) unless the latest version is this one, e.g. the dry run's baseVersion
+        #[arg(long)]
+        base: Option<u32>,
     },
     /// Reopen what a snapshot has that is not open now (plan, then apply)
     Restore {

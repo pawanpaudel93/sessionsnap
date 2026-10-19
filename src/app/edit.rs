@@ -3,10 +3,11 @@
 use anyhow::Result;
 
 use super::Ctx;
-use super::snapshots::{Commit, commit};
+use super::snapshots::{Base, Commit, commit};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit::{self, EditCtx, Op};
 use crate::domain::model::{Source, Workspace};
+use crate::error::{Exit, failure};
 
 /// What an edit did.
 #[derive(Debug)]
@@ -21,15 +22,45 @@ pub enum Edited {
     Committed(Commit),
 }
 
-/// Applies `ops` to the latest version of `name` and saves the result (unless `dry_run`).
-pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Edited> {
+/// Applies `ops` to the latest version of `name` and saves the result (unless `dry_run`). With
+/// `base`, refuses unless the latest version is that one: the ops were previewed on it. A save
+/// holds the snapshot's lock from reading the latest version to writing the next, so a version
+/// that lands meanwhile is waited for, then seen.
+pub fn edit(
+    ctx: &Ctx,
+    name: &str,
+    ops: Vec<Op>,
+    message: Option<String>,
+    dry_run: bool,
+    base: Option<u32>,
+) -> Result<Edited> {
+    let lock = if dry_run { None } else { Some(ctx.store.lock(name)?) };
     let previous = super::load_version(ctx, name, None)?;
+    if let Some(base) = base
+        && base != previous.version
+    {
+        return Err(failure(
+            Exit::PlanStale,
+            format!(
+                "snapshot '{name}' is now at v{}, not v{base}: it changed since these edits were previewed; preview them again",
+                previous.version
+            ),
+        ));
+    }
     let mut workspaces = previous.workspaces.clone();
+    // Ops that put a session in a tab take its flags from the record of saved sessions, or from
+    // cmux when it is open there.
+    let sets_session =
+        ops.iter().any(|o| matches!(o, Op::TabAddSession { .. } | Op::TabSetSession { .. } | Op::WsFrom { .. }));
     let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
         Some(super::read_open(ctx.terminal.as_ref())?)
+    } else if sets_session {
+        // Without cmux's state, the record still applies.
+        super::read_open(ctx.terminal.as_ref()).ok()
     } else {
         None
     };
+    let known = if sets_session { super::known::load(&ctx.store, &ctx.agents)? } else { Default::default() };
     let notes = edit::apply_ops(
         &mut workspaces,
         &ops,
@@ -37,6 +68,7 @@ pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_ru
             agents: &ctx.agents,
             snapshots: &super::NormalizedSnapshots { store: &ctx.store, agents: &ctx.agents },
             open: open.as_ref(),
+            known,
         },
     )?;
     if dry_run {
@@ -45,5 +77,7 @@ pub fn edit(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_ru
         return Ok(Edited::DryRun { base_version: previous.version, workspaces, changes, warnings });
     }
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
-    Ok(Edited::Committed(commit(ctx, name, Some(&previous), workspaces, source, message, notes)?))
+    let lock = lock.ok_or_else(|| anyhow::anyhow!("an edit is saved under its snapshot's lock"))?;
+    let base = Base { lock: &lock, latest: Some(previous.version), previous: Some(&previous) };
+    Ok(Edited::Committed(commit(ctx, name, base, workspaces, source, message, notes, false)?))
 }

@@ -94,6 +94,8 @@ word is shell-quoted. Keep it that way.
 
 ## Tests
 
-- Unit tests live next to their code; `src/testing.rs` holds fakes for every port.
+- Unit tests live next to their code; `src/testing.rs` holds fakes for every port. It is built only
+  for tests and with the `testing` feature, which `tests/` turns on (a dev-dependency of the crate
+  on itself), so release builds never contain it.
 - `tests/` drives the real binary against temp dirs and fixtures (`tests/fixtures/`).
 - No test runs cmux, an agent or a browser.

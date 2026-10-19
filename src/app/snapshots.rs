@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use super::Ctx;
+use crate::adapters::store::lock::Lock;
 use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
@@ -18,10 +19,15 @@ pub enum Commit {
 }
 
 /// Saves what is open (all, or only the workspaces in `only`) — or a copy of `from` — as the next
-/// version of `name`.
+/// version of `name`. Holds the snapshot's lock from reading its latest version to writing the
+/// next, so a save or edit landing meanwhile is never undone.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
-    let previous = if ctx.store.exists(name) { Some(super::load_version(ctx, name, None)?) } else { None };
+    let lock = ctx.store.lock(name)?;
+    let new = is_new(ctx, name);
+    let latest = if new { None } else { ctx.store.versions(name)?.last().copied() };
+    let (previous, unreadable) = if new { (None, None) } else { newest_readable(ctx, name)? };
+    let mut live = None;
     let (workspaces, source, notes) = match from {
         Some(from) => {
             let (src_name, version) = parse_ref(from)?;
@@ -36,6 +42,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
         None => {
             let open = super::read_open(ctx.terminal.as_ref())?;
             let (captured, notes) = capture(&open, &ctx.agents, only)?;
+            live = Some(captured.clone());
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
                 Some(p) => carry_over(&p.workspaces, captured),
@@ -44,24 +51,73 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
             (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None }, notes)
         }
     };
-    commit(ctx, name, previous.as_ref(), workspaces, source, message, notes)
+    // A broken latest version is never "unchanged": the save writes one that can be read.
+    let force = unreadable.is_some();
+    let notes = unreadable.into_iter().chain(notes).collect();
+    let base = Base { lock: &lock, latest, previous: previous.as_ref() };
+    let mut result = commit(ctx, name, base, workspaces, source, message, notes, force)?;
+    // Only what was just read from cmux is a launch seen now: never the workspaces kept from the
+    // previous version, nor a copy.
+    if let Some(captured) = live
+        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &captured)
+        && let Commit::Saved { warnings, .. } = &mut result
+    {
+        warnings.push(format!("could not update the record of sessions: {e:#}"));
+    }
+    Ok(result)
 }
 
-/// Writes a new version unless nothing changed. Shared by save and edits. `notes` (what capture
-/// left out) are shown first among the warnings.
+/// What a new version is written on: the snapshot's lock, held since its latest version was read;
+/// that latest version's number (None: no version yet); and the version it is compared with.
+pub struct Base<'a> {
+    pub lock: &'a Lock,
+    pub latest: Option<u32>,
+    pub previous: Option<&'a Version>,
+}
+
+/// True when saving to `name` starts a new snapshot: it has no version yet (an empty folder left
+/// behind doesn't count).
+pub fn is_new(ctx: &Ctx, name: &str) -> bool {
+    !ctx.store.has_versions(name)
+}
+
+/// The newest version of `name` that can be read, and, when the latest one can't be, a note that
+/// says so: a broken latest version (edited by hand, a crash) must not stop later saves.
+fn newest_readable(ctx: &Ctx, name: &str) -> Result<(Option<Version>, Option<String>)> {
+    let versions = ctx.store.versions(name)?;
+    let Some(&latest) = versions.last() else { return Ok((None, None)) };
+    // A file that can't even be opened counts as unreadable too.
+    let read = |n| read_normalized(ctx, name, n).unwrap_or_else(|e| Err(e.to_string()));
+    let why = match read(latest) {
+        Ok(v) => return Ok((Some(v), None)),
+        Err(why) => why,
+    };
+    for &n in versions.iter().rev().skip(1) {
+        if let Ok(v) = read(n) {
+            return Ok((Some(v), Some(format!("v{latest} is unreadable ({why}); compared with v{n}"))));
+        }
+    }
+    Ok((None, Some(format!("v{latest} is unreadable ({why}), and no older version can be read"))))
+}
+
+/// Writes a new version unless nothing changed (or `force`). Shared by save and edits. `notes`
+/// (what capture left out) are shown first among the warnings.
 #[allow(clippy::too_many_arguments)]
 pub fn commit(
     ctx: &Ctx,
     name: &str,
-    previous: Option<&Version>,
+    base: Base,
     workspaces: Vec<Workspace>,
     source: Source,
     message: Option<String>,
     notes: Vec<String>,
+    force: bool,
 ) -> Result<Commit> {
+    let previous = base.previous;
     let mut workspaces = workspaces;
     crate::domain::agents::normalize_tabs(&mut workspaces, &ctx.agents);
     if let Some(p) = previous
+        && !force
         && p.workspaces == workspaces
     {
         return Ok(Commit::Unchanged { snapshot: p.snapshot.clone(), version: p.version });
@@ -69,7 +125,7 @@ pub fn commit(
     let changes = diff::diff(previous.map(|p| p.workspaces.as_slice()).unwrap_or(&[]), &workspaces);
     let message = message
         .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
-    let v = ctx.store.save_new(name, &message, source, workspaces)?;
+    let v = ctx.store.save_locked(base.lock, name, base.latest, &message, source, workspaces)?;
     let warnings = [notes, edit::warnings(&v.workspaces, &ctx.agents)].concat();
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
 }

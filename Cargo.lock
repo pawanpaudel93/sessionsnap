@@ -420,6 +420,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "sessionsnap",
  "tempfile",
 ]
 

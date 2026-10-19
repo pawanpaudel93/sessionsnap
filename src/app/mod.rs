@@ -8,6 +8,7 @@
 pub mod agents;
 pub mod edit;
 pub mod install;
+pub mod known;
 pub mod restore;
 pub mod sessions;
 pub mod snapshots;
@@ -99,6 +100,8 @@ pub fn read_open(terminal: &dyn Terminal) -> anyhow::Result<OpenState> {
             {
                 a.session_id = alt;
             }
+            // Compared with saved sessions, which hold UUIDs in lowercase.
+            a.session_id = crate::domain::model::canonical_id(&a.session_id);
         }
     }
     Ok(open)

@@ -162,6 +162,12 @@ pub fn is_session_id(s: &str) -> bool {
         )
 }
 
+/// A session ID as sessionsnap compares it: a UUID in lowercase (an uppercase UUID names the same
+/// session, and a case-insensitive file system finds its transcript), anything else as it is.
+pub fn canonical_id(id: &str) -> String {
+    if is_session_id(id) { id.to_ascii_lowercase() } else { id.to_string() }
+}
+
 pub fn tab_count(workspaces: &[Workspace]) -> usize {
     workspaces.iter().map(|w| w.tabs.len()).sum()
 }

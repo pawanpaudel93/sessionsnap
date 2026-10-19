@@ -3,5 +3,6 @@
 //! Layer rule: an adapter; may use `crate::ports` and `crate::domain`, never `app` or `interfaces`.
 
 pub mod fs;
+pub mod lock;
 
 pub use fs::Store;

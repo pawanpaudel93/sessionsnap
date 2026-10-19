@@ -19,6 +19,9 @@ pub struct CmuxCli<R: Runner> {
     pub launcher: Option<Vec<String>>,
     /// cmux's control socket, for links that must stay off command lines; None when unknown.
     pub socket: Option<PathBuf>,
+    /// How long each cmux call of `show_url` may take before it is killed: the web UI calls it,
+    /// and a hung cmux must not hold one of its workers.
+    pub call_timeout: Duration,
 }
 
 /// How to start cmux on `os`: `open -a cmux` on macOS. On Linux cmux ships as a separate app
@@ -36,6 +39,7 @@ impl CmuxCli<ProcessRunner> {
             launch_timeout: Duration::from_secs(30),
             launcher: launcher_for(std::env::consts::OS),
             socket: socket::default_path(),
+            call_timeout: Duration::from_secs(15),
         })
     }
 }
@@ -43,7 +47,7 @@ impl CmuxCli<ProcessRunner> {
 impl<R: Runner> CmuxCli<R> {
     /// Brings up the Dock in the right sidebar: cmux pauses pages in a hidden Dock.
     fn show_dock(&self) -> Result<()> {
-        self.cmux_ok(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
+        self.cmux_ok_within(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
     }
 
     fn cmux(&self, args: &[&str]) -> Result<Output> {
@@ -51,9 +55,23 @@ impl<R: Runner> CmuxCli<R> {
         self.runner.run(&self.program, &args)
     }
 
+    /// `cmux`, killed after `call_timeout`.
+    fn cmux_within(&self, args: &[&str]) -> Result<Output> {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        self.runner.run_timeout(&self.program, &args, self.call_timeout)
+    }
+
     /// Runs a cmux command and returns its stdout, failing on a non-zero exit.
     fn cmux_ok(&self, args: &[&str]) -> Result<String> {
-        let out = self.cmux(args)?;
+        Self::stdout_of(args, self.cmux(args)?)
+    }
+
+    /// `cmux_ok`, killed after `call_timeout`.
+    fn cmux_ok_within(&self, args: &[&str]) -> Result<String> {
+        Self::stdout_of(args, self.cmux_within(args)?)
+    }
+
+    fn stdout_of(args: &[&str], out: Output) -> Result<String> {
         if !out.success {
             return Err(failure(
                 Exit::Error,
@@ -66,7 +84,7 @@ impl<R: Runner> CmuxCli<R> {
 
 impl<R: Runner> Terminal for CmuxCli<R> {
     fn is_running(&self) -> bool {
-        self.cmux(&["ping"]).map(|o| o.success).unwrap_or(false)
+        self.cmux_within(&["ping"]).map(|o| o.success).unwrap_or(false)
     }
 
     fn ensure_running(&self) -> Result<()> {
@@ -97,8 +115,23 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         if !self.is_running() {
             return Ok(OpenState { live: false, state_version: Some(version), workspaces: tree::from_file(&file) });
         }
-        let tree = tree::parse(&self.cmux_ok(&["--json", "tree", "--all"])?)?;
-        Ok(OpenState { live: true, state_version: Some(version), workspaces: tree::join(tree, &file) })
+        // `--id-format both` keeps surface IDs, which match panels in the state file.
+        // Bounded: `save` holds its snapshot's lock meanwhile, and a lock is broken as stale after
+        // `lock::STALE`.
+        let with_ids = ["--json", "--id-format", "both", "tree", "--all"];
+        let out = self.cmux_within(&with_ids)?;
+        let text = if !out.success && out.stderr.contains("id-format") {
+            // A cmux without the flag: its tree has no surface IDs, and `join` matches by tty.
+            self.cmux_ok_within(&["--json", "tree", "--all"])?
+        } else {
+            Self::stdout_of(&with_ids, out)?
+        };
+        let tree = tree::parse(&text)?;
+        let (workspaces, warning) = tree::join(tree, &file);
+        if let Some(warning) = warning {
+            eprintln!("sessionsnap: {warning}");
+        }
+        Ok(OpenState { live: true, state_version: Some(version), workspaces })
     }
 
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {
@@ -138,26 +171,27 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         // The `#` part may carry the UI's key, and any local user can read a command line with
         // `ps`: cmux's command line gets only the address, the whole link goes over its socket.
         let (base, fragment) = url.split_once('#').map_or((url, None), |(b, f)| (b, Some(f).filter(|f| !f.is_empty())));
-        let (surface, place) =
-            if let Some((surface, in_dock)) = tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)? {
-                if fragment.is_none() {
-                    self.cmux_ok(&["browser", surface.as_str(), "goto", base])?;
-                }
-                if in_dock {
-                    self.show_dock()?;
-                }
-                (Some(surface), "reused")
+        let (surface, place) = if let Some((surface, in_dock)) =
+            tree::find_browser(&self.cmux_ok_within(&["--json", "tree", "--all"])?, base)?
+        {
+            if fragment.is_none() {
+                self.cmux_ok_within(&["browser", surface.as_str(), "goto", base])?;
+            }
+            if in_dock {
+                self.show_dock()?;
+            }
+            (Some(surface), "reused")
+        } else {
+            let out = self.cmux_within(&["new-surface", "--type", "browser", "--placement", "dock", "--url", base])?;
+            if out.success {
+                self.show_dock()?;
+                (find_ref(&out.stdout, "surface"), "dock")
             } else {
-                let out = self.cmux(&["new-surface", "--type", "browser", "--placement", "dock", "--url", base])?;
-                if out.success {
-                    self.show_dock()?;
-                    (find_ref(&out.stdout, "surface"), "dock")
-                } else {
-                    // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
-                    let out = self.cmux_ok(&["browser", "open", base])?;
-                    (find_ref(&out, "surface"), "tab")
-                }
-            };
+                // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
+                let out = self.cmux_ok_within(&["browser", "open", base])?;
+                (find_ref(&out, "surface"), "tab")
+            }
+        };
         let Some(fragment) = fragment else { return Ok(Shown::whole(place)) };
         let result = self.navigate(surface, base, url).map_err(|e| {
             // cmux's message could quote the link.
@@ -174,7 +208,7 @@ impl<R: Runner> CmuxCli<R> {
         let path = self.socket.as_deref().ok_or_else(|| anyhow::anyhow!("cmux's socket was not found"))?;
         let surface = match surface {
             Some(s) => s,
-            None => tree::find_browser(&self.cmux_ok(&["--json", "tree", "--all"])?, base)?
+            None => tree::find_browser(&self.cmux_ok_within(&["--json", "tree", "--all"])?, base)?
                 .map(|(s, _)| s)
                 .ok_or_else(|| anyhow::anyhow!("cmux did not report the new browser tab"))?,
         };
@@ -242,6 +276,8 @@ mod tests {
         ping_ok: bool,
         dock_ok: bool,
         tree: &'static str,
+        /// A cmux that doesn't know `--id-format` (and so prints no surface IDs).
+        old_cmux: bool,
     }
 
     impl Runner for FakeRunner {
@@ -252,6 +288,15 @@ mod tests {
             let ok = |s: &str| Ok(Output { success: true, stdout: s.into(), stderr: String::new() });
             match args.first().map(String::as_str) {
                 Some("ping") => Ok(Output { success: self.ping_ok, ..Default::default() }),
+                Some("--json") if self.old_cmux && args.iter().any(|a| a == "--id-format") => Ok(Output {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "Error: unknown option '--id-format'".into(),
+                }),
+                Some("--json") if self.old_cmux => {
+                    let tree: Value = serde_json::from_str(self.tree).unwrap();
+                    ok(&strip_ids(tree).to_string())
+                }
                 Some("--json") => ok(self.tree),
                 Some("new-workspace") => ok("OK workspace:12\n"),
                 Some("new-surface") if !self.dock_ok && args.iter().any(|a| a == "dock") => Ok(Output {
@@ -268,13 +313,85 @@ mod tests {
 
     fn backend(ping_ok: bool) -> CmuxCli<FakeRunner> {
         CmuxCli {
-            runner: FakeRunner { calls: RefCell::new(vec![]), ping_ok, dock_ok: true, tree: TEST_TREE },
+            runner: FakeRunner {
+                calls: RefCell::new(vec![]),
+                ping_ok,
+                dock_ok: true,
+                tree: TEST_TREE,
+                old_cmux: false,
+            },
             program: "cmux".into(),
             state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
             launch_timeout: Duration::from_millis(10),
             launcher: launcher_for("macos"),
             socket: None,
+            call_timeout: Duration::from_secs(15),
         }
+    }
+
+    /// A cmux that answers `ping` but hangs on `tree`: reading what is open fails after
+    /// `call_timeout` (well under a lock's stale age), so a save never holds its lock for long.
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_tree_does_not_hold_a_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cmux = dir.path().join("cmux");
+        std::fs::write(&cmux, "#!/bin/sh\necho $$ >> \"$(dirname \"$0\")/pids\"\n[ \"$1\" = ping ] && exit 0\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&cmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let b = CmuxCli {
+            runner: ProcessRunner,
+            program: cmux.to_string_lossy().into_owned(),
+            state_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cmux-state.json"),
+            launch_timeout: Duration::from_millis(10),
+            launcher: None,
+            socket: None,
+            // Long enough for the first run of a new script (macOS checks it), short for the test.
+            call_timeout: Duration::from_secs(2),
+        };
+        let started = Instant::now();
+        let err = b.read_open_state().unwrap_err().to_string();
+        assert!(started.elapsed() < Duration::from_secs(10), "took {:?}", started.elapsed());
+        assert!(err.contains("did not answer"), "{err}");
+        assert!(b.call_timeout < crate::adapters::store::lock::STALE);
+        assert_stopped(dir.path());
+    }
+
+    /// Every fake cmux started in `dir` (it writes its PID to `dir/pids`) is gone.
+    #[cfg(unix)]
+    fn assert_stopped(dir: &std::path::Path) {
+        let pids = std::fs::read_to_string(dir.join("pids")).unwrap_or_default();
+        for pid in pids.split_whitespace() {
+            let alive =
+                std::process::Command::new("kill").args(["-0", pid]).stderr(std::process::Stdio::null()).status();
+            assert!(!alive.unwrap().success(), "fake cmux {pid} is still running");
+        }
+    }
+
+    /// A cmux that never answers: each call `show_url` makes is killed after `call_timeout`.
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_cmux_does_not_hold_show_url() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cmux = dir.path().join("cmux");
+        std::fs::write(&cmux, "#!/bin/sh\necho $$ >> \"$(dirname \"$0\")/pids\"\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&cmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let b = CmuxCli {
+            runner: ProcessRunner,
+            program: cmux.to_string_lossy().into_owned(),
+            state_path: dir.path().join("state.json"),
+            launch_timeout: Duration::from_millis(10),
+            launcher: None,
+            socket: None,
+            call_timeout: Duration::from_millis(300),
+        };
+        let started = Instant::now();
+        let err = b.show_url("http://127.0.0.1:1/#t=secret-key").unwrap_err().to_string();
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert!(err.contains("did not answer"), "{err}");
+        assert!(!err.contains("secret-key"), "{err}");
+        assert_stopped(dir.path());
     }
 
     /// A cmux socket in a short temp folder (macOS caps socket paths at 104 bytes) that answers one
@@ -419,9 +536,41 @@ mod tests {
         assert_no_key_in_argv(&b);
     }
 
+    /// `tree` as a cmux prints it without `--id-format both`: no surface IDs.
+    fn strip_ids(mut v: Value) -> Value {
+        if let Some(surfaces) = v.get_mut("surfaces").and_then(Value::as_array_mut) {
+            for s in surfaces {
+                s.as_object_mut().unwrap().remove("id");
+            }
+        }
+        match &mut v {
+            Value::Object(map) => map.values_mut().for_each(|c| *c = strip_ids(c.take())),
+            Value::Array(items) => items.iter_mut().for_each(|c| *c = strip_ids(c.take())),
+            _ => {}
+        }
+        v
+    }
+
+    /// A cmux that rejects `--id-format`: asked again without it, matched by tty (never titles).
+    #[test]
+    fn a_cmux_without_id_format_is_matched_by_tty() {
+        let mut b = backend(true);
+        b.runner.old_cmux = true;
+        let s = b.read_open_state().unwrap();
+        assert_eq!(s.workspaces[0].tabs[1].agent.as_ref().unwrap().session_id, A);
+        let trees: Vec<Vec<String>> =
+            b.runner.calls.borrow().iter().filter(|c| c.get(1).is_some_and(|a| a == "--json")).cloned().collect();
+        assert_eq!(trees.len(), 2, "{trees:?}");
+        assert_eq!(trees[1], ["cmux", "--json", "tree", "--all"].map(String::from));
+    }
+
     #[test]
     fn reads_live_state_when_running() {
-        let s = backend(true).read_open_state().unwrap();
+        let b = backend(true);
+        let s = b.read_open_state().unwrap();
+        // Without `--id-format both` cmux leaves out surface IDs, and tabs can't be told apart.
+        let tree_call = ["cmux", "--json", "--id-format", "both", "tree", "--all"].map(String::from).to_vec();
+        assert!(b.runner.calls.borrow().contains(&tree_call), "{:?}", b.runner.calls.borrow());
         assert!(s.live);
         assert_eq!(s.state_version, Some(1));
         assert_eq!(s.workspaces[0].tabs[1].agent.as_ref().unwrap().session_id, A);

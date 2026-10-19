@@ -29,13 +29,13 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Delete { name } => delete(ctx, &name),
         Command::Ws(args) => {
             let ops = ws_ops(&args)?;
-            edit_snapshot(ctx, &args.name, ops, args.message, false)
+            edit_snapshot(ctx, &args.name, ops, args.message, false, None)
         }
         Command::Tab(args) => {
             let ops = tab_ops(&args)?;
-            edit_snapshot(ctx, &args.name, ops, args.message, false)
+            edit_snapshot(ctx, &args.name, ops, args.message, false, None)
         }
-        Command::Edit { name, batch, message, dry_run } => {
+        Command::Edit { name, batch, message, dry_run, base } => {
             let text = if batch == "-" {
                 match &ctx.input {
                     Some(text) => text.clone(),
@@ -46,7 +46,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             };
             let ops: Vec<Op> =
                 serde_json::from_str(&text).map_err(|e| failure(Exit::Error, format!("invalid batch: {e}")))?;
-            edit_snapshot(ctx, &name, ops, message, dry_run)
+            edit_snapshot(ctx, &name, ops, message, dry_run, base)
         }
         Command::Restore { snapshot, workspaces, tabs, plan, pick } => {
             restore(ctx, snapshot, workspaces, tabs, plan, pick)
@@ -277,8 +277,15 @@ pub(crate) fn confirm(ctx: &Ctx, question: &str) -> Result<()> {
     }
 }
 
-fn edit_snapshot(ctx: &Ctx, name: &str, ops: Vec<Op>, message: Option<String>, dry_run: bool) -> Result<Outcome> {
-    Ok(match app::edit::edit(ctx, name, ops, message, dry_run)? {
+fn edit_snapshot(
+    ctx: &Ctx,
+    name: &str,
+    ops: Vec<Op>,
+    message: Option<String>,
+    dry_run: bool,
+    base: Option<u32>,
+) -> Result<Outcome> {
+    Ok(match app::edit::edit(ctx, name, ops, message, dry_run, base)? {
         Edited::DryRun { base_version, workspaces, changes, warnings } => {
             let summary = if changes.is_empty() { "no changes".to_string() } else { diff::summary(&changes) };
             Outcome::ok(

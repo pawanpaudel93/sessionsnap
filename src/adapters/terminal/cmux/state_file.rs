@@ -24,6 +24,8 @@ pub struct FileWorkspace {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FilePanel {
+    /// The panel's ID, which the live tree reports as its surface's `id`.
+    pub id: Option<String>,
     pub tty: Option<String>,
     pub title: String,
     pub cwd: String,
@@ -170,6 +172,7 @@ fn parse_panel(p: &Value) -> Option<FilePanel> {
         .or_else(|| term.and_then(|t| s(t, "workingDirectory")))
         .unwrap_or_default();
     Some(FilePanel {
+        id: s(p, "id"),
         tty: s(p, "ttyName"),
         title: s(p, "title").unwrap_or_default(),
         cwd,

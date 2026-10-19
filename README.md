@@ -199,8 +199,9 @@ Both `--flag value` and `--flag=value` work. A kept flag's values are checked to
   `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…-`/`xapp-`, GitLab `glpat-`, Hugging
   Face `hf_`, npm `npm_`, AWS `AKIA`/`ASIA` plus 16, Google `AIza` plus 35), a JWT, a URL with a
   password (`scheme://user:pass@host`), a `Bearer` token, an `Authorization:`, `X-Api-Key:` or
-  `Api-Key:` header value, or curl's `-u user:password`. Other opaque secrets (a password with no
-  marker around it) are not recognised: keep them out of permission rules and flag values.
+  `Api-Key:` header value. A password typed inside a permission rule or other free text (such as
+  `curl -u user:password`) is not detected; only token formats, auth headers and URLs with a
+  password are. Keep passwords out of permission rules and flag values.
 
 A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
 the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
@@ -228,7 +229,27 @@ restore), so a snapshot saved by an older sessionsnap never shows or passes a fl
 allowed. A tab whose saved flags can't be passed again (a restricting flag that can't be kept, or an
 untested agent's tab with flags) keeps its session ID but none of its flags, with the reason
 (`leftOut`): `show` gives it, and restore opens a plain shell in a new workspace, or skips the tab
-in an open one, with the reason.
+in an open one, with the reason. A `leftOut` edited by hand that is blank, longer than 200
+characters, or holds a control character or a credential is shown as "its flags were left out;
+resume it by hand".
+
+sessionsnap keeps a record of every session it has seen (`sessions.json`): the flags of its newest
+launch, as `save` read them from cmux, or why it was left out. Only `save` writes it, and only with
+what it reads from cmux at that moment; edits, copies (`save --from`, `ws --from`) and restores
+never do, so an older copy of a session can't replace what was seen last. Once left out, a session
+stays left out. Pruning or deleting versions never removes from it, and it is built from every
+snapshot the first time it is needed. A record that can't be read is kept as
+`sessions.json.bad-<time>` and built again from the snapshots; when an update fails, the record is
+kept and completed from the snapshots the next time it is read.
+
+Everything that resumes a session reads it when the plan is made (`restore` of any snapshot or
+version, `recent`, and `apply`, which rebuilds the plan): a session the record has left out is left
+out (a plain shell with the reason, or skipped in an open workspace), and one it has flags for
+resumes with those, with a warning ("using the session's newest known flags") when the tab's own
+differ. A session put in a tab by an edit (`--add-session`, `--session`, `ws --from`) takes its
+flags from there too, or, when it is open in cmux, the flags it runs with now (a launch that loses
+it leaves it out); a session seen nowhere resumes with no flags and a warning ("launch flags
+unknown; resuming with defaults").
 
 The tokens that pick another session are taken out before the list applies: the agent's own resume
 words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and
@@ -280,6 +301,7 @@ Details:
 | What | Where | Override |
 |---|---|---|
 | Snapshots | `~/.sessionsnap/snapshots/<name>/<NNNN>-<time>.json` | `SESSIONSNAP_HOME` |
+| Saved sessions' flags | `~/.sessionsnap/sessions.json` (lock files in `~/.sessionsnap/locks`) | `SESSIONSNAP_HOME` |
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
@@ -287,12 +309,18 @@ Details:
 | cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
-sessionsnap also reads cmux's state file and `cmux --json tree`.
+sessionsnap also reads cmux's state file and `cmux --json --id-format both tree --all`, and matches open tabs to the state file by surface ID (by tty, with a warning, on a cmux that reports no IDs).
 
 Snapshots are format 2 (`"sessionsnap": 2`). Files from pre-release builds (format 1, with
 `"type": "claude"` tabs) are shown as "unreadable" until converted by hand: each
 `{"type": "claude", …, "sessionId": "<id>"}` tab becomes
 `{"type": "agent", …, "agent": "claude", "sessionId": "<id>"}`, and `"sessionsnap": 1` becomes `2`.
+When the latest version can't be read, `save` compares with the newest one that can, says so, and
+writes a new version. Saves, edits, prunes and deletes of one snapshot take turns (a lock file in
+`~/.sessionsnap/locks`, broken after a minute if its holder crashed): a save or edit holds it from
+reading the latest version to writing the next, so saves at the same moment never lose a version or
+share a number, and an edit never undoes a version saved while it was being made (it refuses with
+exit 6 instead).
 
 ## Security
 
@@ -308,7 +336,9 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   left out, and `save` names what it left out. A flag sessionsnap doesn't know (`--api-key`,
   `--header`, …) leaves out the whole agent session. Kept values are checked for their kind (inline
   JSON is not a path) and for known credential formats (see
-  [How flags are restored](#how-flags-are-restored)). A flag that limits the agent (deny rules,
+  [How flags are restored](#how-flags-are-restored)). A password typed inside a permission rule or
+  other free text is not detected; recognised are token formats, auth headers and URLs with a
+  password. A flag that limits the agent (deny rules,
   sandbox, permission mode, settings) that can't be saved exactly as given leaves out the whole
   agent session rather than resume it with fewer limits; so does any flag of an agent whose flags
   are untested. Restore filters old snapshots through the same rules.
