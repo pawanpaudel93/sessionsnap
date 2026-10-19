@@ -241,10 +241,11 @@ other edits and restores never do, so an older copy of a session can't replace w
 last. Once left out, a session stays left out. Pruning or deleting versions never removes from
 it. It is built from every snapshot the first time it is needed; a record that can't be read is
 kept as `sessions.json.bad-<time>` and built again; when an update fails, the record is kept and
-completed the next time it is read. Building or completing it from the snapshots only adds
-sessions it lacks (and keeps a session left out in any version left out). Version times are not
-trusted to tell which launch came last: a session whose versions disagree on its restricting
-flags is left out ("its flags differ between saved versions; resume it by hand").
+completed the next time it is read. Building or completing it from the snapshots compares every
+flag the versions keep, and version times are not trusted to tell which launch came last: a session
+the record lacks takes the flags its versions agree on; one whose versions disagree, or disagree
+with the record's entry, is left out ("its flags differ between saved versions; resume it by
+hand"), and so is one left out in any version.
 
 Everything that resumes a session reads it when the plan is made (`restore` of any snapshot or
 version, `recent`, and `apply`, which rebuilds the plan): a session the record has left out is left

@@ -46,10 +46,23 @@ pub struct Launch {
 
 /// What a plan or an edit says about a session whose flags are unknown.
 pub const UNKNOWN_FLAGS: &str = "launch flags unknown; resuming with defaults";
-/// Why a session rebuilt from saved versions is left out when they disagree on its restrictions.
+/// Why a session rebuilt from saved versions is left out when they disagree on its flags.
 pub const DIFFER: &str = "its flags differ between saved versions; resume it by hand";
 /// What a plan says when a tab's saved flags are not the session's newest.
 pub const NEWEST_FLAGS: &str = "using the session's newest known flags";
+
+/// Kept flags as a set of launches can be compared: each flag with the values after it, sorted.
+fn canonical(kept: &[String]) -> Vec<Vec<String>> {
+    let mut groups: Vec<Vec<String>> = vec![];
+    for word in kept {
+        match groups.last_mut() {
+            Some(group) if !word.starts_with('-') => group.push(word.clone()),
+            _ => groups.push(vec![word.clone()]),
+        }
+    }
+    groups.sort();
+    groups
+}
 
 fn key(s: &SessionRef) -> String {
     format!("{}:{}", s.agent, s.session_id.to_lowercase())
@@ -96,11 +109,17 @@ impl KnownSessions {
         self.sessions != before
     }
 
-    /// Adds what saved versions (normalized, in any order: their times are not trusted) tell of
-    /// sessions the record lacks; an entry it has is never replaced, except that a session left out
-    /// in some version is left out (failing closed). A session missing from the record takes the
-    /// flags its versions agree on; when their restricting flags differ, which launch came last
-    /// can't be told, so it is left out. Its flags count as seen before any live read.
+    /// Adds what saved versions (normalized, in any order: their times are not trusted) tell.
+    /// Versions are compared on every flag they keep (in a canonical order), since a flag that
+    /// widens what the agent may do matters as much as one that limits it, and which version came
+    /// last can't be told: failing closed, a session they disagree on is left out
+    /// (`DIFFER`).
+    /// - A session the record lacks takes the flags its versions agree on.
+    /// - An entry the record has stays as it is when every version agrees with it; a version with
+    ///   other flags (it may hold a newer launch an update missed) leaves it out, and so does a
+    ///   version where the session is left out.
+    ///
+    /// Flags taken from versions count as seen before any live read.
     pub fn fill_from<'a>(&mut self, versions: impl IntoIterator<Item = &'a [Workspace]>, agents: &dyn AgentCatalog) {
         let mut seen: BTreeMap<String, Vec<&Tab>> = BTreeMap::new();
         for t in versions.into_iter().flatten().flat_map(|w| &w.tabs) {
@@ -109,35 +128,44 @@ impl KnownSessions {
             }
         }
         for (k, tabs) in seen {
+            let Some(Tab::Agent { agent, session_id, args, .. }) = tabs.first().copied() else { continue };
             let left_out = tabs.iter().find_map(|t| match t {
                 Tab::Agent { left_out: Some(why), .. } => Some(why.clone()),
                 _ => None,
             });
-            if let Some(entry) = self.sessions.get_mut(&k) {
-                if let (Some(why), None) = (left_out, &entry.left_out) {
-                    entry.args.clear();
-                    entry.left_out = Some(why);
+            let launch = |agent: &str, args: &[String]| canonical(&agents.check_flags(agent, args).kept);
+            let flags: Vec<Vec<Vec<String>>> = tabs
+                .iter()
+                .filter_map(|t| match t {
+                    Tab::Agent { agent, args, .. } => Some(launch(agent, args)),
+                    Tab::Terminal { .. } => None,
+                })
+                .collect();
+            match self.sessions.get_mut(&k) {
+                Some(entry) if entry.left_out.is_none() => {
+                    let ours = launch(&entry.agent, &entry.args);
+                    let why = left_out.or_else(|| flags.iter().any(|f| *f != ours).then(|| DIFFER.to_string()));
+                    if let Some(why) = why {
+                        entry.args.clear();
+                        entry.left_out = Some(why);
+                    }
                 }
-                continue;
+                Some(_) => {}
+                None => {
+                    let left_out =
+                        left_out.or_else(|| flags.iter().any(|f| *f != flags[0]).then(|| DIFFER.to_string()));
+                    self.sessions.insert(
+                        k,
+                        Known {
+                            agent: agent.clone(),
+                            session_id: session_id.to_lowercase(),
+                            args: if left_out.is_some() { vec![] } else { args.clone() },
+                            observed_at: left_out.is_none().then(String::new),
+                            left_out,
+                        },
+                    );
+                }
             }
-            let Some(Tab::Agent { agent, session_id, args, .. }) = tabs.first().copied() else { continue };
-            let restricting = |t: &&Tab| match t {
-                Tab::Agent { agent, args, .. } => agents.check_flags(agent, args).restricting,
-                Tab::Terminal { .. } => vec![],
-            };
-            let first = restricting(&tabs[0]);
-            let left_out =
-                left_out.or_else(|| (!tabs.iter().all(|t| restricting(t) == first)).then(|| DIFFER.to_string()));
-            self.sessions.insert(
-                k,
-                Known {
-                    agent: agent.clone(),
-                    session_id: session_id.to_lowercase(),
-                    args: if left_out.is_some() { vec![] } else { args.clone() },
-                    observed_at: left_out.is_none().then(String::new),
-                    left_out,
-                },
-            );
         }
     }
 
@@ -239,29 +267,68 @@ mod tests {
         assert!(known.get(&SessionRef::new("claude", A.to_uppercase())).is_some());
     }
 
+    /// Versions that differ in any kept flag, one that widens what the agent may do included,
+    /// leave the session out: which came last can't be told.
     #[test]
-    fn filling_only_adds_what_the_record_lacks() {
+    fn versions_differing_in_any_flag_leave_the_session_out() {
+        let agents = agents(vec![]);
+        let s = SessionRef::new("claude", A);
+        let rule = format!("Bash({}:*)", "git");
+        for (one, other) in [
+            (vec!["--dangerously-skip-permissions"], vec![]),
+            (vec!["--allowedTools", rule.as_str()], vec![]),
+            (vec!["--add-dir", "/w/x"], vec!["--add-dir", "/w/y"]),
+        ] {
+            let a = ws(vec![with(&one, None)]);
+            let b = ws(vec![with(&other, None)]);
+            for order in [[a.as_slice(), b.as_slice()], [b.as_slice(), a.as_slice()]] {
+                let mut known = KnownSessions::default();
+                known.fill_from(order, &agents);
+                assert_eq!(known.get(&s).unwrap().left_out.as_deref(), Some(DIFFER), "{one:?} / {other:?}");
+            }
+        }
+        // The same flags in another order are the same launch.
+        let a = ws(vec![with(&["--model", "opus", "--add-dir", "/w/x"], None)]);
+        let b = ws(vec![with(&["--add-dir", "/w/x", "--model", "opus"], None)]);
+        let mut known = KnownSessions::default();
+        known.fill_from([a.as_slice(), b.as_slice()], &agents);
+        assert_eq!(known.get(&s).unwrap().args.len(), 4);
+        assert_eq!(known.get(&s).unwrap().left_out, None);
+    }
+
+    /// Completing an entry after a failed update: a saved version with other flags than the entry
+    /// (it may be the newer, stricter launch the update missed) leaves the session out.
+    #[test]
+    fn completing_an_entry_that_a_version_contradicts_leaves_it_out() {
+        let agents = agents(vec![]);
+        let s = SessionRef::new("claude", A);
+        let mut known = KnownSessions::default();
+        known.record_live(&ws(vec![with(&[], None)]), T1);
+        known.fill_from([ws(vec![with(&[], None)]).as_slice()], &agents);
+        assert_eq!(known.get(&s).unwrap().left_out, None, "versions that agree change nothing");
+        known.fill_from([ws(vec![with(&["--permission-mode", "plan"], None)]).as_slice()], &agents);
+        assert_eq!(known.get(&s).unwrap().left_out.as_deref(), Some(DIFFER));
+    }
+
+    #[test]
+    fn filling_adds_what_the_record_lacks() {
         let agents = agents(vec![]);
         let s = SessionRef::new("claude", A);
         let plan = ws(vec![with(&["--permission-mode", "plan"], None)]);
         let none = ws(vec![with(&[], None)]);
-        // Versions that differ in restrictions: left out.
+        // Versions that differ: left out.
         let mut known = KnownSessions::default();
         known.fill_from([plan.as_slice(), none.as_slice()], &agents);
         assert_eq!(known.get(&s).unwrap().left_out.as_deref(), Some(DIFFER));
-        // Versions that differ only in a flag that limits nothing: their flags (the first's).
-        let opus = ws(vec![with(&["--permission-mode", "plan", "--model", "opus"], None)]);
+        // Versions that agree: their flags, seen before any live read.
         let mut known = KnownSessions::default();
-        known.fill_from([opus.as_slice(), plan.as_slice()], &agents);
+        known.fill_from([plan.as_slice(), plan.as_slice()], &agents);
         let k = known.get(&s).unwrap();
-        assert_eq!((k.args.len(), k.left_out.as_deref(), k.observed_at.as_deref()), (4, None, Some("")));
-        // Seen before any live read: a live launch replaces it.
+        assert_eq!((k.args.len(), k.left_out.as_deref(), k.observed_at.as_deref()), (2, None, Some("")));
+        // A live launch replaces them.
         known.record_live(&none, T1);
         assert!(known.get(&s).unwrap().args.is_empty());
-        // An entry the record has is never replaced by saved versions...
-        known.fill_from([plan.as_slice()], &agents);
-        assert!(known.get(&s).unwrap().args.is_empty());
-        // ...except that a session left out in some version is left out.
+        // A session left out in some version is left out.
         known.fill_from([ws(vec![with(&[], Some("lost"))]).as_slice()], &agents);
         assert_eq!(known.get(&s).unwrap().left_out.as_deref(), Some("lost"));
         assert_eq!(
