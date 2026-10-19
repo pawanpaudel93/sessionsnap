@@ -361,8 +361,16 @@ function reconnectView(message) {
 
 // ---- Snapshots ----
 
+// Snapshots named `--x` date from before such names were refused. The server won't pass that
+// name from the page (it would read as an option), so the list leaves them to the CLI.
+function listable(snapshots) {
+  const shown = snapshots.filter((s) => !s.name.startsWith("--"));
+  return { shown, hidden: snapshots.length - shown.length };
+}
+
 async function viewList() {
   const { result } = await sessionsnap(["list"]);
+  const { shown, hidden } = listable(result.snapshots);
   const name = h("input", { class: "grow", placeholder: "Name, e.g. main", "aria-label": "Snapshot name" });
   const save = actionButton("Save open tabs", async () => {
     const n = name.value.trim();
@@ -378,10 +386,10 @@ async function viewList() {
   const open = (s) => go("snapshot", { snapshot: s.name, tab: "edit", version: null });
   return h("section", { class: "stack" },
     h("div", { class: "row" }, name, save),
-    result.snapshots.length === 0
+    shown.length === 0
       ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
         "Name one above to save the workspaces and tabs open in cmux now.")
-      : h("ul", { class: "list" }, result.snapshots.map((s) => {
+      : h("ul", { class: "list" }, shown.map((s) => {
         const pend = opsOf(s.name).length;
         const li = h("li", { class: "item clickable", tabindex: "0", role: "button", onclick: () => open(s),
           onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(s); } } },
@@ -399,7 +407,9 @@ async function viewList() {
           s.message ? h("div", { class: "faint small ellipsis" }, s.message) : null),
         icon("chevron", "chev"));
         return li;
-      })));
+      })),
+    hidden ? h("p", { class: "muted small" },
+      `${plural(hidden, "snapshot")} with a name starting with "--" ${hidden === 1 ? "is" : "are"} not shown here. Use the CLI: sessionsnap list, then sessionsnap show -- <name>.`) : null);
 }
 
 async function viewSnapshot() {
@@ -727,7 +737,7 @@ function addWorkspace(name, have) {
       const p = picker("Filter workspaces in other snapshots", async (q) => {
         const r = await sessionsnap(["list"]);
         const items = [];
-        for (const s of r.result.snapshots.filter((x) => x.name !== name)) {
+        for (const s of listable(r.result.snapshots).shown.filter((x) => x.name !== name)) {
           const v = await sessionsnap(["show", s.name]);
           for (const w of v.result.version.workspaces) {
             if (have.has(w.name)) continue;

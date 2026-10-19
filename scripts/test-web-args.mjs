@@ -46,3 +46,13 @@ assert.deepEqual(log, ["start a", "end a", "start b", "end b", "start c", "end c
 assert.deepEqual(results.map((r) => r.status), ["fulfilled", "rejected", "fulfilled"]);
 assert.equal(results[2].value, "c");
 console.log("web page commands: one at a time");
+
+// `listable` in app.js: snapshots named `--x` (made before such names were refused) are left out
+// of the page's list, since the server won't pass that name.
+const lst = src.match(/^function listable\(snapshots\) \{\n[\s\S]*?\n\}\n/m);
+assert.ok(lst, "app.js has no top-level function listable");
+const listable = new Function(`${lst[0]}; return listable;`)();
+assert.deepEqual(listable([{ name: "work" }, { name: "--x" }, { name: "-y" }]),
+  { shown: [{ name: "work" }, { name: "-y" }], hidden: 1 });
+assert.deepEqual(listable([]), { shown: [], hidden: 0 });
+console.log("web page list: leaves out names starting with --");
