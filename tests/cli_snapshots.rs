@@ -98,3 +98,25 @@ fn names_ignore_case_on_every_command() {
     env.run(&["delete", "WORK", "-y"]).unwrap();
     assert_eq!(exit_of(&env.run(&["show", "work"]).unwrap_err()), Exit::NotFound);
 }
+
+/// A name that starts with `--` can't be made any more, but one made before still works.
+#[test]
+fn an_existing_double_dash_snapshot_still_works_but_no_new_one_is_made() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    env.fake.state.borrow_mut().workspaces.pop();
+    env.run(&["save", "work"]).unwrap();
+    let snapshots = env.dir.path().join("store").join("snapshots");
+    std::fs::rename(snapshots.join("work"), snapshots.join("--x")).unwrap();
+    let list = env.run(&["list", "--json"]).unwrap().json;
+    assert_eq!(list["snapshots"][0]["name"], "--x", "{list}");
+    assert!(env.run(&["show", "--", "--x@1"]).unwrap().text.contains("login fix"));
+    assert_eq!(env.run(&["history", "--", "--x"]).unwrap().json["versions"].as_array().unwrap().len(), 2);
+    env.run(&["prune", "--keep", "1", "--yes", "--", "--x"]).unwrap();
+    env.run(&["delete", "--yes", "--", "--x"]).unwrap();
+    assert_eq!(exit_of(&env.run(&["show", "--", "--x"]).unwrap_err()), Exit::NotFound);
+    let err = env.run(&["save", "--", "--y"]).unwrap_err();
+    assert!(format!("{err:#}").contains("can't start with '--'"), "{err:#}");
+    let err = env.run(&["save", "--from", "work@1", "--", "--z"]).unwrap_err();
+    assert!(format!("{err:#}").contains("can't start with '--'"), "{err:#}");
+}

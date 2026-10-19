@@ -6,7 +6,7 @@ use super::Ctx;
 use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
-use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name};
+use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name, validate_new_name};
 
 /// What writing a version did.
 #[derive(Debug)]
@@ -21,6 +21,9 @@ pub enum Commit {
 /// version of `name`.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
+    if !ctx.store.exists(name) {
+        validate_new_name(name)?;
+    }
     let previous = if ctx.store.exists(name) { Some(super::load_version(ctx, name, None)?) } else { None };
     let (workspaces, source, notes) = match from {
         Some(from) => {
