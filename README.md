@@ -299,9 +299,11 @@ Snapshots are format 2 (`"sessionsnap": 2`). Files from pre-release builds (form
 `{"type": "claude", …, "sessionId": "<id>"}` tab becomes
 `{"type": "agent", …, "agent": "claude", "sessionId": "<id>"}`, and `"sessionsnap": 1` becomes `2`.
 When the latest version can't be read, `save` compares with the newest one that can, says so, and
-writes a new version. Saves of one snapshot take turns (a `.save.lock` file in its folder, broken
-after 30 seconds if a save crashed), so saves at the same moment never lose a version or share a
-number.
+writes a new version. Saves, edits, prunes and deletes of one snapshot take turns (a lock file in
+`~/.sessionsnap/locks`, broken after a minute if its holder crashed): a save or edit holds it from
+reading the latest version to writing the next, so saves at the same moment never lose a version or
+share a number, and an edit never undoes a version saved while it was being made (it refuses with
+exit 6 instead).
 
 ## Security
 

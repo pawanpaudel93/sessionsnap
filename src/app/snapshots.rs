@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use super::Ctx;
+use crate::adapters::store::lock::Lock;
 use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
@@ -18,9 +19,12 @@ pub enum Commit {
 }
 
 /// Saves what is open (all, or only the workspaces in `only`) — or a copy of `from` — as the next
-/// version of `name`.
+/// version of `name`. Holds the snapshot's lock from reading its latest version to writing the
+/// next, so a save or edit landing meanwhile is never undone.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
+    let lock = ctx.store.lock(name)?;
+    let latest = if ctx.store.exists(name) { ctx.store.versions(name)?.last().copied() } else { None };
     let (previous, unreadable) = if ctx.store.exists(name) { newest_readable(ctx, name)? } else { (None, None) };
     let (workspaces, source, notes) = match from {
         Some(from) => {
@@ -47,7 +51,16 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     // A broken latest version is never "unchanged": the save writes one that can be read.
     let force = unreadable.is_some();
     let notes = unreadable.into_iter().chain(notes).collect();
-    commit(ctx, name, previous.as_ref(), workspaces, source, message, notes, force)
+    let base = Base { lock: &lock, latest, previous: previous.as_ref() };
+    commit(ctx, name, base, workspaces, source, message, notes, force)
+}
+
+/// What a new version is written on: the snapshot's lock, held since its latest version was read;
+/// that latest version's number (None: no version yet); and the version it is compared with.
+pub struct Base<'a> {
+    pub lock: &'a Lock,
+    pub latest: Option<u32>,
+    pub previous: Option<&'a Version>,
 }
 
 /// The newest version of `name` that can be read, and, when the latest one can't be, a note that
@@ -75,13 +88,14 @@ fn newest_readable(ctx: &Ctx, name: &str) -> Result<(Option<Version>, Option<Str
 pub fn commit(
     ctx: &Ctx,
     name: &str,
-    previous: Option<&Version>,
+    base: Base,
     workspaces: Vec<Workspace>,
     source: Source,
     message: Option<String>,
     notes: Vec<String>,
     force: bool,
 ) -> Result<Commit> {
+    let previous = base.previous;
     let mut workspaces = workspaces;
     crate::domain::agents::normalize_tabs(&mut workspaces, &ctx.agents);
     if let Some(p) = previous
@@ -93,7 +107,7 @@ pub fn commit(
     let changes = diff::diff(previous.map(|p| p.workspaces.as_slice()).unwrap_or(&[]), &workspaces);
     let message = message
         .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
-    let v = ctx.store.save_new(name, &message, source, workspaces)?;
+    let v = ctx.store.save_locked(base.lock, name, base.latest, &message, source, workspaces)?;
     let warnings = [notes, edit::warnings(&v.workspaces, &ctx.agents)].concat();
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
 }

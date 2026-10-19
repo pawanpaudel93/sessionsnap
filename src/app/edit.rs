@@ -3,7 +3,7 @@
 use anyhow::Result;
 
 use super::Ctx;
-use super::snapshots::{Commit, commit};
+use super::snapshots::{Base, Commit, commit};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit::{self, EditCtx, Op};
 use crate::domain::model::{Source, Workspace};
@@ -23,7 +23,9 @@ pub enum Edited {
 }
 
 /// Applies `ops` to the latest version of `name` and saves the result (unless `dry_run`). With
-/// `base`, refuses unless the latest version is that one: the ops were previewed on it.
+/// `base`, refuses unless the latest version is that one: the ops were previewed on it. A save
+/// holds the snapshot's lock from reading the latest version to writing the next, so a version
+/// that lands meanwhile is waited for, then seen.
 pub fn edit(
     ctx: &Ctx,
     name: &str,
@@ -32,6 +34,7 @@ pub fn edit(
     dry_run: bool,
     base: Option<u32>,
 ) -> Result<Edited> {
+    let lock = if dry_run { None } else { Some(ctx.store.lock(name)?) };
     let previous = super::load_version(ctx, name, None)?;
     if let Some(base) = base
         && base != previous.version
@@ -84,5 +87,7 @@ pub fn edit(
         return Ok(Edited::DryRun { base_version: previous.version, workspaces, changes, warnings });
     }
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
-    Ok(Edited::Committed(commit(ctx, name, Some(&previous), workspaces, source, message, notes, false)?))
+    let lock = lock.ok_or_else(|| anyhow::anyhow!("an edit is saved under its snapshot's lock"))?;
+    let base = Base { lock: &lock, latest: Some(previous.version), previous: Some(&previous) };
+    Ok(Edited::Committed(commit(ctx, name, base, workspaces, source, message, notes, false)?))
 }

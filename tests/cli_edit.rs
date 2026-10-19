@@ -151,3 +151,29 @@ fn set_args_on(env: &common::Env, args: &[&str]) {
     let agent = state.workspaces[0].tabs[0].agent.as_mut().unwrap();
     agent.args = args.iter().map(|a| a.to_string()).collect();
 }
+
+/// A save that lands while an edit is being made is never undone by it: the edit waits for the
+/// snapshot's lock, then sees the new latest version and refuses (its preview was of v1).
+#[test]
+fn an_interleaved_save_makes_the_edit_stale() {
+    use sessionsnap::adapters::store::Store;
+    use sessionsnap::domain::model::Source;
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let root = env.dir.path().join("store");
+    let (held, wait_held) = std::sync::mpsc::channel();
+    let other = std::thread::spawn(move || {
+        let store = Store::new(root);
+        let lock = store.lock("work").unwrap();
+        held.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        store.save_locked(&lock, "work", Some(1), "from elsewhere", Source::default(), vec![]).unwrap();
+    });
+    wait_held.recv().unwrap();
+    let ops = r#"[{"op":"tab-remove","tab":"Alpha#2"}]"#;
+    let err = env.run_with_input(&["edit", "work", "--batch", "-", "--base", "1"], ops).unwrap_err();
+    other.join().unwrap();
+    assert_eq!(exit_of(&err), Exit::PlanStale, "{err}");
+    let history = env.run(&["history", "work"]).unwrap();
+    assert_eq!(history.json["versions"].as_array().unwrap().len(), 2);
+}
