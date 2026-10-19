@@ -120,8 +120,9 @@ fn refuse(stream: TcpStream) {
     let _ = http::write_response(&mut &stream, &http::Response::text(503, "busy; try again"));
     let _ = stream.shutdown(std::net::Shutdown::Write);
     // Closing on request bytes still unread would reset the connection, and the client could lose
-    // the answer: read until it closes, briefly, on a thread of its own.
-    std::thread::spawn(move || {
+    // the answer: read until it closes, briefly, on a thread of its own. When the system has no
+    // thread to spare, the stream is just closed (`spawn` would panic the accept thread).
+    let _ = std::thread::Builder::new().name("sessionsnap-drain".into()).spawn(move || {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
         let until = Instant::now() + Duration::from_secs(1);
         let mut buf = [0u8; 4096];
