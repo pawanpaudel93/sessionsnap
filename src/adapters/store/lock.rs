@@ -37,10 +37,13 @@ impl Lock {
                     return Ok(Lock { path: path.to_path_buf(), id: FileId::of(&meta) });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let Ok(meta) = fs::metadata(path) else { continue };
-                    let old = meta.modified().is_ok_and(|m| m.elapsed().unwrap_or_default() > stale);
-                    if old {
-                        break_stale(path, FileId::of(&meta));
+                    // The path itself (a symlink is a lock too, never followed).
+                    let meta = fs::symlink_metadata(path);
+                    let old = meta
+                        .as_ref()
+                        .is_ok_and(|m| m.modified().is_ok_and(|m| m.elapsed().unwrap_or_default() > stale));
+                    if let (true, Ok(meta)) = (old, &meta) {
+                        break_stale(path, FileId::of(meta));
                     } else if started.elapsed() > wait {
                         return Err(failure(
                             Exit::Error,
@@ -63,7 +66,7 @@ impl Lock {
 impl Drop for Lock {
     fn drop(&mut self) {
         // A lock broken as stale may have a new holder by now: leave theirs alone.
-        if fs::metadata(&self.path).is_ok_and(|m| FileId::of(&m) == self.id) {
+        if fs::symlink_metadata(&self.path).is_ok_and(|m| FileId::of(&m) == self.id) {
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -78,7 +81,7 @@ fn break_stale(path: &Path, seen: FileId) {
     if fs::rename(path, &aside).is_err() {
         return;
     }
-    if fs::metadata(&aside).is_ok_and(|m| FileId::of(&m) != seen) {
+    if fs::symlink_metadata(&aside).is_ok_and(|m| FileId::of(&m) != seen) {
         // Not the stale one: give it back (unless yet another holder took the path).
         let _ = fs::hard_link(&aside, path);
     }
@@ -126,6 +129,27 @@ mod tests {
         drop(lock);
         assert!(!path.exists());
         Lock::acquire(&path).unwrap();
+    }
+
+    /// A lock path that is a symlink to nothing is a foreign lock: waited for, then given up on
+    /// (never a busy loop); once stale, it is broken.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_is_waited_for_then_broken() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("x.lock");
+        std::os::unix::fs::symlink(d.path().join("nowhere"), &path).unwrap();
+        let (done, wait) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || done.send(Lock::acquire_within(&p, STALE, Duration::from_millis(50)).is_err()));
+        assert_eq!(wait.recv_timeout(Duration::from_secs(5)), Ok(true), "gave up within the wait");
+        // Stale (as a link, by its own age): broken and taken.
+        let (done, wait) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || {
+            done.send(Lock::acquire_within(&p, Duration::ZERO, Duration::from_millis(50)).map(drop).is_ok())
+        });
+        assert_eq!(wait.recv_timeout(Duration::from_secs(5)), Ok(true));
     }
 
     /// A crashed holder's lock is broken; a live one is not, however long the wait.
