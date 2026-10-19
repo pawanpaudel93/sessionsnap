@@ -103,8 +103,10 @@ fn serve_until(
                 },
             }
             if stop.load(Ordering::SeqCst) || last.lock().unwrap_or_else(|e| e.into_inner()).elapsed() >= idle {
-                // Workers finish what they have, then stop; the scope waits for them.
+                // Workers finish what they have, then stop; the scope waits for them. New clients
+                // are refused at once meanwhile.
                 drop(queue);
+                drop(listener);
                 return Ok(());
             }
         }
@@ -621,6 +623,48 @@ mod tests {
             assert!(out.starts_with("HTTP/1.1 429 "), "{out}");
         }
         assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+    }
+
+    #[test]
+    fn once_stopping_it_refuses_new_clients_while_a_command_finishes() {
+        let (listener, port) = listen();
+        let server = Server::new(port, "k".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let dir = tempfile::tempdir().unwrap();
+        let (started, started_rx) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (started, released) = (Mutex::new(started), Mutex::new(released));
+        let make = |cli: &Cli, input: Option<String>| -> Result<Ctx> {
+            started.lock().unwrap().send(()).unwrap();
+            let _ = released.lock().unwrap().recv_timeout(Duration::from_secs(20));
+            Ok(crate::testing::ctx(dir.path(), FakeTerminal::default(), cli.json, cli.yes, input))
+        };
+        let stop = AtomicBool::new(false);
+        let refused = std::thread::scope(|scope| {
+            let stop_ref = &stop;
+            let client = scope.spawn(move || {
+                let _stop = StopOnDrop(stop_ref);
+                let long = post_run(port, "k", r#"["list"]"#);
+                started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                stop_ref.store(true, Ordering::SeqCst);
+                // The accept loop checks the flag every 50 ms.
+                let until = Instant::now() + Duration::from_secs(2);
+                let mut refused = false;
+                while Instant::now() < until {
+                    if TcpStream::connect(("127.0.0.1", port)).is_err() {
+                        refused = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                release.send(()).unwrap();
+                let out = answer(long);
+                assert!(out.starts_with("HTTP/1.1 200 OK"), "the running command finishes: {out}");
+                refused
+            });
+            serve_until(listener, &server, &make, Duration::from_secs(60), false, &stop).unwrap();
+            client.join().unwrap()
+        });
+        assert!(refused, "a client still connected after the server stopped accepting");
     }
 
     /// The one test that waits for the idle timeout.
