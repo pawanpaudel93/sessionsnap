@@ -120,3 +120,14 @@ fn an_unreadable_latest_version_does_not_block_saves() {
     assert!(warnings.contains("v2 is unreadable") && warnings.contains("compared with v1"), "{warnings}");
     assert_eq!(env.run(&["save", "work"]).unwrap().exit, sessionsnap::error::Exit::NothingToDo);
 }
+
+/// An empty folder left behind is not a snapshot: saving to its name starts a new one.
+#[test]
+fn an_empty_leftover_folder_is_a_new_snapshot() {
+    let env = setup();
+    std::fs::create_dir_all(env.dir.path().join("store/snapshots/fresh")).unwrap();
+    assert!(sessionsnap::app::snapshots::is_new(&env.ctx(true, false, None), "fresh"));
+    let o = env.run(&["save", "fresh"]).unwrap();
+    assert_eq!((o.json["version"].as_u64(), o.json["message"].as_str()), (Some(1), Some("initial save")), "{}", o.json);
+    assert!(!sessionsnap::app::snapshots::is_new(&env.ctx(true, false, None), "fresh"));
+}

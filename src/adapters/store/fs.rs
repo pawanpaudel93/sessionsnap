@@ -128,6 +128,11 @@ impl Store {
         validate_name(name).is_ok() && self.snapshot_dir(name).is_dir()
     }
 
+    /// True when snapshot `name` has a version: an empty folder left behind is not a snapshot.
+    pub fn has_versions(&self, name: &str) -> bool {
+        self.versions(name).is_ok_and(|v| !v.is_empty())
+    }
+
     /// Version numbers of `name`, ascending.
     pub fn versions(&self, name: &str) -> Result<Vec<u32>> {
         validate_name(name)?;
@@ -713,6 +718,18 @@ mod tests {
         let err = s.save_locked(&lock, "work", Some(1), "c", Source::default(), vec![]).unwrap_err();
         assert_eq!(exit_of(&err), Exit::PlanStale);
         assert_eq!(s.versions("work").unwrap(), vec![1, 2]);
+    }
+
+    /// An empty folder left behind (by hand, or a crash) is not a snapshot: it has no versions.
+    #[test]
+    fn an_empty_folder_has_no_versions() {
+        let (_d, s) = store();
+        fs::create_dir_all(s.snapshots_dir().join("--y")).unwrap();
+        assert!(s.exists("--y"));
+        assert!(!s.has_versions("--y"));
+        assert!(!s.has_versions("missing"));
+        s.save_new("work", "a", Source::default(), vec![]).unwrap();
+        assert!(s.has_versions("WORK"));
     }
 
     /// A holder whose lock was broken (it took too long) and taken by another save publishes

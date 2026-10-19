@@ -24,8 +24,9 @@ pub enum Commit {
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
     let lock = ctx.store.lock(name)?;
-    let latest = if ctx.store.exists(name) { ctx.store.versions(name)?.last().copied() } else { None };
-    let (previous, unreadable) = if ctx.store.exists(name) { newest_readable(ctx, name)? } else { (None, None) };
+    let new = is_new(ctx, name);
+    let latest = if new { None } else { ctx.store.versions(name)?.last().copied() };
+    let (previous, unreadable) = if new { (None, None) } else { newest_readable(ctx, name)? };
     let mut live = None;
     let (workspaces, source, notes) = match from {
         Some(from) => {
@@ -72,6 +73,12 @@ pub struct Base<'a> {
     pub lock: &'a Lock,
     pub latest: Option<u32>,
     pub previous: Option<&'a Version>,
+}
+
+/// True when saving to `name` starts a new snapshot: it has no version yet (an empty folder left
+/// behind doesn't count).
+pub fn is_new(ctx: &Ctx, name: &str) -> bool {
+    !ctx.store.has_versions(name)
 }
 
 /// The newest version of `name` that can be read, and, when the latest one can't be, a note that
