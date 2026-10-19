@@ -229,14 +229,14 @@ impl<'a> Server<'a> {
         if !body.args.first().is_some_and(|c| ALLOWED.contains(&c.as_str())) {
             return Response::text(403, "command not allowed from the UI");
         }
-        // The page puts a `--` before positionals that start with `-` (a snapshot named `-x` or,
-        // from before such names were refused, `--x`). clap never takes `--` as an option's value,
-        // so all after it are positionals, `--yes` too. Only one `--`, and no `--json` after it:
-        // `run_json` adds `--json` unless it sees one. The `--batch` check below covers all args.
+        // The page puts a `--` before positionals that start with `-` (a snapshot named `-x`).
+        // clap never takes `--` as an option's value, so all after it are positionals; refusing
+        // anything long-option shaped there keeps the checks below (and `run_json`'s `--json`)
+        // meaning what they say.
         if let Some(at) = body.args.iter().position(|a| a == "--")
-            && body.args[at + 1..].iter().any(|a| a == "--" || a == "--json")
+            && body.args[at + 1..].iter().any(|a| a.starts_with("--"))
         {
-            return Response::text(403, "only one --, and no --json after it");
+            return Response::text(403, "only values may follow --");
         }
         // Batches come in `input`, never from a file the server would read.
         let file_batch = body.args.windows(2).any(|w| w[0] == "--batch" && w[1] != "-")
@@ -396,7 +396,7 @@ mod tests {
                 r#"{"args":[]}"#,
                 r#"{"args":["edit","work","--batch","/etc/hosts"]}"#,
                 r#"{"args":["edit","work","--batch=/etc/hosts"]}"#,
-                r#"{"args":["restore","work","--","--","x"]}"#,
+                r#"{"args":["restore","work","--","--pick"]}"#,
             ] {
                 assert_eq!(s.handle(&api(bad), mk).status, 403, "{bad}");
             }
@@ -429,6 +429,8 @@ mod tests {
             let s = server();
             s.handle(&api(r#"{"args":["save","x"]}"#), mk);
             for bad in [
+                r#"{"args":["delete","--","x","--yes"]}"#,
+                r#"{"args":["delete","x","--","--yes"]}"#,
                 r#"{"args":["edit","--","x","--batch","/etc/hosts"]}"#,
                 r#"{"args":["edit","--","x","--batch=/etc/hosts"]}"#,
                 r#"{"args":["list","--","--json"]}"#,
@@ -436,37 +438,9 @@ mod tests {
             ] {
                 assert_eq!(s.handle(&api(bad), mk).status, 403, "{bad}");
             }
-            // After `--`, `--yes` is a value, never the flag.
-            for harmless in [
-                r#"{"args":["delete","--","x","--yes"]}"#,
-                r#"{"args":["delete","x","--","--yes"]}"#,
-                r#"{"args":["delete","--","--yes"]}"#,
-            ] {
-                let r = body(&s.handle(&api(harmless), mk));
-                assert_ne!(r["exit"], 0, "{harmless}: {r}");
-            }
             let r = body(&s.handle(&api(r#"{"args":["show","x"]}"#), mk));
             assert_eq!(r["exit"], 0, "still there: {r}");
         });
-    }
-
-    /// Snapshots named `--x` before such names were refused still work from the page.
-    #[test]
-    fn an_existing_double_dash_snapshot_works_from_the_page() {
-        let dir = tempfile::tempdir().unwrap();
-        let make = |cli: &Cli, input: Option<String>| -> anyhow::Result<Ctx> {
-            Ok(crate::testing::ctx(dir.path(), FakeTerminal::default(), cli.json, cli.yes, input))
-        };
-        let s = server();
-        assert_eq!(body(&s.handle(&api(r#"{"args":["save","work"]}"#), &make))["exit"], 0);
-        let snapshots = dir.path().join("store").join("snapshots");
-        std::fs::rename(snapshots.join("work"), snapshots.join("--x")).unwrap();
-        for args in [r#"["show","--","--x"]"#, r#"["history","--","--x"]"#, r#"["delete","--yes","--","--x"]"#] {
-            let r = s.handle(&api(&format!(r#"{{"args":{args}}}"#)), &make);
-            assert_eq!(r.status, 200, "{args}: {}", String::from_utf8_lossy(&r.body));
-            assert_eq!(body(&r)["exit"], 0, "{args}: {}", body(&r));
-        }
-        assert_eq!(body(&s.handle(&api(r#"{"args":["list"]}"#), &make))["result"]["snapshots"], json!([]));
     }
 
     #[test]
