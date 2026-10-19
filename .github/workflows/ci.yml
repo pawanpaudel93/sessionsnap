@@ -30,3 +30,15 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then brew install shellcheck; else sudo apt-get update && sudo apt-get install -y shellcheck; fi
       # The same checks as a local run and a release.
       - run: scripts/check.sh
+
+  msrv:
+    # Cargo.toml's rust-version: build and test on exactly that release.
+    name: rust 1.96.0 (minimum)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
