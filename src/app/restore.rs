@@ -273,6 +273,7 @@ mod launch_tests {
             session_id: id.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
             left_out: None,
+            left_out_unsure: false,
         };
         let cmd = |t: &Tab| launch_tab(&agents, t).command;
         assert_eq!(

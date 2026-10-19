@@ -47,6 +47,8 @@ pub struct Launch {
     pub left_out: Option<String>,
     /// False when nothing is known of the session's flags (it resumes with the agent's defaults).
     pub known: bool,
+    /// `left_out` only says the flags are undecided (see `Known::unsure`).
+    pub unsure: bool,
 }
 
 /// What a plan or an edit says about a session whose flags are unknown.
@@ -170,18 +172,19 @@ impl KnownSessions {
         for (k, dated) in seen {
             let tabs: Vec<&Tab> = dated.iter().map(|(_, t)| *t).collect();
             let Some(Tab::Agent { agent, session_id, args, .. }) = tabs.first().copied() else { continue };
+            // A tab left out for good is a lost launch; one only undecided (copied from this
+            // record by an edit) is a launch nothing is known of, which matches no other.
             let left_out = tabs.iter().find_map(|t| match t {
-                Tab::Agent { left_out: Some(why), .. } => Some(why.clone()),
+                Tab::Agent { left_out: Some(why), left_out_unsure: false, .. } => Some(why.clone()),
                 _ => None,
             });
             let launch = |agent: &str, args: &[String]| canonical(&agents.check_flags(agent, args).kept);
-            let flags: Vec<Vec<Vec<String>>> = tabs
-                .iter()
-                .filter_map(|t| match t {
-                    Tab::Agent { agent, args, .. } => Some(launch(agent, args)),
-                    Tab::Terminal { .. } => None,
-                })
-                .collect();
+            let launch_of = |t: &Tab| match t {
+                Tab::Agent { left_out: Some(_), left_out_unsure: true, .. } => Some(None),
+                Tab::Agent { agent, args, .. } => Some(Some(launch(agent, args))),
+                Tab::Terminal { .. } => None,
+            };
+            let flags: Vec<Option<Vec<Vec<String>>>> = tabs.iter().filter_map(|t| launch_of(t)).collect();
             match self.sessions.get_mut(&k) {
                 // Left out already, for good or until a live reading: never turned back into flags.
                 Some(entry) if entry.left_out.is_some() => {
@@ -191,13 +194,13 @@ impl KnownSessions {
                     }
                 }
                 Some(entry) => {
-                    let ours = launch(&entry.agent, &entry.args);
+                    let ours = Some(launch(&entry.agent, &entry.args));
                     let from = to_second(entry.observed_at.as_deref().unwrap_or("")).max(to_second(since));
-                    let newer = dated.iter().filter(|(at, _)| *at >= from.as_str()).filter_map(|(_, t)| match t {
-                        Tab::Agent { agent, args, .. } => Some(launch(agent, args)),
-                        Tab::Terminal { .. } => None,
-                    });
-                    let differs = newer.into_iter().any(|f| f != ours);
+                    let differs = dated
+                        .iter()
+                        .filter(|(at, _)| *at >= from.as_str())
+                        .filter_map(|(_, t)| launch_of(t))
+                        .any(|f| f != ours);
                     if let Some(why) = left_out {
                         *entry = Known {
                             args: vec![],
@@ -217,7 +220,7 @@ impl KnownSessions {
                     }
                 }
                 None => {
-                    let differ = left_out.is_none() && flags.iter().any(|f| *f != flags[0]);
+                    let differ = left_out.is_none() && flags.iter().any(|f| f.is_none() || *f != flags[0]);
                     let left_out = left_out.or_else(|| differ.then(|| DIFFER.to_string()));
                     self.sessions.insert(
                         k,
@@ -242,11 +245,22 @@ impl KnownSessions {
         let mut warnings = vec![];
         for w in workspaces {
             for t in &mut w.tabs {
-                let Tab::Agent { title, agent, session_id, args, left_out, .. } = t else { continue };
+                let Tab::Agent { title, agent, session_id, args, left_out, left_out_unsure, .. } = t else { continue };
                 let Some(k) = self.get(&SessionRef::new(agent.as_str(), session_id.as_str())) else { continue };
+                let lost = left_out.is_some() && !*left_out_unsure;
                 if let Some(why) = &k.left_out {
-                    args.clear();
-                    *left_out = Some(why.clone());
+                    // A tab's own lost launch stays lost.
+                    if !lost {
+                        args.clear();
+                        *left_out = Some(why.clone());
+                        *left_out_unsure = k.unsure;
+                    }
+                } else if *left_out_unsure && k.observed_at.is_some() {
+                    // Undecided when the tab was written; the record has decided since.
+                    warnings.push(format!("{} › {title}: {NEWEST_FLAGS}", w.name));
+                    *args = k.args.clone();
+                    *left_out = None;
+                    *left_out_unsure = false;
                 } else if left_out.is_none() && k.observed_at.is_some() && *args != k.args {
                     warnings.push(format!("{} › {title}: {NEWEST_FLAGS}", w.name));
                     *args = k.args.clone();
@@ -261,8 +275,12 @@ impl KnownSessions {
     /// out); else with the flags it was last saved with; else, unknown, with none.
     pub fn launch(&self, s: &SessionRef, open: Option<&OpenState>, agents: &dyn AgentCatalog) -> Launch {
         let saved = self.get(s);
-        if let Some(why) = saved.and_then(|k| k.left_out.clone()) {
-            return Launch { args: vec![], left_out: Some(why), known: true };
+        // Left out for good; undecided only until the session is seen live (just below).
+        let undecided = saved.filter(|k| k.unsure).and_then(|k| k.left_out.clone());
+        if let Some(k) = saved.filter(|k| !k.unsure)
+            && let Some(why) = &k.left_out
+        {
+            return Launch { args: vec![], left_out: Some(why.clone()), known: true, unsure: false };
         }
         let live = open.into_iter().flat_map(|o| &o.workspaces).flat_map(|w| &w.tabs).find_map(|t| {
             t.agent.as_ref().filter(|a| a.kind == s.agent && a.session_id.eq_ignore_ascii_case(&s.session_id))
@@ -270,16 +288,19 @@ impl KnownSessions {
         if let Some(a) = live {
             if a.args.iter().any(|x| has_control(x)) {
                 let why = "its flags have control characters; resume it by hand".to_string();
-                return Launch { args: vec![], left_out: Some(why), known: true };
+                return Launch { args: vec![], left_out: Some(why), known: true, unsure: false };
             }
             let check = agents.check_flags(&a.kind, &a.args);
             return match check.lost_reason(&agents.display_name(&a.kind)) {
-                Some(why) => Launch { args: vec![], left_out: Some(why), known: true },
-                None => Launch { args: check.kept, left_out: None, known: true },
+                Some(why) => Launch { args: vec![], left_out: Some(why), known: true, unsure: false },
+                None => Launch { args: check.kept, left_out: None, known: true, unsure: false },
             };
         }
         match saved {
-            Some(k) if k.observed_at.is_some() => Launch { args: k.args.clone(), left_out: None, known: true },
+            _ if undecided.is_some() => Launch { args: vec![], left_out: undecided, known: true, unsure: true },
+            Some(k) if k.observed_at.is_some() => {
+                Launch { args: k.args.clone(), left_out: None, known: true, unsure: false }
+            }
             _ => Launch::default(),
         }
     }
@@ -432,6 +453,30 @@ mod tests {
             known.fill_from_dated([(at, none.as_slice())], "2026-01-03T00:00:00.500Z", &agents);
             assert!(state(&known), "{at}");
         }
+    }
+
+    /// A tab's undecided state is read as undecided; a left-out tab without a kind (written
+    /// before kinds existed) is a lost launch.
+    #[test]
+    fn tabs_keep_their_kind_of_left_out() {
+        let agents = agents(vec![]);
+        let s = SessionRef::new("claude", A);
+        let mut undecided = with(&[], Some(DIFFER));
+        if let Tab::Agent { left_out_unsure, .. } = &mut undecided {
+            *left_out_unsure = true;
+        }
+        let mut known = KnownSessions::default();
+        known.fill_from([ws(vec![undecided.clone()]).as_slice()], &agents);
+        assert!(known.get(&s).unwrap().unsure);
+        let mut known = KnownSessions::default();
+        known.fill_from([ws(vec![with(&[], Some(DIFFER))]).as_slice()], &agents);
+        assert!(!known.get(&s).unwrap().unsure);
+        // A decided entry overrides an undecided tab when restoring, with a warning.
+        let mut known = KnownSessions::default();
+        known.record_live(&ws(vec![with(&["--permission-mode", "plan"], None)]), T1);
+        let mut saved = ws(vec![undecided]);
+        assert_eq!(known.apply_to(&mut saved).len(), 1);
+        assert_eq!(saved[0].tabs[0], with(&["--permission-mode", "plan"], None));
     }
 
     #[test]

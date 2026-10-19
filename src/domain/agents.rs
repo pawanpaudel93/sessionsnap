@@ -20,7 +20,7 @@ const LEFT_OUT: &str = "its flags were left out; resume it by hand";
 /// plain shell. Every read of a snapshot goes through this (`app::load_normalized`).
 pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
     for tab in workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        let Tab::Agent { agent, session_id, args, left_out, .. } = tab else { continue };
+        let Tab::Agent { agent, session_id, args, left_out, left_out_unsure, .. } = tab else { continue };
         *session_id = canonical_id(session_id);
         if let Some(kind) = agents.kind_of(agent)
             && kind != agent
@@ -36,13 +36,17 @@ pub fn normalize_tabs(workspaces: &mut [Workspace], agents: &dyn AgentCatalog) {
         // A reason written by hand is shown and typed nowhere, but keep it to one short line of
         // names: control characters, a long text or a token-like word get a plain reason instead,
         // and so does a blank one, which would say nothing.
+        let mut odd = false;
         let stored = left_out.clone().map(|r| {
-            let odd = r.trim().is_empty()
+            odd = r.trim().is_empty()
                 || has_control(&r)
                 || r.chars().count() > 200
                 || crate::domain::flags::holds_credential(&r);
             if odd { LEFT_OUT.to_string() } else { r }
         });
+        // Only a reason kept as written, on flags that are fine, can be undecided: anything else
+        // is left out for good (failing closed).
+        *left_out_unsure = *left_out_unsure && stored.is_some() && !odd && why.is_none();
         match stored.or(why) {
             Some(reason) => {
                 args.clear();

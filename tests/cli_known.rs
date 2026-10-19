@@ -118,6 +118,7 @@ fn copied_workspaces_get_known_flags() {
         session_id: A.into(),
         args: vec![],
         left_out: None,
+        left_out_unsure: false,
     };
     let ws = Workspace {
         name: "Old".into(),
@@ -536,4 +537,61 @@ fn a_launch_with_control_characters_is_recorded_as_left_out() {
     close_a(&env);
     let p = env.run(&["recent", "--plan"]).unwrap().json;
     assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+}
+
+/// Puts session A back in Alpha's first tab, running with `args`.
+fn reopen_a(env: &Env, args: &[&str]) {
+    let mut state = env.fake.state.borrow_mut();
+    let mut ws = sessionsnap::testing::open_ws("WA", "Alpha", "/w/a", &[("t1", "/w/a", Some(A))]);
+    ws.tabs[0].agent.as_mut().unwrap().args = args.iter().map(|a| a.to_string()).collect();
+    state.workspaces[0].tabs.insert(0, ws.tabs.remove(0));
+}
+
+/// Probe 10: an edit that copies an undecided state into a tab keeps it undecided, so a later
+/// rebuild doesn't take that tab for a lost launch, and a live save still decides the session.
+#[test]
+fn an_undecided_tab_never_becomes_a_lost_launch() {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    close_a(&env);
+    std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
+    env.run(&["restore", "old", "--plan"]).unwrap();
+    assert_eq!(recorded_a(&env)["unsure"], true);
+    env.run(&["tab", "old", "Beta", "--add-session", A]).unwrap();
+    let added = tab_of_last(&env, "old");
+    assert_eq!(added["leftOutUnsure"], true, "{added}");
+    // Readings come later than the versions (times are to the second).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    reopen_a(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    assert_eq!(args(&recorded_a(&env)), PLAN);
+    close_a(&env);
+    std::fs::remove_file(env.dir.path().join("store/sessions.json")).unwrap();
+    env.run(&["restore", "old", "--plan"]).unwrap();
+    assert_eq!(recorded_a(&env)["unsure"], true, "{}", recorded_a(&env));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    reopen_a(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    assert_eq!(args(&recorded_a(&env)), PLAN, "{}", recorded_a(&env));
+    // The decided record also overrides the tab's undecided state when `old` is restored.
+    close_a(&env);
+    env.fake.state.borrow_mut().workspaces.clear();
+    let p = env.run(&["restore", "old", "--plan"]).unwrap().json;
+    let tabs: Vec<Value> = p["plan"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|a| a["tabs"].as_array().unwrap().clone())
+        .filter(|t| t["sessionId"] == A)
+        .collect();
+    assert!(!tabs.is_empty() && tabs.iter().all(|t| args(t) == PLAN), "{p}");
+}
+
+/// The last tab of the last workspace of `name`'s latest version.
+fn tab_of_last(env: &Env, name: &str) -> Value {
+    let shown = env.run(&["show", name]).unwrap().json;
+    let ws = shown["version"]["workspaces"].as_array().unwrap().clone();
+    ws.last().unwrap()["tabs"].as_array().unwrap().last().unwrap().clone()
 }
