@@ -22,7 +22,8 @@ pub const ALLOWED: &[&str] = &[
 ];
 
 /// Builds the context for one API call; the `Option<String>` is the call's `input`.
-pub type MakeCtx<'a> = dyn Fn(&Cli, Option<String>) -> Result<Ctx> + 'a;
+/// `Sync`: the server's workers share it.
+pub type MakeCtx<'a> = dyn Fn(&Cli, Option<String>) -> Result<Ctx> + Send + Sync + 'a;
 
 /// Shows a URL in cmux; returns where ("reused", "dock" or "tab") and whether its key got there.
 pub type ShowFn<'a> = dyn Fn(&str) -> Result<Shown> + Send + Sync + 'a;
@@ -34,6 +35,8 @@ pub struct Server<'a> {
     /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes the cmux backend's.
     pub show: Box<ShowFn<'a>>,
     shows: ShowGate,
+    /// Commands run one at a time, as before the server had workers: the store has no lock.
+    runs: Mutex<()>,
 }
 
 /// Shortest time between the starts of two shows.
@@ -76,7 +79,7 @@ struct RunBody {
 
 impl<'a> Server<'a> {
     pub fn new(port: u16, token: String, show: Box<ShowFn<'a>>) -> Self {
-        Server { port, token, show, shows: ShowGate::default() }
+        Server { port, token, show, shows: ShowGate::default(), runs: Mutex::new(()) }
     }
 
     pub fn handle(&self, req: &Request, make_ctx: &MakeCtx<'_>) -> Response {
@@ -192,6 +195,7 @@ impl<'a> Server<'a> {
             return Response::text(403, "send batches as input");
         }
         let input = body.input.unwrap_or_default();
+        let _one = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         let (exit, result) = run_json(&body.args, |cli| make_ctx(cli, Some(input)));
         Response::json(200, &json!({"exit": exit.code(), "code": exit.name(), "result": result}))
     }
@@ -371,6 +375,26 @@ mod tests {
             let r = body(&s.handle(&api(r#"{"args":["show","x"]}"#), mk));
             assert_eq!(r["exit"], 0, "still there: {r}");
         });
+    }
+
+    #[test]
+    fn commands_run_one_at_a_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let make = |cli: &Cli, input: Option<String>| -> anyhow::Result<Ctx> {
+            most.fetch_max(now.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(100));
+            now.fetch_sub(1, Ordering::SeqCst);
+            Ok(crate::testing::ctx(dir.path(), FakeTerminal::default(), cli.json, cli.yes, input))
+        };
+        let s = server();
+        std::thread::scope(|scope| {
+            for _ in 0..3 {
+                scope.spawn(|| assert_eq!(s.handle(&api(r#"{"args":["list"]}"#), &make).status, 200));
+            }
+        });
+        assert_eq!(most.into_inner(), 1);
     }
 
     fn show_req(headers: &[(&str, &str)]) -> Request {

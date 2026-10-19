@@ -8,6 +8,8 @@ pub mod http;
 
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -22,9 +24,12 @@ use api::{MakeCtx, Server};
 /// Fixed so the Dock tab's URL stays valid across restarts.
 pub const DEFAULT_PORT: u16 = 47317;
 
-/// Answers requests one at a time until none has come for `idle`. Showing the page runs on its own
-/// thread: cmux waits for the page to load, and loading it needs this loop. With `show_at_start`,
-/// shows the page once the loop is up.
+/// Connections handled at once; one more gets 503. A show takes one while cmux loads the page,
+/// which needs another.
+pub const WORKERS: usize = 4;
+
+/// Answers requests on `WORKERS` threads until no request has come for `idle`. With
+/// `show_at_start`, shows the page once the workers are up.
 pub fn serve(
     listener: TcpListener,
     server: &Server<'_>,
@@ -33,35 +38,65 @@ pub fn serve(
     show_at_start: bool,
 ) -> Result<()> {
     listener.set_nonblocking(true)?;
+    // Connections queued or being handled; the accept loop keeps it at most `WORKERS`, so a
+    // queued connection always has a free worker.
+    let busy = AtomicUsize::new(0);
+    // When the last request came. Only a request read in full counts, so connections that send
+    // nothing don't keep the server running.
+    let last = Mutex::new(Instant::now());
+    let (queue, inbox) = mpsc::channel::<TcpStream>();
+    let inbox = Mutex::new(inbox);
     std::thread::scope(|scope| {
+        for _ in 0..WORKERS {
+            scope.spawn(|| {
+                loop {
+                    // The lock is held only while waiting; it ends when `queue` is dropped.
+                    let next = inbox.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok(stream) = next else { return };
+                    handle_connection(stream, server, make_ctx, &last);
+                    busy.fetch_sub(1, Ordering::SeqCst);
+                }
+            });
+        }
         if show_at_start {
             scope.spawn(|| report_shown(&server.show_page()));
         }
-        let mut last = Instant::now();
         loop {
             match listener.accept() {
+                Ok((stream, _)) if busy.load(Ordering::SeqCst) >= WORKERS => refuse(stream),
                 Ok((stream, _)) => {
-                    handle_connection(scope, stream, server, make_ctx);
-                    last = Instant::now();
-                }
-                Err(e) => {
-                    match e.kind() {
-                        io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
-                        // A client gave up before we accepted it, or a signal arrived: try again.
-                        io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted => {}
-                        // E.g. out of file descriptors: often passes, so keep serving.
-                        _ => {
-                            eprintln!("sessionsnap: accept failed: {e}");
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                    }
-                    if last.elapsed() >= idle {
-                        return Ok(());
+                    busy.fetch_add(1, Ordering::SeqCst);
+                    if queue.send(stream).is_err() {
+                        busy.fetch_sub(1, Ordering::SeqCst);
                     }
                 }
+                Err(e) => match e.kind() {
+                    io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                    // A client gave up before we accepted it, or a signal arrived: try again.
+                    io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted => {}
+                    // E.g. out of file descriptors: often passes, so keep serving.
+                    _ => {
+                        eprintln!("sessionsnap: accept failed: {e}");
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                },
+            }
+            if last.lock().unwrap_or_else(|e| e.into_inner()).elapsed() >= idle {
+                // Workers finish what they have, then stop; the scope waits for them.
+                drop(queue);
+                return Ok(());
             }
         }
     })
+}
+
+/// Answers 503 on the accept thread without waiting for the client.
+fn refuse(stream: TcpStream) {
+    let _ = stream.set_nonblocking(true);
+    // Read what already arrived: closing on unread bytes would reset the connection before the
+    // client reads the answer.
+    let _ = (&stream).read(&mut [0u8; http::MAX_HEAD]);
+    let _ = http::write_response(&mut &stream, &http::Response::text(503, "busy; try again"));
 }
 
 /// Prints where `sessionsnap ui` showed its page, or why it could not.
@@ -103,29 +138,25 @@ impl Read for Deadline<'_> {
     }
 }
 
-fn handle_connection<'scope>(
-    scope: &'scope std::thread::Scope<'scope, '_>,
-    stream: TcpStream,
-    server: &'scope Server<'_>,
-    make_ctx: &MakeCtx<'_>,
-) {
+fn handle_connection(stream: TcpStream, server: &Server<'_>, make_ctx: &MakeCtx<'_>, last: &Mutex<Instant>) {
+    let seen = || *last.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
     // Accepted sockets inherit non-blocking mode on macOS.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let reader = Deadline { stream: &stream, until: Instant::now() + REQUEST_DEADLINE };
-    let response = match http::read_request(&mut BufReader::new(reader)) {
-        Ok(req) if req.method == "POST" && req.path == "/api/show" => {
-            scope.spawn(move || {
-                let response = server.handle(&req, &|_, _| anyhow::bail!("/api/show runs no command"));
-                let _ = http::write_response(&mut &stream, &response);
-            });
-            return;
+    match http::read_request(&mut BufReader::new(reader)) {
+        Ok(req) => {
+            seen();
+            let response = server.handle(&req, make_ctx);
+            let _ = http::write_response(&mut &stream, &response);
+            // A command can run for long; idle counts from when it ended.
+            seen();
         }
-        Ok(req) => server.handle(&req, make_ctx),
-        Err(resp) => resp,
-    };
-    let _ = http::write_response(&mut &stream, &response);
+        Err(response) => {
+            let _ = http::write_response(&mut &stream, &response);
+        }
+    }
 }
 
 /// Sends one raw request to the server on `port` and returns the whole response.
@@ -317,6 +348,98 @@ mod tests {
         silent.join().unwrap();
         assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    fn hello(port: u16) -> String {
+        let req = format!("GET /api/hello HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+        request(port, &req, Duration::from_secs(10)).unwrap()
+    }
+
+    /// Sends a byte every 200 ms until `stop` or the server drops it.
+    fn drip(port: u16, stop: std::sync::mpsc::Receiver<()>) -> std::thread::JoinHandle<()> {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        std::thread::spawn(move || {
+            while stop.recv_timeout(Duration::from_millis(200)).is_err() {
+                if s.write_all(b"G").is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn a_slow_client_does_not_hold_up_a_second_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let (stop, stopped) = std::sync::mpsc::channel();
+        let slow = drip(port, stopped);
+        let client = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let started = Instant::now();
+            let out = (hello(port), started.elapsed());
+            let _ = stop.send(());
+            out
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(600), false).unwrap();
+        let (out, took) = client.join().unwrap();
+        slow.join().unwrap();
+        assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
+        assert!(took < Duration::from_secs(1), "waited {took:?} behind the slow client");
+    }
+
+    #[test]
+    fn connections_beyond_the_workers_are_refused() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let client = std::thread::spawn(move || {
+            let stops: Vec<_> = (0..WORKERS)
+                .map(|_| {
+                    let (stop, stopped) = std::sync::mpsc::channel();
+                    (stop, drip(port, stopped))
+                })
+                .collect();
+            std::thread::sleep(Duration::from_millis(300));
+            let full = hello(port);
+            for (stop, slow) in stops {
+                let _ = stop.send(());
+                slow.join().unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            (full, hello(port))
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        serve(listener, &server, &make, Duration::from_millis(1500), false).unwrap();
+        let (full, after) = client.join().unwrap();
+        assert!(full.starts_with("HTTP/1.1 503 "), "{full}");
+        assert!(after.starts_with("HTTP/1.1 200 OK"), "{after}");
+    }
+
+    #[test]
+    fn connections_without_a_request_do_not_keep_it_running() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = Server::new(port, "t".into(), Box::new(|_| Ok(Shown::whole("dock"))));
+        let pinger = std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(4) {
+                if TcpStream::connect(("127.0.0.1", port)).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let make = test_ctx_maker(dir.path());
+        let started = Instant::now();
+        serve(listener, &server, &make, Duration::from_millis(500), false).unwrap();
+        let took = started.elapsed();
+        pinger.join().unwrap();
+        assert!(took < Duration::from_secs(2), "{took:?}");
     }
 
     #[test]
