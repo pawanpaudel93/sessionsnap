@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::agents::{Resume, find_session, flags_problem, problem, resume_status};
 use crate::domain::capture;
-use crate::domain::model::{SessionRef, Tab, Workspace, find_by_name, has_control, parse_ref};
+use crate::domain::model::{SessionRef, Tab, Version, Workspace, find_by_name, has_control, parse_ref};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, Snapshots};
 
@@ -135,8 +135,41 @@ pub struct EditCtx<'a> {
     pub agents: &'a dyn AgentCatalog,
     /// Needed only by `ws-from`.
     pub snapshots: &'a dyn Snapshots,
-    /// Needed only by `ws-add-live`.
+    /// Needed by `ws-add-live`; session edits also check it (see `left_out_reason`).
     pub open: Option<&'a OpenState>,
+    /// Sessions left out (with why) in any version of the snapshot being edited
+    /// (`left_out_sessions`).
+    pub left_out: HashMap<SessionRef, String>,
+}
+
+/// Every session some tab of `versions` holds as left out, with its reason: a session that lost
+/// its flags once must not come back without them through an edit.
+pub fn left_out_sessions<'a>(versions: impl IntoIterator<Item = &'a Version>) -> HashMap<SessionRef, String> {
+    let mut out = HashMap::new();
+    for t in versions.into_iter().flat_map(|v| &v.workspaces).flat_map(|w| &w.tabs) {
+        if let (Some(s), Tab::Agent { left_out: Some(why), .. }) = (t.session(), t) {
+            out.entry(s).or_insert_with(|| why.clone());
+        }
+    }
+    out
+}
+
+/// Why session `s`, put in a tab by an edit, has to stay left out (fail closed): it is left out in
+/// some version of this snapshot, or it is open in the terminal with flags that lose it.
+fn left_out_reason(ctx: &EditCtx, s: &SessionRef) -> Option<String> {
+    if let Some(why) = ctx.left_out.get(s) {
+        return Some(why.clone());
+    }
+    let open = ctx.open?;
+    open.workspaces.iter().flat_map(|w| &w.tabs).filter_map(|t| t.agent.as_ref()).find_map(|a| {
+        if SessionRef::new(&a.kind, &a.session_id) != *s {
+            return None;
+        }
+        if a.args.iter().any(|x| has_control(x)) {
+            return Some("its flags have control characters; resume it by hand".to_string());
+        }
+        ctx.agents.check_flags(&a.kind, &a.args).lost_reason(&ctx.agents.display_name(&a.kind))
+    })
 }
 
 /// Applies `ops` in order; returns notes on what was left out (of workspaces added from cmux).
@@ -228,13 +261,14 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
                 ),
                 None => (ws[i].cwd.clone(), format!("{} session", ctx.agents.display_name(&kind))),
             };
+            let left_out = left_out_reason(ctx, &SessionRef::new(&kind, session_id));
             ws[i].tabs.push(Tab::Agent {
                 title: title.clone().unwrap_or(label),
                 cwd,
                 agent: kind,
                 session_id: session_id.clone(),
                 args: vec![],
-                left_out: None,
+                left_out,
             });
         }
         Op::TabAddTerminal { ws: w, cwd, command, title } => {
@@ -266,6 +300,12 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
                     (args.clone(), left_out.clone())
                 }
                 _ => (vec![], None),
+            };
+            // A session left out before stays left out, whatever flags the tab had.
+            let (args, left_out) = match left_out.or_else(|| left_out_reason(ctx, &SessionRef::new(&kind, session_id)))
+            {
+                Some(why) => (vec![], Some(why)),
+                None => (args, None),
             };
             let (title, cwd) = (old.title().to_string(), old.cwd().to_string());
             ws[w].tabs[t] = Tab::Agent { title, cwd, agent: kind, session_id: session_id.clone(), args, left_out };
@@ -336,7 +376,6 @@ pub fn warnings(workspaces: &[Workspace], agents: &dyn AgentCatalog) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::Version;
     use crate::error::exit_of;
     use crate::testing::{A, B, C, FakeHistory, FakeSnapshots, TestAgents, agent_tab, agents, open_ws};
 
@@ -384,7 +423,7 @@ mod tests {
     #[test]
     fn rename_move_reorder_remove() {
         let (snapshots, history, mut ws) = setup();
-        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None };
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None, left_out: Default::default() };
         apply_ops(
             &mut ws,
             &[
@@ -408,7 +447,7 @@ mod tests {
     #[test]
     fn rename_refuses_duplicates_and_empty() {
         let (snapshots, history, mut ws) = setup();
-        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None };
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None, left_out: Default::default() };
         let err = apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "beta".into() }], &ctx).unwrap_err();
         assert_eq!(exit_of(&err), Exit::Refused);
         let err = apply_ops(&mut ws, &[Op::WsRename { ws: "Alpha".into(), to: "  ".into() }], &ctx).unwrap_err();
@@ -420,7 +459,7 @@ mod tests {
     #[test]
     fn session_edits_are_checked() {
         let (snapshots, history, mut ws) = setup();
-        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None };
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None, left_out: Default::default() };
         // Resume by ID works from any folder (Claude Code ≥ 2.1.223), so a new folder is fine.
         apply_ops(&mut ws, &[Op::TabSetCwd { tab: "Alpha#1".into(), cwd: "/w/b".into() }], &ctx).unwrap();
         assert_eq!(ws[0].tabs[0].cwd(), "/w/b");
@@ -447,7 +486,7 @@ mod tests {
             FakeHistory::codex(&[(B, "/w/b", "codex two"), (C, "/w/c", "codex three")]),
         ]);
         let (snapshots, _, mut ws) = setup();
-        let ctx = EditCtx { agents: &both, snapshots: &snapshots, open: None };
+        let ctx = EditCtx { agents: &both, snapshots: &snapshots, open: None, left_out: Default::default() };
         let add = |id: &str, agent: Option<&str>| Op::TabAddSession {
             ws: "Beta".into(),
             session_id: id.into(),
@@ -489,7 +528,7 @@ mod tests {
     #[test]
     fn edits_refuse_control_characters() {
         let (snapshots, history, mut ws) = setup();
-        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None };
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: None, left_out: Default::default() };
         let ops = [
             Op::TabAddSession {
                 ws: "Beta".into(),
@@ -558,7 +597,7 @@ mod tests {
             state_version: Some(1),
             workspaces: vec![open_ws("WD", "Delta", "/w/d", &[("zsh", "/w/d", None)])],
         };
-        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: Some(&open) };
+        let ctx = EditCtx { agents: &history, snapshots: &snapshots, open: Some(&open), left_out: Default::default() };
         apply_ops(
             &mut ws,
             &[Op::WsFrom { from: "other@1".into(), ws: "gamma".into() }, Op::WsAddLive { ws: "Delta".into() }],

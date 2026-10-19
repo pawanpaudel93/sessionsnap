@@ -389,7 +389,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               (<code translate="no">leftOut</code>): restore opens a plain shell in a new workspace,
               or skips the tab in an open one, with the reason (a hand-edited reason that is blank,
               too long, or holds a control character or a credential reads “its flags were left out;
-              resume it by hand”). Versions written before the
+              resume it by hand”). An edit that puts a session in a tab keeps it left out when any
+              version of the snapshot has it left out, or cmux has it open with flags that lose it.
+              Versions written before the
               allow-list may still hold their flags on disk until you prune or delete them; they are
               never shown or replayed. The tokens that pick another session are taken out first: the agent's
               own resume words and resume flags with the old ID, its continue flag, Claude Code's
