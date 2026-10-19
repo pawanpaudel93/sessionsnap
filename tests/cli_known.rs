@@ -409,13 +409,13 @@ fn recorded_a(env: &Env) -> Value {
     record["sessions"][format!("claude:{A}")].clone()
 }
 
-/// Completing the record after a failed update only adds what it lacks: an entry that was right
-/// stays as it was.
+/// Completing the record after a failed update: a saved version that contradicts an entry (here
+/// the older `old` versions against `work`'s plan mode) leaves the session out, failing closed,
+/// instead of picking one.
 #[test]
-fn completing_the_record_never_changes_an_entry() {
+fn completing_the_record_leaves_out_a_contradicted_entry() {
     let env = partial_save_history();
-    let before = recorded_a(&env);
-    assert_eq!(args(&before), PLAN);
+    assert_eq!(args(&recorded_a(&env)), PLAN);
     let store = env.dir.path().join("store");
     let blocker = store.join(format!("sessions.tmp-{}", std::process::id()));
     std::fs::create_dir(&blocker).unwrap();
@@ -424,10 +424,25 @@ fn completing_the_record_never_changes_an_entry() {
     std::fs::remove_dir(&blocker).unwrap();
     assert!(store.join("sessions.dirty").is_file());
     let p = env.run(&["recent", "--plan"]).unwrap().json;
-    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
-    assert_eq!(recorded_a(&env), before);
-    let p = env.run(&["restore", "work", "--plan"]).unwrap().json;
-    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    assert!(!env.run(&["restore", "work", "--plan"]).unwrap().json["plan"]["actions"].to_string().contains(A));
+}
+
+/// The update that failed held the newer, stricter launch: the looser entry doesn't win.
+#[test]
+fn a_missed_stricter_launch_is_not_lost() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    assert!(args(&recorded_a(&env)).is_empty());
+    run_a_with(&env, &PLAN);
+    let store = env.dir.path().join("store");
+    let blocker = store.join(format!("sessions.tmp-{}", std::process::id()));
+    std::fs::create_dir(&blocker).unwrap();
+    env.run(&["save", "work"]).unwrap();
+    std::fs::remove_dir(&blocker).unwrap();
+    close_a(&env);
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
 }
 
 /// Rebuilt from the snapshots, a session saved with different restrictions in different versions
