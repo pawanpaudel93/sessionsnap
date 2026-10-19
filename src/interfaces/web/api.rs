@@ -35,7 +35,8 @@ pub struct Server<'a> {
     /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes the cmux backend's.
     pub show: Box<ShowFn<'a>>,
     shows: ShowGate,
-    /// Commands run one at a time, as before the server had workers: the store has no lock.
+    /// Commands run one at a time, as before the server had workers. The store's per-snapshot lock
+    /// guards its files; this also keeps one page's commands in order and bounds the work.
     runs: Mutex<()>,
 }
 
