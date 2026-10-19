@@ -44,7 +44,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
             read_at = super::known::now();
             let open = super::read_open(ctx.terminal.as_ref())?;
             let (captured, notes) = capture(&open, &ctx.agents, only)?;
-            live = Some(captured.clone());
+            live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
                 Some(p) => carry_over(&p.workspaces, captured),

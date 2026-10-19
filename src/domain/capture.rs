@@ -85,6 +85,45 @@ fn to_tab(t: &OpenTab, agents: &dyn AgentCatalog, note: &mut dyn FnMut(&str)) ->
     }
 }
 
+/// Why a session whose live launch flags hold a control character is left out.
+pub const CONTROL_FLAGS: &str = "its launch flags have control characters; resume it by hand";
+
+/// The launches `captured` (from `capture` of `open`) were read from, for the record of sessions:
+/// its tabs, plus each agent session whose flags hold a control character, which `capture` saved
+/// as a plain terminal, as left out (when its kind and ID are clean), so the record never falls
+/// back to older flags for it.
+pub fn seen(open: &OpenState, agents: &dyn AgentCatalog, captured: &[Workspace]) -> Vec<Workspace> {
+    let ids: Vec<&str> = captured.iter().filter_map(|w| w.cmux_workspace_id.as_deref()).collect();
+    let tabs: Vec<Tab> = open
+        .workspaces
+        .iter()
+        .filter(|w| ids.contains(&w.id.as_str()))
+        .flat_map(|w| &w.tabs)
+        .filter_map(|t| t.agent.as_ref())
+        .filter(|a| !has_control(&a.kind) && !has_control(&a.session_id) && a.args.iter().any(|x| has_control(x)))
+        .map(|a| Tab::Agent {
+            title: String::new(),
+            cwd: String::new(),
+            agent: agents.kind_of(&a.kind).map_or_else(|| a.kind.clone(), str::to_string),
+            session_id: a.session_id.clone(),
+            args: vec![],
+            left_out: Some(CONTROL_FLAGS.to_string()),
+        })
+        .collect();
+    let mut out = captured.to_vec();
+    if !tabs.is_empty() {
+        out.push(Workspace {
+            name: String::new(),
+            color: None,
+            cwd: String::new(),
+            git_branch: None,
+            cmux_workspace_id: None,
+            tabs,
+        });
+    }
+    out
+}
+
 /// Replaces same-named workspaces of `base` with `captured` (keeping their color); appends new ones.
 pub fn merge(base: &[Workspace], captured: Vec<Workspace>) -> Vec<Workspace> {
     let mut out = base.to_vec();

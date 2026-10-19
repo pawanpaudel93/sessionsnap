@@ -517,3 +517,18 @@ fn a_lost_launch_stays_lost_after_a_live_save() {
     env.run(&["save", "later"]).unwrap();
     assert_eq!(recorded_a(&env)["leftOut"], LOST);
 }
+
+/// A live launch whose flags hold a control character is recorded as left out, so the record's
+/// older flags are never used for it.
+#[test]
+fn a_launch_with_control_characters_is_recorded_as_left_out() {
+    let env = setup();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    run_a_with(&env, &["--model", "a\u{1b}b"]);
+    env.run(&["save", "later"]).unwrap();
+    assert_eq!(recorded_a(&env)["leftOut"], "its launch flags have control characters; resume it by hand");
+    close_a(&env);
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+}
