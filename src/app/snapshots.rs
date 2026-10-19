@@ -57,11 +57,18 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     let force = unreadable.is_some();
     let notes = unreadable.into_iter().chain(notes).collect();
     let base = Base { lock: &lock, latest, previous: previous.as_ref() };
-    let mut result = commit(ctx, name, base, workspaces, source, message, notes, force)?;
     // Only what was just read from cmux is a launch seen now: never the workspaces kept from the
-    // previous version, nor a copy.
-    if let Some(captured) = live
-        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &captured, &read_at)
+    // previous version, nor a copy. The record is marked before the version is written.
+    let mark = if live.is_some() { Some(super::known::begin(&ctx.store, &read_at)?) } else { None };
+    let mut result = match commit(ctx, name, base, workspaces, source, message, notes, force) {
+        Ok(result) => result,
+        Err(e) => {
+            mark.iter().for_each(|m| ctx.store.end_pending(m));
+            return Err(e);
+        }
+    };
+    if let (Some(captured), Some(mark)) = (live, &mark)
+        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &captured, &read_at, mark)
         && let Commit::Saved { warnings, .. } = &mut result
     {
         warnings.push(format!("could not update the record of sessions: {e:#}"));

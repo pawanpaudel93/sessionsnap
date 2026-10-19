@@ -206,11 +206,11 @@ fn a_failed_update_keeps_the_record() {
     let o = env.run(&["save", "other"]).unwrap();
     assert!(o.json["warnings"].to_string().contains("could not update the record"), "{}", o.json);
     assert!(store.join("sessions.json").is_file());
-    assert!(store.join("sessions.dirty").is_file());
+    assert_eq!(failed_markers(&env), 1);
     std::fs::remove_dir(&blocker).unwrap();
     env.run(&["tab", "other", "Beta", "--add-session", A]).unwrap();
     assert_eq!(tab_of(&env, "other", A)["leftOut"], LOST);
-    assert!(!store.join("sessions.dirty").exists());
+    assert_eq!(failed_markers(&env), 0);
 }
 
 /// The plan's tab for session A's tab ("login fix"), as JSON.
@@ -426,7 +426,7 @@ fn an_unrelated_failed_update_leaves_a_correct_entry_alone() {
     env.fake.state.borrow_mut().workspaces[1].cwd = "/w/b3".into();
     env.run(&["save", "third"]).unwrap();
     std::fs::remove_dir(&blocker).unwrap();
-    assert!(store.join("sessions.dirty").is_file());
+    assert_eq!(failed_markers(&env), 1);
     let p = env.run(&["recent", "--plan"]).unwrap().json;
     assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
     assert_eq!(recorded_a(&env), before);
@@ -595,4 +595,41 @@ fn tab_of_last(env: &Env, name: &str) -> Value {
     let shown = env.run(&["show", name]).unwrap().json;
     let ws = shown["version"]["workspaces"].as_array().unwrap().clone();
     ws.last().unwrap()["tabs"].as_array().unwrap().last().unwrap().clone()
+}
+
+/// How many failed updates of the record are waiting to be completed.
+fn failed_markers(env: &Env) -> usize {
+    std::fs::read_dir(env.dir.path().join("store/sessions.pending"))
+        .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".failed")).count())
+        .unwrap_or(0)
+}
+
+/// Probe 11: when the record can't even be marked as about to change, the save is refused rather
+/// than risk a launch the record would never learn of.
+#[test]
+fn a_save_that_cannot_mark_the_record_is_refused() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    run_a_with(&env, &PLAN);
+    // The marks' folder can't be made: a file is in its place.
+    let pending = env.dir.path().join("store/sessions.pending");
+    std::fs::remove_dir_all(&pending).unwrap();
+    std::fs::write(&pending, "").unwrap();
+    let err = env.run(&["save", "work"]).unwrap_err();
+    assert!(format!("{err:#}").contains("record of sessions"), "{err:#}");
+    let history = env.run(&["history", "work"]).unwrap().json;
+    assert_eq!(history["versions"].as_array().unwrap().len(), 1);
+}
+
+/// A failed update's time in the future (a clock that went back, or a hand edit) can't be
+/// trusted: every version newer than an entry is compared with it.
+#[test]
+fn a_marker_from_the_future_compares_every_version() {
+    let env = partial_save_history();
+    let pending = env.dir.path().join("store/sessions.pending");
+    std::fs::create_dir_all(&pending).unwrap();
+    std::fs::write(pending.join("2999-01-01T00:00:00.000Z.1-1.failed"), "").unwrap();
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    assert_eq!(failed_markers(&env), 0);
 }

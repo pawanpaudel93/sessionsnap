@@ -81,12 +81,21 @@ pub fn edit(
     let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
     let lock = lock.ok_or_else(|| anyhow::anyhow!("an edit is saved under its snapshot's lock"))?;
     let base = Base { lock: &lock, latest: Some(previous.version), previous: Some(&previous) };
-    let mut result = commit(ctx, name, base, workspaces, source, message, notes, false)?;
-    // What the edit read from cmux is a live launch seen now: every open session's, checked.
-    if let Some(open) = &open
-        && let Ok((captured, _)) = capture(open, &ctx.agents, &[])
-        && let seen = crate::domain::capture::seen(open, &ctx.agents, &captured)
-        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &seen, &read_at)
+    // What the edit read from cmux is a live launch seen now: every open session's, checked. The
+    // record is marked before the version is written.
+    let seen = open.as_ref().and_then(|open| {
+        capture(open, &ctx.agents, &[]).ok().map(|(c, _)| crate::domain::capture::seen(open, &ctx.agents, &c))
+    });
+    let mark = if seen.is_some() { Some(super::known::begin(&ctx.store, &read_at)?) } else { None };
+    let mut result = match commit(ctx, name, base, workspaces, source, message, notes, false) {
+        Ok(result) => result,
+        Err(e) => {
+            mark.iter().for_each(|m| ctx.store.end_pending(m));
+            return Err(e);
+        }
+    };
+    if let (Some(seen), Some(mark)) = (seen, &mark)
+        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &seen, &read_at, mark)
         && let Commit::Saved { warnings, .. } = &mut result
     {
         warnings.push(format!("could not update the record of sessions: {e:#}"));
