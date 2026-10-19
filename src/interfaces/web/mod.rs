@@ -563,6 +563,66 @@ mod tests {
         assert!(out.1.starts_with("HTTP/1.1 503 "), "{}", out.1);
     }
 
+    fn post_show(port: u16) -> TcpStream {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        write!(
+            s,
+            "POST /api/show HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+             Content-Length: 2\r\n\r\n{{}}"
+        )
+        .unwrap();
+        s
+    }
+
+    /// The answer, or the error when none came in time.
+    fn try_answer(mut s: TcpStream) -> String {
+        let mut out = String::new();
+        s.read_to_string(&mut out).map_or_else(|e| format!("no answer: {e}"), |_| out)
+    }
+
+    #[test]
+    fn hung_shows_never_take_more_than_two_workers() {
+        let (listener, port) = listen();
+        let (started, started_rx) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (started, released) = (Mutex::new(started), Mutex::new(released));
+        // Like a cmux that never answers, until the test ends.
+        let server = Server::new(
+            port,
+            "k".into(),
+            Box::new(|_| {
+                started.lock().unwrap().send(()).unwrap();
+                let _ = released.lock().unwrap().recv_timeout(Duration::from_secs(30));
+                Ok(Shown::whole("dock"))
+            }),
+        )
+        .with_show_limits(Duration::ZERO, Duration::from_millis(100));
+        let dir = tempfile::tempdir().unwrap();
+        let (refused, page) = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, move || {
+            let mut hung = vec![];
+            let mut refused = vec![];
+            for _ in 0..4 {
+                let s = post_show(port);
+                if started_rx.recv_timeout(Duration::from_millis(500)).is_ok() {
+                    hung.push(s);
+                } else {
+                    refused.push(try_answer(s));
+                }
+                // Let the running ones count as hung.
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            let page = get(port, "/");
+            drop(release);
+            assert_eq!(hung.len(), 2, "{refused:?}");
+            (refused, page)
+        });
+        for out in &refused {
+            assert!(out.starts_with("HTTP/1.1 429 "), "{out}");
+        }
+        assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+    }
+
     /// The one test that waits for the idle timeout.
     #[test]
     fn stops_once_idle_and_only_use_of_the_ui_counts() {

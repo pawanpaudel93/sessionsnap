@@ -46,6 +46,9 @@ pub const RUN_WAIT: Duration = Duration::from_secs(3);
 pub const SHOW_GAP: Duration = Duration::from_secs(1);
 /// A show still running after this counts as hung (cmux may never answer); a new one may start.
 pub const SHOW_HANG: Duration = Duration::from_secs(30);
+/// Most shows running at once, hung ones included: each holds a worker, and the page and its
+/// commands need the rest.
+pub const MAX_SHOWS: usize = 2;
 
 /// One show at a time, at most one per `gap`: each runs cmux, and `/api/show` needs no key.
 struct ShowGate {
@@ -56,8 +59,8 @@ struct ShowGate {
 
 #[derive(Default)]
 struct GateState {
-    /// The running show's turn number and start.
-    running: Option<(u64, Instant)>,
+    /// The running shows' turn numbers and starts; all but the newest have hung.
+    running: Vec<(u64, Instant)>,
     last_start: Option<Instant>,
     turns: u64,
 }
@@ -69,16 +72,17 @@ impl Default for ShowGate {
 }
 
 impl ShowGate {
-    /// `None` while a show runs (and has not hung) or when one started under `gap` ago.
+    /// `None` while a show runs that has not hung, while `MAX_SHOWS` run, or when one started
+    /// under `gap` ago.
     fn enter(&self) -> Option<ShowTurn<'_>> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let busy = state.running.is_some_and(|(_, since)| since.elapsed() < self.hang);
-        if busy || state.last_start.is_some_and(|t| t.elapsed() < self.gap) {
+        let busy = state.running.iter().any(|(_, since)| since.elapsed() < self.hang);
+        if busy || state.running.len() >= MAX_SHOWS || state.last_start.is_some_and(|t| t.elapsed() < self.gap) {
             return None;
         }
         state.turns += 1;
         let turn = state.turns;
-        state.running = Some((turn, Instant::now()));
+        state.running.push((turn, Instant::now()));
         state.last_start = Some(Instant::now());
         Some(ShowTurn(self, turn))
     }
@@ -90,9 +94,7 @@ struct ShowTurn<'a>(&'a ShowGate, u64);
 impl Drop for ShowTurn<'_> {
     fn drop(&mut self) {
         let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.running.is_some_and(|(turn, _)| turn == self.1) {
-            state.running = None;
-        }
+        state.running.retain(|(turn, _)| *turn != self.1);
     }
 }
 
@@ -185,7 +187,8 @@ impl<'a> Server<'a> {
     }
 
     /// Shows the keyed link in cmux: `200 {"shown": …, "keyed": …}`, `502` with the reason, or
-    /// `429` while another show runs (for up to `SHOW_HANG`) or one started under `SHOW_GAP` ago. When cmux showed the
+    /// `429` while another show runs (for up to `SHOW_HANG`, and never more than `MAX_SHOWS`) or one
+    /// started under `SHOW_GAP` ago. When cmux showed the
     /// page but could not be handed its key, the keyed link is printed to this server's own
     /// terminal instead, for the user to open.
     pub fn show_page(&self) -> Response {
