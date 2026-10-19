@@ -90,7 +90,9 @@ pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
 }
 
 /// The workspaces a plan restores (a snapshot selection, or recovered sessions in one workspace),
-/// which of their tabs were named with `--tab`, and warnings about them.
+/// which of their tabs were named with `--tab`, and warnings about them. Every agent tab is run
+/// through the record of sessions seen, so a plan (and apply, which rebuilds it) never resumes a
+/// session with fewer restrictions than it last ran with.
 pub fn source_workspaces(
     source: &PlanSource,
     store: &Store,
@@ -99,8 +101,10 @@ pub fn source_workspaces(
     match source {
         PlanSource::Snapshot { snapshot, version, selection } => {
             let ws = super::load_normalized(store, agents, snapshot, Some(*version))?.workspaces;
-            let (ws, picked) = select_picked(ws, selection)?;
-            Ok((ws, picked, vec![]))
+            let (mut ws, picked) = select_picked(ws, selection)?;
+            // Each session as last seen: left out if it ever was, else with its newest flags.
+            let warnings = super::known::load(store, agents)?.apply_to(&mut ws);
+            Ok((ws, picked, warnings))
         }
         PlanSource::Sessions { sessions } => {
             let known = super::known::load(store, agents)?;

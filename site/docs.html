@@ -389,13 +389,13 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               (<code translate="no">leftOut</code>): restore opens a plain shell in a new workspace,
               or skips the tab in an open one, with the reason (a hand-edited reason that is blank,
               too long, or holds a control character or a credential reads “its flags were left out;
-              resume it by hand”). A record of every saved session, in any snapshot
-              (<code translate="no">sessions.json</code>, never pruned) gives a session put in a tab
-              or a plan without flags of its own (<code translate="no">--add-session</code>,
-              <code translate="no">--session</code>, <code translate="no">ws --from</code>,
-              <code translate="no">recent</code>) the flags it was last saved with; once left out, it
-              stays left out, and when it is open in cmux its live flags win. A session saved nowhere
-              resumes with no flags and a warning.
+              resume it by hand”). A record of every session seen
+              (<code translate="no">sessions.json</code>, never pruned) keeps the flags of its newest
+              launch as <code translate="no">save</code> read them from cmux; only those live saves
+              write it, never edits, copies or restores. Every restore, <code translate="no">recent</code>
+              and edit that puts a session in a tab reads it: once left out, a session stays left
+              out, and otherwise it resumes with its newest flags (with a warning when the tab's own
+              differ). A session seen nowhere resumes with no flags and a warning.
               Versions written before the
               allow-list may still hold their flags on disk until you prune or delete them; they are
               never shown or replayed. The tokens that pick another session are taken out first: the agent's

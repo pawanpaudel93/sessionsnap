@@ -233,13 +233,21 @@ in an open one, with the reason. A `leftOut` edited by hand that is blank, longe
 characters, or holds a control character or a credential is shown as "its flags were left out;
 resume it by hand".
 
-sessionsnap keeps a record of every session it has saved, in any snapshot (`sessions.json`): the
-flags it was last saved with, or why it was left out. Pruning or deleting versions never removes
-from it, and it is built from every snapshot the first time it is needed. A session put in a tab or
-a plan without flags of its own (`--add-session`, `--session`, `ws --from`, `recent`) takes them
-from there: once left out, it stays left out; when it is open in cmux, the flags it runs with now
-win (and a launch that loses it leaves it out); a session saved nowhere resumes with no flags and a
-warning ("launch flags unknown; resuming with defaults").
+sessionsnap keeps a record of every session it has seen (`sessions.json`): the flags of its newest
+launch, as `save` read them from cmux, or why it was left out. Only `save` writes it, and only with
+what it reads from cmux at that moment; edits, copies (`save --from`, `ws --from`) and restores
+never do, so an older copy of a session can't replace what was seen last. Once left out, a session
+stays left out. Pruning or deleting versions never removes from it, and it is built from every
+snapshot the first time it is needed.
+
+Everything that resumes a session reads it when the plan is made (`restore` of any snapshot or
+version, `recent`, and `apply`, which rebuilds the plan): a session the record has left out is left
+out (a plain shell with the reason, or skipped in an open workspace), and one it has flags for
+resumes with those, with a warning ("using the session's newest known flags") when the tab's own
+differ. A session put in a tab by an edit (`--add-session`, `--session`, `ws --from`) takes its
+flags from there too, or, when it is open in cmux, the flags it runs with now (a launch that loses
+it leaves it out); a session seen nowhere resumes with no flags and a warning ("launch flags
+unknown; resuming with defaults").
 
 The tokens that pick another session are taken out before the list applies: the agent's own resume
 words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and

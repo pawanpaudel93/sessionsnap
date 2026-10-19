@@ -26,6 +26,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     let lock = ctx.store.lock(name)?;
     let latest = if ctx.store.exists(name) { ctx.store.versions(name)?.last().copied() } else { None };
     let (previous, unreadable) = if ctx.store.exists(name) { newest_readable(ctx, name)? } else { (None, None) };
+    let mut live = None;
     let (workspaces, source, notes) = match from {
         Some(from) => {
             let (src_name, version) = parse_ref(from)?;
@@ -40,6 +41,7 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
         None => {
             let open = super::read_open(ctx.terminal.as_ref())?;
             let (captured, notes) = capture(&open, &ctx.agents, only)?;
+            live = Some(captured.clone());
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
                 Some(p) => carry_over(&p.workspaces, captured),
@@ -52,7 +54,16 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
     let force = unreadable.is_some();
     let notes = unreadable.into_iter().chain(notes).collect();
     let base = Base { lock: &lock, latest, previous: previous.as_ref() };
-    commit(ctx, name, base, workspaces, source, message, notes, force)
+    let mut result = commit(ctx, name, base, workspaces, source, message, notes, force)?;
+    // Only what was just read from cmux is a launch seen now: never the workspaces kept from the
+    // previous version, nor a copy.
+    if let Some(captured) = live
+        && let Err(e) = super::known::record_live(&ctx.store, &ctx.agents, &captured)
+        && let Commit::Saved { warnings, .. } = &mut result
+    {
+        warnings.push(format!("could not update the record of sessions: {e:#}"));
+    }
+    Ok(result)
 }
 
 /// What a new version is written on: the snapshot's lock, held since its latest version was read;
@@ -108,11 +119,6 @@ pub fn commit(
     let message = message
         .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
     let v = ctx.store.save_locked(base.lock, name, base.latest, &message, source, workspaces)?;
-    let mut notes = notes;
-    // The version is written either way; a record that can't be updated is built again later.
-    if let Err(e) = super::known::record(&ctx.store, &ctx.agents, &v.workspaces) {
-        notes.push(format!("could not update the record of saved sessions: {e:#}"));
-    }
     let warnings = [notes, edit::warnings(&v.workspaces, &ctx.agents)].concat();
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
 }

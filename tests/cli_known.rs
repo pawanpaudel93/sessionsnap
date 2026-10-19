@@ -173,3 +173,121 @@ fn the_record_is_seeded_from_existing_snapshots() {
         assert_eq!(std::fs::metadata(&index).unwrap().permissions().mode() & 0o777, 0o600);
     }
 }
+
+/// The plan's tab for session A's tab ("login fix"), as JSON.
+fn planned_a(plan: &Value) -> Value {
+    let tabs: Vec<Value> = plan["plan"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|a| a["tabs"].as_array().unwrap().clone())
+        .collect();
+    tabs.into_iter().find(|t| t["title"] == "login fix").unwrap_or_else(|| panic!("A is not in the plan: {plan}"))
+}
+
+/// `old` saved with A running without flags, then `work` with A in plan mode, then A closed.
+fn plan_mode_after_old() -> Env {
+    let env = setup();
+    env.run(&["save", "old"]).unwrap();
+    run_a_with(&env, &PLAN);
+    env.run(&["save", "work"]).unwrap();
+    close_a(&env);
+    env
+}
+
+const NEWEST: &str = "using the session's newest known flags";
+
+/// True when the plan resumes session A, and else whether it gives A's left-out reason.
+fn resumes_a(plan: &Value) -> (bool, bool) {
+    let actions = plan["plan"]["actions"].to_string();
+    let reason = [&plan["plan"]["warnings"], &plan["plan"]["skipped"]].iter().any(|v| v.to_string().contains(LOST));
+    (actions.contains(A), reason)
+}
+
+/// Editing a snapshot that still holds an older launch of A never replaces what the record knows.
+#[test]
+fn editing_an_older_snapshot_keeps_the_newest_flags() {
+    let env = plan_mode_after_old();
+    env.run(&["ws", "old", "Beta", "--rename", "Gamma"]).unwrap();
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    env.run(&["tab", "work", "Alpha#1", "--remove"]).unwrap();
+    env.run(&["tab", "work", "Alpha", "--add-session", A]).unwrap();
+    assert_eq!(args(&tab_of(&env, "work", A)), PLAN);
+}
+
+#[test]
+fn a_copy_keeps_the_newest_flags() {
+    let env = plan_mode_after_old();
+    env.run(&["save", "copy", "--from", "old"]).unwrap();
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+}
+
+/// A save of some workspaces keeps the others as they were; those were not seen now.
+#[test]
+fn a_partial_save_keeps_the_newest_flags() {
+    let env = plan_mode_after_old();
+    // Beta changed, so the save writes a version: Beta as captured, Alpha (old A) kept.
+    env.fake.state.borrow_mut().workspaces[1].cwd = "/w/b2".into();
+    let o = env.run(&["save", "old", "-w", "Beta"]).unwrap();
+    assert_eq!(o.json["version"], 2, "{}", o.json);
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+}
+
+/// Restoring another snapshot that holds an older launch resumes A with its newest flags.
+#[test]
+fn restoring_another_snapshot_uses_the_newest_flags() {
+    let env = plan_mode_after_old();
+    let p = env.run(&["restore", "old", "--plan"]).unwrap().json;
+    assert_eq!(args(&planned_a(&p)), PLAN, "{p}");
+    assert!(p["plan"]["warnings"].to_string().contains(NEWEST), "{p}");
+    // Apply rebuilds the same plan.
+    env.run(&["apply", p["plan"]["planId"].as_str().unwrap()]).unwrap();
+    let launched = env.fake.launched.borrow();
+    let a = launched.iter().find_map(|t| t.command.clone().filter(|c| c.contains(A))).unwrap();
+    assert!(a.contains("--permission-mode") && a.contains("plan"), "{a}");
+}
+
+/// An old version of the same snapshot, from before A was left out, doesn't resume it.
+#[test]
+fn restoring_an_old_version_keeps_a_left_out_session_out() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    run_a_with(&env, &["--frobnicate"]);
+    env.run(&["save", "work"]).unwrap();
+    close_a(&env);
+    let p = env.run(&["restore", "work@1", "--plan"]).unwrap().json;
+    assert_eq!(resumes_a(&p), (false, true), "{p}");
+    // In a new workspace it opens as a plain shell.
+    env.fake.state.borrow_mut().workspaces.clear();
+    let p = env.run(&["restore", "work@1", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    assert_eq!(resumes_a(&p), (false, true), "{p}");
+}
+
+/// Left out once, left out for good: a later launch without the flag, saved, doesn't clear it,
+/// and neither does any edit, copy or restore.
+#[test]
+fn left_out_sticks_everywhere() {
+    let env = setup();
+    run_a_with(&env, &["--frobnicate"]);
+    env.run(&["save", "work"]).unwrap();
+    run_a_with(&env, &[]);
+    env.run(&["save", "later"]).unwrap();
+    env.run(&["save", "copy", "--from", "later"]).unwrap();
+    env.run(&["ws", "later", "Beta", "--rename", "Gamma"]).unwrap();
+    close_a(&env);
+    for snapshot in ["later", "copy", "work"] {
+        let p = env.run(&["restore", snapshot, "--plan"]).unwrap().json;
+        assert_eq!(resumes_a(&p), (false, true), "{snapshot}: {p}");
+    }
+    let p = env.run(&["recent", "--plan"]).unwrap().json;
+    assert_eq!(planned_a(&p)["type"], "terminal", "{p}");
+    env.run(&["tab", "later", "Alpha", "--add-session", A]).unwrap();
+    let shown = env.run(&["show", "later"]).unwrap().json;
+    let tabs = shown["version"]["workspaces"][0]["tabs"].as_array().unwrap().clone();
+    // The tab added now is left out (the one saved earlier stays as saved; restore leaves it out).
+    assert_eq!(tabs.last().unwrap()["leftOut"], LOST, "{tabs:?}");
+}
