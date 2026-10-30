@@ -6,6 +6,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::adapters::agents::claude::{SkillRemoval, uninstall_skill};
+use crate::adapters::scheduler::launchd::{LABEL_PREFIX, Launchd};
 use crate::adapters::terminal::cmux::palette::uninstall_cmux;
 
 /// Everything uninstall touches; `paths()` finds the real ones, tests pass temp dirs.
@@ -22,6 +23,8 @@ pub struct Paths {
     pub cargo_bin: Option<PathBuf>,
     /// Shell startup files the installer may have added a PATH line to.
     pub rc_files: Vec<PathBuf>,
+    /// Where scheduled saves' launchd agents are (macOS only).
+    pub launch_agents: Option<PathBuf>,
 }
 
 /// The paths of this install.
@@ -37,6 +40,9 @@ pub fn paths(data: &Path) -> Result<Paths> {
         exe_as_run,
         cargo_bin: super::update::cargo_bin_dir(),
         rc_files: rc_files(&crate::adapters::home_dir()?, env_dir("ZDOTDIR"), env_dir("XDG_CONFIG_HOME")),
+        launch_agents: (std::env::consts::OS == "macos")
+            .then(|| crate::adapters::home_dir().map(|h| h.join("Library/LaunchAgents")))
+            .transpose()?,
     })
 }
 
@@ -81,6 +87,9 @@ pub fn preview(p: &Paths, keep_data: bool) -> Vec<String> {
         format!("the \"sessionsnap: …\" palette commands in {} (backed up first)", p.cmux_config.display()),
         format!("the Claude Code skill in {}", p.skills_dir.join("sessionsnap").display()),
     ];
+    if p.launch_agents.is_some() {
+        lines.push("every automatic snapshot's schedule (its launchd agent)".into());
+    }
     if keep_data {
         lines.push(format!("(keeping your snapshots in {})", p.data.display()));
     } else {
@@ -131,6 +140,17 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
         Err(e) => failed(skill, e),
     });
 
+    if let Some(dir) = &p.launch_agents {
+        let launchd =
+            Launchd { agents_dir: dir.clone(), program: p.exe.clone(), launchctl: "launchctl".into(), env: vec![] };
+        let what = format!("scheduled saves ({}/{LABEL_PREFIX}*)", dir.display());
+        steps.push(match launchd.remove_all() {
+            Ok(labels) if labels.is_empty() => step(what, "already gone", None),
+            Ok(labels) => step(what, "removed", Some(labels.join(", "))),
+            Err(e) => failed(what, e),
+        });
+    }
+
     let data = p.data.display().to_string();
     steps.push(if keep_data {
         step(data, "kept", Some("--keep-data".into()))
@@ -154,7 +174,8 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
 
 /// Names a sessionsnap data folder holds. Anything else there means the folder is not only ours
 /// (say SESSIONSNAP_HOME points at a shared folder), so it is left alone.
-const DATA_ENTRIES: &[&str] = &["snapshots", "plans"];
+const DATA_ENTRIES: &[&str] =
+    &["snapshots", "plans", "locks", "sessions.json", "sessions.pending", "sessions.dirty", "schedules.json"];
 
 fn remove_data(data: &Path) -> Result<Step> {
     let what = data.display().to_string();
@@ -174,7 +195,7 @@ fn remove_data(data: &Path) -> Result<Step> {
     let foreign: Vec<String> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| !DATA_ENTRIES.contains(&n.as_str()) && n != ".DS_Store")
+        .filter(|n| !DATA_ENTRIES.contains(&n.as_str()) && n != ".DS_Store" && !n.starts_with("sessions.json.bad-"))
         .collect();
     if !foreign.is_empty() {
         return Ok(step(
@@ -245,6 +266,7 @@ mod tests {
             exe_as_run: dir.join(".local/bin/sessionsnap"),
             cargo_bin: Some(dir.join(".cargo/bin")),
             rc_files: rc_files(dir, None, None),
+            launch_agents: None,
         };
         std::fs::create_dir_all(p.cmux_config.parent().unwrap()).unwrap();
         std::fs::write(&p.cmux_config, r#"{"commands": [{"name": "Mine", "command": "ls"}]}"#).unwrap();
@@ -252,6 +274,13 @@ mod tests {
         crate::adapters::agents::claude::install_skill(&p.skills_dir).unwrap();
         std::fs::create_dir_all(p.data.join("snapshots/work")).unwrap();
         std::fs::write(p.data.join("snapshots/work/0001.json"), "{}").unwrap();
+        // Everything else the store keeps at its root.
+        std::fs::create_dir_all(p.data.join("locks")).unwrap();
+        std::fs::write(p.data.join("locks/schedules.lock"), "").unwrap();
+        std::fs::create_dir_all(p.data.join("sessions.pending")).unwrap();
+        for f in ["sessions.json", "sessions.json.bad-20260101T000000", "schedules.json"] {
+            std::fs::write(p.data.join(f), "{}").unwrap();
+        }
         std::fs::create_dir_all(p.exe.parent().unwrap()).unwrap();
         std::fs::write(&p.exe, "binary").unwrap();
         let line = format!("export PATH=\"{}:$PATH\"", dir.join(".local/bin").display());
