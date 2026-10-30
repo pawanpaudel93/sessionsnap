@@ -301,7 +301,11 @@ Want another agent supported? See [Add an agent](ARCHITECTURE.md#add-an-agent).
 right sidebar). From the palette: "sessionsnap: Open UI" (it runs in its own "sessionsnap UI"
 workspace).
 
-- **Snapshots:** save what is open, update a snapshot from what is open, delete one.
+- **Snapshots:** save what is open, update a snapshot from what is open, rename (the pencil or a
+  double-click on its name) or delete one. The list has Manual and Automatic sections.
+- **Automatic snapshots:** start one with a name and any interval ("Save automatically"); on its
+  page, see whether it runs and how its last run went, run it now, stop or start it, change its
+  interval, or make it a normal snapshot.
 - **Workspaces:** rename (double-click), reorder, remove, drag tabs to reorder or move them, add an
   agent session or a shell tab, add a workspace from cmux or from another snapshot. Edits are
   previewed and saved together as one version. Hover an agent tab's icon for the flags it resumes

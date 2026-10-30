@@ -21,6 +21,9 @@ body { margin: 0; background: var(--bg); color: var(--fg); -webkit-font-smoothin
 h1, h2, h3 { margin: 0; }
 h1 { font-size: 15px; font-weight: 650; }
 h2 { font-size: 13px; font-weight: 600; }
+.interval-wrap input.interval { width: 76px; }
+.schedule-panel { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.schedule-panel .meta { flex-wrap: wrap; }
 h2.section-title { margin: 8px 0 -4px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
 p { margin: 0; }
 ul, ol { list-style: none; margin: 0; padding: 0; }
