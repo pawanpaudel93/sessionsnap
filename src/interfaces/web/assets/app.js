@@ -413,7 +413,7 @@ async function viewList() {
   // Automatic snapshots (saved on a schedule) are listed apart from the ones saved by hand.
   const auto = shown.filter((s) => s.schedule);
   const manual = shown.filter((s) => !s.schedule);
-  const autoName = h("input", { class: "grow", placeholder: "Name, e.g. work-auto", "aria-label": "Automatic snapshot name" });
+  const autoName = h("input", { class: "name", placeholder: "Name, e.g. work-auto", "aria-label": "Automatic snapshot name" });
   const every = intervalInput("30m");
   const addAuto = actionButton("Save automatically", async () => {
     const n = autoName.value.trim();
@@ -459,7 +459,7 @@ async function viewList() {
     manual.length ? list(manual) : null,
     h("h2", { class: "section-title" }, "Automatic"),
     auto.length ? list(auto) : null,
-    h("div", { class: "row" }, autoName, h("span", { class: "muted small" }, "every"), every, addAuto),
+    h("div", { class: "row wrap" }, autoName, h("span", { class: "muted small" }, "every"), every, addAuto),
     auto.length ? null : h("p", { class: "muted small" },
       "An automatic snapshot is saved from what is open in cmux every interval, even when this page is closed. Only changes make a new version."),
     hidden ? h("p", { class: "muted small" },
@@ -580,7 +580,7 @@ function schedulePanel(s) {
       h("span", { class: "grow" }),
       h("span", { class: last && last.result === "failed" ? "error small" : "muted small" }, lastText,
         last ? " · " : null, last ? time(last.at) : null)),
-    h("div", { class: "row" }, h("span", { class: "muted small" }, "Every"), every, change,
+    h("div", { class: "row wrap" }, h("span", { class: "muted small" }, "Every"), every, change,
       h("span", { class: "grow" }), toggle, manual));
 }
 
