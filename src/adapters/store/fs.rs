@@ -553,6 +553,7 @@ mod tests {
             color: None,
             cwd: "/w".into(),
             git_branch: None,
+            pinned: false,
             cmux_workspace_id: None,
             tabs: vec![Tab::Terminal { title: "sh".into(), cwd: "/w".into(), command: None }],
         }

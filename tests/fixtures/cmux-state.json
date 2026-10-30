@@ -9,6 +9,7 @@
         "workspaces": [
           {
             "workspaceId": "WS-ALPHA",
+            "isPinned": true,
             "customTitle": "Alpha",
             "currentDirectory": "/w/alpha",
             "gitBranch": { "branch": "main", "isDirty": false },

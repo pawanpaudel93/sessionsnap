@@ -103,7 +103,15 @@ mod tests {
     }
 
     fn ws(name: &str, tabs: Vec<Tab>) -> Workspace {
-        Workspace { name: name.into(), color: None, cwd: "/w".into(), git_branch: None, cmux_workspace_id: None, tabs }
+        Workspace {
+            name: name.into(),
+            color: None,
+            cwd: "/w".into(),
+            git_branch: None,
+            pinned: false,
+            cmux_workspace_id: None,
+            tabs,
+        }
     }
 
     #[test]

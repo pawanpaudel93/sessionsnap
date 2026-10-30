@@ -30,6 +30,8 @@ pub struct OpenWorkspace {
     pub name: String,
     pub cwd: String,
     pub git_branch: Option<String>,
+    /// Pinned to the top of the terminal's workspace list.
+    pub pinned: bool,
     pub tabs: Vec<OpenTab>,
 }
 

@@ -98,6 +98,7 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
         name: name.to_string(),
         cwd: cwd.to_string(),
         git_branch: None,
+        pinned: false,
         tabs: tabs
             .iter()
             .enumerate()

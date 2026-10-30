@@ -18,6 +18,7 @@ pub struct FileWorkspace {
     pub name: String,
     pub cwd: String,
     pub git_branch: Option<String>,
+    pub pinned: bool,
     /// Terminal panels in tab order.
     pub panels: Vec<FilePanel>,
 }
@@ -97,6 +98,7 @@ fn parse_workspace(ws: &Value) -> Result<FileWorkspace> {
         .map(|n| clean_title(&n))
         .unwrap_or_else(|| cwd.rsplit('/').next().unwrap_or("workspace").to_string());
     let git_branch = ws.pointer("/gitBranch/branch").and_then(Value::as_str).map(str::to_string);
+    let pinned = ws.get("isPinned").and_then(Value::as_bool).unwrap_or(false);
     let panels_json = ws.get("panels").and_then(Value::as_array).cloned().unwrap_or_default();
 
     let mut order = vec![];
@@ -118,7 +120,7 @@ fn parse_workspace(ws: &Value) -> Result<FileWorkspace> {
             panels.extend(parse_panel(p));
         }
     }
-    Ok(FileWorkspace { id, name, cwd, git_branch, panels })
+    Ok(FileWorkspace { id, name, cwd, git_branch, pinned, panels })
 }
 
 /// Collects `panelIds` from a layout tree in order, whatever its split shape.
@@ -205,6 +207,8 @@ mod tests {
         let alpha = &ws[0];
         assert_eq!(alpha.id, "WS-ALPHA");
         assert_eq!(alpha.git_branch.as_deref(), Some("main"));
+        assert!(alpha.pinned);
+        assert!(!ws[1].pinned, "no isPinned is unpinned");
         assert_eq!(alpha.panels.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(), vec!["zsh", "✳ fix login"]);
         let claude = alpha.panels[1].agent.as_ref().unwrap();
         assert_eq!((claude.kind.as_str(), claude.session_id.as_str()), ("claude", A));

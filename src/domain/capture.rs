@@ -31,6 +31,7 @@ pub fn capture(open: &OpenState, agents: &dyn AgentCatalog, only: &[String]) -> 
                 color: None,
                 cwd: w.cwd.clone(),
                 git_branch: w.git_branch.clone(),
+                pinned: w.pinned,
                 cmux_workspace_id: Some(w.id.clone()),
                 tabs,
             }
@@ -119,6 +120,7 @@ pub fn seen(open: &OpenState, agents: &dyn AgentCatalog, captured: &[Workspace])
             color: None,
             cwd: String::new(),
             git_branch: None,
+            pinned: false,
             cmux_workspace_id: None,
             tabs,
         });
@@ -529,5 +531,15 @@ mod tests {
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[1].cwd, "/w/b2");
         assert_eq!(merged[1].color.as_deref(), Some("blue"));
+    }
+
+    #[test]
+    fn capture_keeps_pinned_and_saves_it_only_when_set() {
+        let mut open = open_state();
+        open.workspaces[0].pinned = true;
+        let ws = capture(&open, &agents(vec![]), &[]).unwrap().0;
+        assert!(ws[0].pinned && !ws[1].pinned);
+        assert_eq!(serde_json::to_value(&ws[0]).unwrap()["pinned"], true);
+        assert!(serde_json::to_value(&ws[1]).unwrap().get("pinned").is_none());
     }
 }
