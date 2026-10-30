@@ -8,6 +8,7 @@ use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
 use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name, validate_new_name};
+use crate::error::{Exit, failure};
 
 /// What writing a version did.
 #[derive(Debug)]
@@ -23,6 +24,30 @@ pub enum Commit {
 /// next, so a save or edit landing meanwhile is never undone.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
     validate_name(name)?;
+    if let Some(key) = super::schedule::find(&ctx.store.read_schedules()?, name) {
+        return Err(failure(
+            Exit::Refused,
+            format!(
+                "'{key}' is an automatic snapshot, saved on its schedule; save it now with: sessionsnap schedule run {key}"
+            ),
+        ));
+    }
+    save_as(ctx, name, only, from, message, false)
+}
+
+/// A save of automatic snapshot `name` by its schedule (see `app::schedule::run`).
+pub fn save_scheduled(ctx: &Ctx, name: &str) -> Result<Commit> {
+    save_as(ctx, name, &[], None, None, true)
+}
+
+fn save_as(
+    ctx: &Ctx,
+    name: &str,
+    only: &[String],
+    from: Option<&str>,
+    message: Option<String>,
+    scheduled: bool,
+) -> Result<Commit> {
     let lock = ctx.store.lock(name)?;
     let new = is_new(ctx, name);
     if new {
@@ -46,6 +71,12 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
         None => {
             read_at = super::known::now();
             let open = super::read_open(ctx.terminal.as_ref())?;
+            if scheduled && !open.live {
+                return Err(failure(Exit::NothingToDo, "cmux is not running"));
+            }
+            if scheduled && open.workspaces.is_empty() {
+                return Err(failure(Exit::NothingToDo, "cmux shows no workspaces"));
+            }
             let (captured, notes) = capture(&open, &ctx.agents, only)?;
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
@@ -53,7 +84,8 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
                 Some(p) => carry_over(&p.workspaces, captured),
                 None => captured,
             };
-            (workspaces, Source { kind: "live".into(), cmux_state_version: open.state_version, from: None }, notes)
+            let kind = if scheduled { super::schedule::SCHEDULED } else { "live" };
+            (workspaces, Source { kind: kind.into(), cmux_state_version: open.state_version, from: None }, notes)
         }
     };
     // A broken latest version is never "unchanged": the save writes one that can be read.
@@ -206,6 +238,17 @@ pub fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Vec<u32>> {
     ctx.store.prune(name, keep)
 }
 
+/// Deletes snapshot `name`, and its schedule if it has one.
 pub fn delete(ctx: &Ctx, name: &str) -> Result<()> {
+    ctx.store.versions(name)?;
+    super::schedule::deleting(ctx, name)?;
     ctx.store.delete(name)
+}
+
+/// Renames snapshot `old` to `new`, with its schedule; returns the name it had.
+pub fn rename(ctx: &Ctx, old: &str, new: &str) -> Result<String> {
+    validate_name(old)?;
+    let from = ctx.store.rename(old, new)?;
+    super::schedule::renamed(ctx, &from, new)?;
+    Ok(from)
 }

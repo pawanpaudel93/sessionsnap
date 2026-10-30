@@ -21,6 +21,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); -webkit-font-smoothin
 h1, h2, h3 { margin: 0; }
 h1 { font-size: 15px; font-weight: 650; }
 h2 { font-size: 13px; font-weight: 600; }
+h2.section-title { margin: 8px 0 -4px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
 p { margin: 0; }
 ul, ol { list-style: none; margin: 0; padding: 0; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

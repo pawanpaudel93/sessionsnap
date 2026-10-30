@@ -114,6 +114,31 @@ sessionsnap tab work Cascadia#4 --move "Cascadia Community"
 sessionsnap tab work Cascadia --add-session <session-id>
 sessionsnap tab work Cascadia --add-session <id> --agent opencode
 sessionsnap agents                    # supported agents and whether each is on PATH
+sessionsnap rename work job           # rename a snapshot (and its schedule)
+```
+
+### Automatic snapshots
+
+An automatic snapshot is saved from what is open in cmux every interval by launchd (macOS only),
+even when sessionsnap isn't running. A run with no changes writes nothing, so its history holds one
+version per change. Runs are skipped while cmux is not running or shows no workspaces. `list` shows
+automatic snapshots under their own heading, and only their schedule saves to them: copy a version
+out with `sessionsnap save <name> --from <auto>@<v>` to keep it.
+
+```sh
+sessionsnap schedule add work --interval 30m   # new automatic snapshot; saves once now
+sessionsnap schedule add daily --interval 1d   # as many as you like, each with its own interval
+sessionsnap schedule list                      # interval, running/stopped, latest version, last run
+sessionsnap schedule edit work --interval 2h
+sessionsnap schedule stop work                 # pause; `schedule start work` resumes
+sessionsnap schedule run work                  # save it now
+sessionsnap schedule remove work               # make it a normal snapshot (versions kept)
+```
+
+Intervals are a number and a unit (`30m`, `2h`, `1d`; at least `1m`). Each schedule is a launchd
+agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; `uninstall` removes them.
+
+```sh
 sessionsnap update --check            # is there a newer release?
 sessionsnap update                    # install it over this binary
 ```

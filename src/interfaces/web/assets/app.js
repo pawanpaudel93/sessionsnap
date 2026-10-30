@@ -405,12 +405,14 @@ async function viewList() {
   }, { class: "primary" });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
   const open = (s) => go("snapshot", { snapshot: s.name, tab: "edit", version: null });
-  return h("section", { class: "stack" },
-    h("div", { class: "row" }, name, save),
-    shown.length === 0
-      ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
-        "Name one above to save the workspaces and tabs open in cmux now.")
-      : h("ul", { class: "list" }, shown.map((s) => {
+  // Automatic snapshots (saved on a schedule) are listed apart from the ones saved by hand.
+  const auto = shown.filter((s) => s.schedule);
+  const manual = shown.filter((s) => !s.schedule);
+  const section = (title, items) => [
+    auto.length ? h("h2", { class: "section-title" }, title) : null,
+    items.length ? list(items) : null,
+  ];
+  const list = (items) => h("ul", { class: "list" }, items.map((s) => {
         const pend = opsOf(s.name).length;
         const li = h("li", { class: "item clickable", tabindex: "0", role: "button", onclick: () => open(s),
           onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(s); } } },
@@ -419,6 +421,8 @@ async function viewList() {
             h("strong", { class: "ellipsis" }, s.name),
             h("span", { class: "pill" }, `v${s.latestVersion}`),
             pend ? h("span", { class: "pill accent" }, `${pend} unsaved`) : null,
+            s.schedule ? h("span", { class: "pill" }, `every ${s.schedule.interval}`) : null,
+            s.schedule && !s.schedule.running ? h("span", { class: "pill warn" }, "stopped") : null,
             s.error ? h("span", { class: "pill warn" }, "unreadable") : null,
             h("span", { class: "grow" }),
             s.error ? null : h("span", { class: "muted small" }, time(s.createdAt))),
@@ -428,7 +432,15 @@ async function viewList() {
           s.message ? h("div", { class: "faint small ellipsis" }, s.message) : null),
         icon("chevron", "chev"));
         return li;
-      })),
+      }));
+  return h("section", { class: "stack" },
+    h("div", { class: "row" }, name, save),
+    shown.length === 0
+      ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
+        "Name one above to save the workspaces and tabs open in cmux now.")
+      : null,
+    ...section("Manual", manual),
+    ...section("Automatic", auto),
     hidden ? h("p", { class: "muted small" },
       `${plural(hidden, "snapshot")} with a name starting with "--" ${hidden === 1 ? "is" : "are"} not shown here. Use the CLI: sessionsnap list, then sessionsnap show -- <name>.`) : null);
 }

@@ -10,6 +10,7 @@ pub mod edit;
 pub mod install;
 pub mod known;
 pub mod restore;
+pub mod schedule;
 pub mod sessions;
 pub mod snapshots;
 pub mod uninstall;
@@ -20,7 +21,7 @@ use std::io::IsTerminal;
 use crate::adapters::agents::Agents;
 use crate::adapters::store::Store;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
-use crate::ports::{OpenState, Terminal};
+use crate::ports::{OpenState, Scheduler, Terminal};
 
 /// Everything a command needs; tests build it with fakes.
 ///
@@ -32,6 +33,8 @@ pub struct Ctx {
     pub agents: Agents,
     /// The terminal (cmux).
     pub terminal: Box<dyn Terminal>,
+    /// Runs automatic snapshots' saves (launchd on macOS).
+    pub scheduler: Box<dyn Scheduler>,
     pub json: bool,
     pub yes: bool,
     /// Prompts allowed (a terminal on stdin and not --json).
@@ -46,6 +49,7 @@ impl Ctx {
             store: Store::open_default()?,
             agents: Agents::open_default()?,
             terminal: Box::new(CmuxCli::open_default()?),
+            scheduler: crate::adapters::scheduler::open_default()?,
             json,
             yes,
             interactive: !json && std::io::stdin().is_terminal(),

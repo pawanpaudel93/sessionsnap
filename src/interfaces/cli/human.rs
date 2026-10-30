@@ -22,10 +22,25 @@ pub fn saved(v: &Version, warnings: &[String]) -> String {
     s
 }
 
+/// Snapshots saved by hand, then (when there are any) the automatic ones under their own heading.
 pub fn list(rows: &[Value]) -> String {
     if rows.is_empty() {
         return "No snapshots yet. Save one with: sessionsnap save <name>".into();
     }
+    let (auto, manual): (Vec<&Value>, Vec<&Value>) = rows.iter().partition(|r| r.get("schedule").is_some());
+    if auto.is_empty() {
+        return list_rows(&manual);
+    }
+    let indent = |s: String| s.lines().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n");
+    let mut out = vec![];
+    if !manual.is_empty() {
+        out.push(format!("Manual\n{}", indent(list_rows(&manual))));
+    }
+    out.push(format!("Automatic\n{}", indent(list_rows(&auto))));
+    out.join("\n")
+}
+
+fn list_rows(rows: &[&Value]) -> String {
     rows.iter()
         .map(|r| {
             if let Some(why) = r["error"].as_str() {
@@ -39,7 +54,37 @@ pub fn list(rows: &[Value]) -> String {
                 r["workspaces"].as_u64().unwrap_or(0),
                 r["tabs"].as_u64().unwrap_or(0),
                 r["createdAt"].as_str().unwrap_or(""),
-                r["message"].as_str().unwrap_or("")
+                match r["schedule"]["interval"].as_str() {
+                    Some(every) if r["schedule"]["running"] == false => format!("every {every} (stopped)"),
+                    Some(every) => format!("every {every}"),
+                    None => r["message"].as_str().unwrap_or("").to_string(),
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `schedule list`: each automatic snapshot, its interval, latest version and last save.
+pub fn schedules(rows: &[Value]) -> String {
+    if rows.is_empty() {
+        return "No automatic snapshots. Start one with: sessionsnap schedule add <name> --interval 30m".into();
+    }
+    rows.iter()
+        .map(|r| {
+            let latest = r["latestVersion"].as_u64().map_or("no version yet".to_string(), |v| format!("v{v}"));
+            let last = &r["lastRun"];
+            let run = match (last["result"].as_str(), last["reason"].as_str()) {
+                (Some(result), Some(why)) => format!("last run {result} ({why})"),
+                (Some(result), None) => format!("last run {result} {}", last["at"].as_str().unwrap_or("")),
+                _ => "not run yet".to_string(),
+            };
+            let state = if r["running"] == false { "stopped" } else { "running" };
+            format!(
+                "{:<20} every {:<5} {state:<8} {:<15} {run}",
+                r["name"].as_str().unwrap_or(""),
+                r["interval"].as_str().unwrap_or(""),
+                latest
             )
         })
         .collect::<Vec<_>>()

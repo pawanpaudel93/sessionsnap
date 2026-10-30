@@ -200,3 +200,12 @@ pub trait Releases {
     /// What `<binary> --version` prints, trimmed.
     fn version_of(&self, binary: &Path) -> Result<String>;
 }
+
+/// Runs `sessionsnap schedule run <name>` every so often, even with sessionsnap not running.
+/// Implemented by `adapters::scheduler::Launchd` (macOS); tests use `testing::FakeScheduler`.
+pub trait Scheduler {
+    /// Runs the save of `name` every `interval` seconds, replacing any earlier schedule of it.
+    fn install(&self, name: &str, interval: u64) -> Result<()>;
+    /// Stops the saves of `name`; nothing to do when there are none.
+    fn remove(&self, name: &str) -> Result<()>;
+}
