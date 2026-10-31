@@ -58,6 +58,9 @@ fn import_refuses_what_it_cannot_take() {
     let e = env.run_with_input(&["import", "-", "--as", "auto"], &text).unwrap_err();
     assert_eq!(exit_of(&e), Exit::Refused, "an automatic snapshot is saved only by its schedule");
     assert_eq!(exit_of(&env.run(&["import", "/nope/x.json"]).unwrap_err()), Exit::NotFound);
+    // A file that exists but can't be read is an error, not "not found".
+    let dir = env.dir.path().to_str().unwrap();
+    assert_eq!(exit_of(&env.run(&["import", dir]).unwrap_err()), Exit::Error);
 }
 
 /// An imported file is as untrusted as a hand-edited one. One with a control character anywhere

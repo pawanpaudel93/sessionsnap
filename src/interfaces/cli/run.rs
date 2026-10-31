@@ -193,7 +193,10 @@ fn import(ctx: &Ctx, file: &str, name: Option<String>, map: &[String], message: 
     let text = match (file, &ctx.input) {
         ("-", Some(text)) => text.clone(),
         ("-", None) => std::io::read_to_string(std::io::stdin())?,
-        _ => std::fs::read_to_string(file).map_err(|e| failure(Exit::NotFound, format!("can't read {file}: {e}")))?,
+        _ => std::fs::read_to_string(file).map_err(|e| {
+            let exit = if e.kind() == std::io::ErrorKind::NotFound { Exit::NotFound } else { Exit::Error };
+            failure(exit, format!("can't read {file}: {e}"))
+        })?,
     };
     // A file from elsewhere is printed (show, list, plans) as well as restored: a control character
     // anywhere in it (an escape sequence in a title) is refused, not just kept out of commands.
