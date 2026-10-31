@@ -18,8 +18,11 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      # The Rust release builds and scripts/ci-local.sh use (rust:1.99.0-* in release.sh and
+      # ci-local.sh); bump them together.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v7
@@ -33,12 +36,21 @@ jobs:
 
   msrv:
     # Cargo.toml's rust-version: build and test on exactly that release.
-    name: rust 1.96.0 (minimum)
+    name: rust-version (minimum)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          v=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          [ -n "$v" ] || { echo "no rust-version in Cargo.toml" >&2; exit 1; }
+          # "1.96" means 1.96.0: test that exact release, not the newest 1.96.x.
+          case "$v" in *.*.*) ;; *) v="$v.0" ;; esac
+          echo "Rust $v"
+          echo "version=$v" >>"$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
