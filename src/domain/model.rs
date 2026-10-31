@@ -20,7 +20,8 @@ pub struct Version {
     pub workspaces: Vec<Workspace>,
 }
 
-/// Where a version came from: "live" (captured from the terminal), "scheduled", "edit", or "copy".
+/// Where a version came from: "live" (captured from the terminal), "scheduled", "edit", "copy"
+/// or "import".
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
@@ -227,6 +228,41 @@ pub fn validate_name(name: &str) -> Result<()> {
     }
 }
 
+/// A version file's text as a version, or why it isn't one ("format 1, expected 2", "not valid
+/// JSON: …"; an error starting "format" is another format). Used for the store's files and imports.
+pub fn parse_version(text: &str) -> std::result::Result<Version, String> {
+    let raw: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
+    let format = raw.get("sessionsnap").and_then(serde_json::Value::as_u64);
+    if format != Some(u64::from(FORMAT)) {
+        let found = format.map_or("an unknown format".to_string(), |f| format!("format {f}"));
+        return Err(format!("{found}, expected {FORMAT}"));
+    }
+    serde_json::from_value(raw).map_err(|e| format!("not a sessionsnap version: {e}"))
+}
+
+/// Moves every folder under a mapped one (`old` itself, or below it) to the same place under its
+/// `new`: the first matching map wins. For snapshots made on another machine.
+pub fn map_folders(workspaces: &mut [Workspace], maps: &[(String, String)]) {
+    let map = |path: &mut String| {
+        for (old, new) in maps {
+            let old = old.trim_end_matches('/');
+            let rest = path.strip_prefix(old).filter(|r| r.is_empty() || r.starts_with('/'));
+            if let Some(rest) = rest.filter(|_| !old.is_empty()) {
+                *path = format!("{}{rest}", new.trim_end_matches('/'));
+                return;
+            }
+        }
+    };
+    for w in workspaces {
+        map(&mut w.cwd);
+        for tab in &mut w.tabs {
+            match tab {
+                Tab::Terminal { cwd, .. } | Tab::Agent { cwd, .. } => map(cwd),
+            }
+        }
+    }
+}
+
 /// "work" → ("work", None); "work@3" → ("work", Some(3)); "work@latest" → ("work", None).
 pub fn parse_ref(s: &str) -> Result<(String, Option<u32>)> {
     let (name, v) = match s.split_once('@') {
@@ -245,6 +281,40 @@ pub fn parse_ref(s: &str) -> Result<(String, Option<u32>)> {
 mod tests {
     use super::*;
     use crate::error::{Exit, exit_of};
+
+    #[test]
+    fn folders_move_on_path_boundaries_only() {
+        let tab = |cwd: &str| Tab::Terminal { title: "t".into(), cwd: cwd.into(), command: None };
+        let mut ws = vec![Workspace {
+            name: "w".into(),
+            color: None,
+            cwd: "/Users/a/code".into(),
+            git_branch: None,
+            pinned: false,
+            cmux_workspace_id: None,
+            tabs: vec![tab("/Users/a/code/api"), tab("/Users/ab/x"), tab("/Users/a"), tab("/opt/y")],
+        }];
+        let maps = [("/Users/a/".to_string(), "/home/b".to_string()), ("/".to_string(), "/never".to_string())];
+        map_folders(&mut ws, &maps);
+        let cwds: Vec<&str> = ws[0]
+            .tabs
+            .iter()
+            .map(|t| match t {
+                Tab::Terminal { cwd, .. } | Tab::Agent { cwd, .. } => cwd.as_str(),
+            })
+            .collect();
+        assert_eq!(ws[0].cwd, "/home/b/code");
+        assert_eq!(cwds, ["/home/b/code/api", "/Users/ab/x", "/home/b", "/opt/y"], "a bare / maps nothing");
+    }
+
+    #[test]
+    fn a_version_of_another_format_or_no_json_is_refused_with_why() {
+        assert!(parse_version("{").unwrap_err().starts_with("not valid JSON"));
+        assert_eq!(parse_version(r#"{"sessionsnap": 1}"#).unwrap_err(), format!("format 1, expected {FORMAT}"));
+        assert!(
+            parse_version(&format!(r#"{{"sessionsnap": {FORMAT}}}"#)).unwrap_err().starts_with("not a sessionsnap")
+        );
+    }
 
     const ID: &str = "97aeb422-20c1-41f7-a9c6-0f7c5a658991";
 

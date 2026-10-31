@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 
 use super::lock::{Lock, STALE};
 use crate::domain::known::KnownSessions;
-use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name, validate_new_name};
+use crate::domain::model::{FORMAT, Source, Version, Workspace, parse_version, validate_name, validate_new_name};
 use crate::domain::plan::Plan;
 use crate::domain::schedule::Schedules;
 use crate::error::{Exit, failure};
@@ -187,20 +187,9 @@ impl Store {
     pub fn read_version(&self, name: &str, v: u32) -> Result<std::result::Result<Version, String>> {
         let path = self.version_path(name, v)?;
         let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        let raw: serde_json::Value = match serde_json::from_str(&text) {
-            Ok(raw) => raw,
-            Err(e) => return Ok(Err(format!("not valid JSON: {e}"))),
-        };
-        let format = raw.get("sessionsnap").and_then(serde_json::Value::as_u64);
-        if format != Some(u64::from(FORMAT)) {
-            let found = format.map_or("an unknown format".to_string(), |f| format!("format {f}"));
-            return Ok(Err(format!("{found}, expected {FORMAT}")));
-        }
         // A renamed snapshot's older versions still hold the old name: the folder's name wins.
         let stored = self.stored_name(name);
-        Ok(serde_json::from_value(raw)
-            .map(|v: Version| Version { snapshot: stored, ..v })
-            .map_err(|e| format!("not a sessionsnap version: {e}")))
+        Ok(parse_version(&text).map(|v| Version { snapshot: stored, ..v }))
     }
 
     /// The lock of snapshot `name` (any case): saves, edits, prunes and deletes of one snapshot

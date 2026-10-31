@@ -79,6 +79,25 @@ pub enum Command {
     Delete { name: String },
     /// Rename a snapshot (and its schedule)
     Rename { old: String, new: String },
+    /// Write a version of a snapshot as one JSON file, for another machine: <name>[@v]
+    Export {
+        snapshot: String,
+        /// The file to write (refused if it exists); without it, the JSON goes to stdout
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Save an exported version as the next version of a snapshot ('-' reads stdin)
+    Import {
+        file: String,
+        /// The snapshot to save it to (default: the name in the file)
+        #[arg(long = "as", value_name = "NAME")]
+        name: Option<String>,
+        /// Move folders under OLD to NEW, e.g. --map /Users/me=/home/me (repeatable)
+        #[arg(long, value_name = "OLD=NEW")]
+        map: Vec<String>,
+        #[arg(long, short)]
+        message: Option<String>,
+    },
     /// Save a snapshot automatically every so often (launchd on macOS, systemd on Linux)
     #[command(subcommand)]
     Schedule(ScheduleCommand),
