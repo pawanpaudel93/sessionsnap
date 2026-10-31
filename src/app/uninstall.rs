@@ -320,6 +320,10 @@ mod tests {
         let p = installed(d.path());
         let bin = p.exe.parent().unwrap();
         std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Root (a container) writes there anyway: nothing to test.
+        if std::fs::write(bin.join(".probe"), "").is_ok() {
+            return;
+        }
         let r = run(&p, false);
         std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let r = r.unwrap();
