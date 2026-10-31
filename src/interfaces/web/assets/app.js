@@ -440,7 +440,7 @@ async function viewList() {
       autoName.focus();
       return toast("Give the automatic snapshot a name.", "error");
     }
-    const r = await sessionsnap(["schedule", "add", n, "--interval", every.value.trim()]);
+    const r = await sessionsnap(["schedule", "add", n, "--interval", intervalOf(every)]);
     const first = r.result.firstSave;
     toast(`Saving ${n} every ${r.result.schedule.interval}` +
       (first.reason ? ` (first save skipped: ${first.reason})` : ""));
