@@ -7,6 +7,8 @@
 
 **Save and resume your coding-agent sessions in cmux and tmux.**
 
+![sessionsnap saves two tmux sessions with Claude Code running, then restores them after they close, each agent resumed with its flags](assets/demo.gif)
+
 Website: <https://sessionsnap.pawanpaudel.com.np>
 
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces (or tmux
@@ -99,6 +101,13 @@ Optional integrations:
 ```sh
 sessionsnap install-cmux     # palette commands in cmux on macOS (asks first, backs up cmux.json)
 sessionsnap install-skill    # teaches Claude Code to use sessionsnap
+```
+
+Shell completions and the man page:
+
+```sh
+sessionsnap completions zsh > "${fpath[1]}/_sessionsnap"   # or bash, fish, elvish, powershell
+sessionsnap man > ~/.local/share/man/man1/sessionsnap.1
 ```
 
 ## Usage

@@ -610,6 +610,15 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">--json</code>, to show you a restore plan before applying it, and never
               to start an automatic snapshot on its own.
             </p>
+            <div class="code-panel">
+              <pre><code translate="no"><span class="prompt">$ </span>sessionsnap completions zsh > "${fpath[1]}/_sessionsnap"   <span class="comment"># or bash, fish, elvish, powershell</span>
+<span class="prompt">$ </span>sessionsnap man > ~/.local/share/man/man1/sessionsnap.1</code></pre>
+            </div>
+            <p>
+              <code translate="no">completions</code> prints shell completions and
+              <code translate="no">man</code> prints the man page; neither looks for a terminal, so a shell's
+              startup file can run them.
+            </p>
           </section>
 
           <section class="doc-section" id="files">
