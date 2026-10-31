@@ -385,12 +385,26 @@ impl Store {
     /// returns the name it was stored under. Refuses (exit 4) a `new` that is another snapshot.
     pub fn rename(&self, old: &str, new: &str) -> Result<String> {
         validate_new_name(new)?;
-        let same = old.eq_ignore_ascii_case(new);
-        // In name order, so two renames between the same names never wait on each other.
+        let locks = self.lock_rename(old, new)?;
+        self.rename_locked(&locks, old, new)
+    }
+
+    /// The locks a rename of `old` to `new` holds: both snapshots', in name order, so two renames
+    /// between the same names never wait on each other.
+    pub fn lock_rename(&self, old: &str, new: &str) -> Result<Vec<Lock>> {
         let (first, second) =
             if old.to_ascii_lowercase() <= new.to_ascii_lowercase() { (old, new) } else { (new, old) };
-        let _first = self.lock(first)?;
-        let _second = if same { None } else { Some(self.lock(second)?) };
+        let mut locks = vec![self.lock(first)?];
+        if !old.eq_ignore_ascii_case(new) {
+            locks.push(self.lock(second)?);
+        }
+        Ok(locks)
+    }
+
+    /// `rename`, while holding the `lock_rename` locks.
+    pub fn rename_locked(&self, _locks: &[Lock], old: &str, new: &str) -> Result<String> {
+        validate_new_name(new)?;
+        let same = old.eq_ignore_ascii_case(new);
         self.versions(old)?;
         let from = self.stored_name(old);
         if !same && self.has_versions(new) {
@@ -409,7 +423,12 @@ impl Store {
 
     /// Deletes snapshot `name` and every version, under its lock.
     pub fn delete(&self, name: &str) -> Result<()> {
-        let _lock = self.lock(name)?;
+        let lock = self.lock(name)?;
+        self.delete_locked(&lock, name)
+    }
+
+    /// `delete`, while holding the snapshot's `lock`.
+    pub fn delete_locked(&self, _lock: &Lock, name: &str) -> Result<()> {
         self.versions(name)?;
         fs::remove_dir_all(self.snapshot_dir(name))?;
         Ok(())

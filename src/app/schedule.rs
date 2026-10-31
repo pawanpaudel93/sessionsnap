@@ -29,6 +29,8 @@ pub fn add(ctx: &Ctx, name: &str, interval: &str) -> Result<(Schedule, Result<Co
     validate_new_name(name)?;
     let interval = parse_interval(interval)?;
     {
+        // The snapshot's first: a save by hand holding it finds the schedule, or ends before.
+        let _snapshot = ctx.store.lock(name)?;
         let lock = ctx.store.lock_schedules()?;
         let mut all = ctx.store.read_schedules()?;
         if let Some(key) = find(&all, name) {

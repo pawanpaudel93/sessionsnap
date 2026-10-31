@@ -162,6 +162,48 @@ fn delete_stops_the_schedule() {
     assert!(env.run(&["schedule", "list"]).unwrap().json["schedules"].as_array().unwrap().is_empty());
 }
 
+/// A scheduled save that read its schedule before a delete or rename (and waited on the lock)
+/// writes nothing: the old name never comes back as a snapshot saved by hand.
+#[test]
+fn a_scheduled_save_after_its_schedule_is_gone_writes_nothing() {
+    use sessionsnap::app::snapshots::save_scheduled;
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap();
+    env.run(&["delete", "work", "--yes"]).unwrap();
+    let err = save_scheduled(&env.ctx(true, false, None), "work").unwrap_err();
+    assert_eq!(exit_of(&err), Exit::NothingToDo, "{err}");
+    assert_eq!(exit_of(&env.run(&["show", "work"]).unwrap_err()), Exit::NotFound);
+
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap();
+    env.run(&["rename", "work", "job"]).unwrap();
+    let err = save_scheduled(&env.ctx(true, false, None), "work").unwrap_err();
+    assert_eq!(exit_of(&err), Exit::NothingToDo, "{err}");
+    assert_eq!(exit_of(&env.run(&["show", "work"]).unwrap_err()), Exit::NotFound);
+    assert_eq!(env.run(&["history", "job"]).unwrap().json["versions"].as_array().unwrap().len(), 1);
+}
+
+/// A delete that fails keeps the schedule: the snapshot stays automatic.
+#[cfg(unix)]
+#[test]
+fn a_failed_delete_keeps_the_schedule() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap();
+    let dir = env.dir.path().join("store/snapshots/work");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    // Root ignores the permission: nothing to test there.
+    let failed = std::fs::write(dir.join("probe"), "").is_err();
+    let deleted = env.run(&["delete", "work", "--yes"]);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if !failed {
+        return;
+    }
+    assert!(deleted.is_err());
+    assert_eq!(FakeScheduler::log(env.dir.path()), ["install work 600"]);
+    assert_eq!(env.run(&["schedule", "list"]).unwrap().json["schedules"][0]["name"], "work");
+    assert_eq!(exit_of(&env.run(&["save", "work"]).unwrap_err()), Exit::Refused);
+}
+
 #[test]
 fn stop_and_start_keep_it_automatic() {
     let env = setup();
