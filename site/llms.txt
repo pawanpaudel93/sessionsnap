@@ -17,7 +17,7 @@ Claude Code and Codex are fully supported and tested (their session histories ar
 
 ## Commands
 
-`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `rename`, `schedule`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `completions`, `man`, `update`, `uninstall`. Every command has `--help`.
+`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `rename`, `export`, `import`, `schedule`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `completions`, `man`, `update`, `uninstall`. Every command has `--help`.
 
 ## Links
 

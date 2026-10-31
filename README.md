@@ -46,6 +46,8 @@ you ask for.
   opens; workspaces and tabs that are already open are left alone.
 - **Edit snapshots:** rename, reorder and remove workspaces, move tabs between them, add agent
   sessions by ID.
+- **Move to another machine:** `export` writes a version as one file; `import` saves it there,
+  with `--map` moving its folders.
 - **Find lost sessions:** `recent` lists agent sessions from the last day that are not open in the terminal.
 - **Scriptable:** every command takes `--json` and `--yes`, with stable exit codes.
 - **Web UI and palette:** a page in the cmux Dock (or the browser from tmux), and commands in the
@@ -131,7 +133,15 @@ sessionsnap tab work Cascadia --add-session <session-id>
 sessionsnap tab work Cascadia --add-session <id> --agent opencode
 sessionsnap agents                    # supported agents and whether each is on PATH
 sessionsnap rename work job           # rename a snapshot (and its schedule)
+sessionsnap export work -o work.json  # a version as one file, for another machine
+sessionsnap import work.json --map /Users/me=/home/me   # save it there, its folders moved
 ```
+
+`export` writes only the snapshot: folders, titles, commands and agent session IDs, never an
+agent's history of a session. Resuming an agent tab on the other machine needs that session there
+too. An import is checked like any version file when restored, and
+`restore --plan` shows the command each terminal tab will run: read it before restoring a file
+from someone else.
 
 ### Automatic snapshots
 
@@ -365,7 +375,9 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   flags they saved, on disk, until you remove them: save again, then `sessionsnap prune <name>
   --keep 1`, or `sessionsnap delete <name>`. They are never shown or replayed, but the files keep
   them.
-- Snapshot files are readable only by you (folder 0700, files 0600).
+- Snapshot files are readable only by you (folder 0700, files 0600), and so are exported files.
+- An imported snapshot goes through the same checks when restored; `restore --plan` shows the
+  command each terminal tab runs (escaped), so check a file from someone else before applying it.
 
 ## Status
 
