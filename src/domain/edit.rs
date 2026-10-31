@@ -187,7 +187,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
         Op::WsAddLive { ws: w } => {
             let open = ctx
                 .open
-                .ok_or_else(|| failure(Exit::CmuxUnreachable, "adding an open workspace needs cmux's state"))?;
+                .ok_or_else(|| failure(Exit::TerminalUnreachable, "adding an open workspace needs cmux's state"))?;
             let (mut captured, notes) = capture::capture(open, ctx.agents, std::slice::from_ref(w))?;
             add_workspace(ws, captured.remove(0))?;
             return Ok(notes);

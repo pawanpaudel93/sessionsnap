@@ -67,7 +67,7 @@ fn plan_only_needs_running_cmux() {
     let env = setup();
     env.run(&["save", "work"]).unwrap();
     env.fake.running.set(false);
-    assert_eq!(exit_of(&env.run(&["restore", "work", "--plan"]).unwrap_err()), Exit::CmuxUnreachable);
+    assert_eq!(exit_of(&env.run(&["restore", "work", "--plan"]).unwrap_err()), Exit::TerminalUnreachable);
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn recent_plan_needs_running_cmux() {
     let env = setup();
     write_transcript(&env.claude_root(), "/w/c", C, "cargo disk");
     env.fake.running.set(false);
-    assert_eq!(exit_of(&env.run(&["recent", "--plan"]).unwrap_err()), Exit::CmuxUnreachable);
+    assert_eq!(exit_of(&env.run(&["recent", "--plan"]).unwrap_err()), Exit::TerminalUnreachable);
     assert!(!env.fake.running.get());
 }
 
@@ -106,4 +106,38 @@ fn huge_time_windows_are_an_error_not_a_panic() {
     assert_eq!(exit_of(&err), Exit::Error);
     let err = env.run(&["recent", "--hours", "18446744073709551615"]).unwrap_err();
     assert_eq!(exit_of(&err), Exit::Error);
+}
+
+#[test]
+fn a_tab_whose_folder_is_gone_opens_as_a_shell_with_a_warning() {
+    use clap::Parser;
+    use sessionsnap::interfaces::cli::{Cli, run::dispatch};
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    env.fake.state.borrow_mut().workspaces.clear();
+    // Beta's folder (/w/b) was a git worktree, removed since.
+    let cli = Cli::try_parse_from(["sessionsnap", "restore", "work", "--yes"]).unwrap();
+    let mut ctx = env.ctx(false, true, None);
+    ctx.folder_exists = |path| !path.starts_with("/w/b");
+    let o = dispatch(&ctx, cli.command).unwrap();
+    let warnings = o.json["warnings"].to_string();
+    assert!(warnings.contains("its folder /w/b is gone"), "{}", o.json);
+    let launched = env.fake.launched.borrow();
+    let beta = launched.iter().find(|t| t.title == "review").unwrap();
+    assert_eq!(beta.command, None, "never resumed in another folder");
+    assert_ne!(beta.cwd, "/w/b");
+    let alpha = launched.iter().find(|t| t.title == "login fix").unwrap();
+    assert!(alpha.command.as_deref().is_some_and(|c| c.contains("--resume")), "{alpha:?}");
+}
+
+#[test]
+fn a_plan_applies_once() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    env.fake.state.borrow_mut().workspaces.clear();
+    let planned = env.run(&["restore", "work", "--plan"]).unwrap();
+    let id = planned.json["plan"]["planId"].as_str().unwrap().to_string();
+    env.run(&["apply", &id]).unwrap();
+    let again = env.run(&["apply", &id]).unwrap_err();
+    assert!(matches!(exit_of(&again), Exit::NotFound | Exit::NothingToDo), "{again:#}");
 }

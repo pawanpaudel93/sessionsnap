@@ -50,23 +50,14 @@ impl<R: Runner> CmuxCli<R> {
         self.cmux_ok_within(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
     }
 
-    fn cmux(&self, args: &[&str]) -> Result<Output> {
-        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        self.runner.run(&self.program, &args)
-    }
-
     /// `cmux`, killed after `call_timeout`.
     fn cmux_within(&self, args: &[&str]) -> Result<Output> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         self.runner.run_timeout(&self.program, &args, self.call_timeout)
     }
 
-    /// Runs a cmux command and returns its stdout, failing on a non-zero exit.
-    fn cmux_ok(&self, args: &[&str]) -> Result<String> {
-        Self::stdout_of(args, self.cmux(args)?)
-    }
-
-    /// `cmux_ok`, killed after `call_timeout`.
+    /// Runs a cmux command, killed after `call_timeout`, and returns its stdout; fails on a
+    /// non-zero exit.
     fn cmux_ok_within(&self, args: &[&str]) -> Result<String> {
         Self::stdout_of(args, self.cmux_within(args)?)
     }
@@ -92,7 +83,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             return Ok(());
         }
         let Some((program, args)) = self.launcher.as_deref().and_then(<[String]>::split_first) else {
-            return Err(failure(Exit::CmuxUnreachable, "cmux is not running; start it and try again"));
+            return Err(failure(Exit::TerminalUnreachable, "cmux is not running; start it and try again"));
         };
         self.runner.run(program, args)?;
         let deadline = Instant::now() + self.launch_timeout;
@@ -102,7 +93,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             }
             if Instant::now() >= deadline {
                 return Err(failure(
-                    Exit::CmuxUnreachable,
+                    Exit::TerminalUnreachable,
                     format!("cmux did not start within {}s", self.launch_timeout.as_secs()),
                 ));
             }
@@ -111,8 +102,15 @@ impl<R: Runner> Terminal for CmuxCli<R> {
     }
 
     fn read_open_state(&self) -> Result<OpenState> {
-        let (version, file) = state_file::read(&self.state_path)?;
+        let state = state_file::read(&self.state_path);
         if !self.is_running() {
+            // Not running and nothing saved to read: the terminal is unreachable (exit 2).
+            let (version, file) = state.map_err(|e| {
+                failure(
+                    Exit::TerminalUnreachable,
+                    format!("cmux is not running, and its saved state can't be read: {e:#}"),
+                )
+            })?;
             return Ok(OpenState {
                 live: false,
                 state_version: Some(version),
@@ -120,6 +118,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
                 warnings: vec![],
             });
         }
+        let (version, file) = state?;
         // `--id-format both` keeps surface IDs, which match panels in the state file.
         // Bounded: `save` holds its snapshot's lock meanwhile, and a lock is broken as stale after
         // `lock::STALE`.
@@ -144,23 +143,29 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             check_command(t, false)?;
         }
         let layout = layout_json(tabs);
-        let out = self.cmux_ok(&["new-workspace", "--name", name, "--cwd", cwd, "--layout", layout.as_str()])?;
+        let out = self.cmux_ok_within(&["new-workspace", "--name", name, "--cwd", cwd, "--layout", layout.as_str()])?;
         find_ref(&out, "workspace")
             .ok_or_else(|| failure(Exit::Error, format!("cmux new-workspace printed no workspace ref: {}", out.trim())))
     }
 
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()> {
         check_command(tab, true)?;
-        let out =
-            self.cmux_ok(&["new-surface", "--workspace", workspace_ref, "--working-directory", tab.cwd.as_str()])?;
+        let out = self.cmux_ok_within(&[
+            "new-surface",
+            "--workspace",
+            workspace_ref,
+            "--working-directory",
+            tab.cwd.as_str(),
+        ])?;
         let surface = find_ref(&out, "surface")
             .ok_or_else(|| failure(Exit::Error, format!("cmux new-surface printed no surface ref: {}", out.trim())))?;
         if let Some(command) = &tab.command {
             // `cmux send` turns the two characters \n into Enter.
             let text = format!("{command}\\n");
-            self.cmux_ok(&["send", "--workspace", workspace_ref, "--surface", surface.as_str(), "--", text.as_str()])?;
+            let send = ["send", "--workspace", workspace_ref, "--surface", surface.as_str(), "--", text.as_str()];
+            self.cmux_ok_within(&send)?;
         }
-        self.cmux_ok(&[
+        self.cmux_ok_within(&[
             "rename-tab",
             "--workspace",
             workspace_ref,
@@ -656,7 +661,7 @@ mod tests {
     #[test]
     fn ensure_running_launches_then_times_out() {
         let b = backend(false);
-        assert_eq!(exit_of(&b.ensure_running().unwrap_err()), Exit::CmuxUnreachable);
+        assert_eq!(exit_of(&b.ensure_running().unwrap_err()), Exit::TerminalUnreachable);
         assert!(b.runner.calls.borrow().iter().any(|c| c[..] == ["open", "-a", "cmux"]));
     }
 
@@ -665,7 +670,7 @@ mod tests {
         let mut b = backend(false);
         b.launcher = launcher_for("linux");
         let err = b.ensure_running().unwrap_err();
-        assert_eq!(exit_of(&err), Exit::CmuxUnreachable);
+        assert_eq!(exit_of(&err), Exit::TerminalUnreachable);
         assert!(err.to_string().contains("start it"), "{err}");
         assert!(!b.runner.calls.borrow().iter().any(|c| c[0] == "open"));
     }

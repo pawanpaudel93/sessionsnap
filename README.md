@@ -177,7 +177,10 @@ sessionsnap update --check            # is there a newer release?
 sessionsnap update                    # install it over this binary
 ```
 
-Every command takes `--json` (for scripts and agents) and `--yes` (skip confirmations).
+Every command takes `--json` (for scripts and agents: one compact line when piped, indented at a
+terminal) and `--yes` (skip the confirmations of `delete`, `prune`, `restore`, `install-cmux` and
+`uninstall`). A tab whose folder is gone (a removed git worktree) is restored as a plain shell in
+your home folder, with a warning.
 
 | Exit code | Meaning |
 |---|---|
@@ -185,7 +188,7 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 | 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
 | 2 | terminal unreachable (cmux not running, or tmux not installed) |
 | 3 | nothing to do |
-| 4 | refused |
+| 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
 | 5 | unknown cmux state or snapshot format |
 | 6 | plan stale |
 | 7 | not found |
@@ -224,22 +227,11 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 
 ### How flags are restored
 
-A restored tab runs the agent's resume command with the flags it was started with (from cmux's
-record). Only the flags on the agent's allow-list are saved and passed again; every other flag the
-agent's command line knows is left out when you save, and `save` names the flags it left out (never
-their values). A flag sessionsnap doesn't know at all (not in `claude --help` or `codex --help` as
-of Claude Code 2.1.296 and Codex 0.160.0) leaves out the session, since what follows it can't be
-read for certain. So does a Codex `-c` key on neither list below, since it may limit Codex; only
-`model_*`, `hide_agent_reasoning`, `show_raw_agent_reasoning`, `file_opener`, `tui.*` and
-`shell_environment_policy.set.*` (environment variables) and `model_providers.*` (a provider's
-definition, which may hold its token or headers) are left out with just a note, never saved; the
-note says the provider's settings were not saved, so a resume that picks it with
-`-c model_provider=<id>` can't reach it until you pass them again.
-A note shows a `-c` key only up to its first segment (`tools.*`). Claude Code flags missing from
-`claude --help` (hidden flags such as `--permission-prompt-tool` or `--max-turns`, and the teammate
-flags cmux passes to Claude Code teams, such as `--agent-id` or `--plan-mode-required`) leave out the
-session, so teammate tabs are not restored. Short flags may be grouped (`-vs read-only`) as the agents allow. Supporting
-another flag is one line in `src/adapters/agents/registry.rs`.
+A restored tab runs the agent's resume command with the flags it was started with. Only the flags
+on the agent's allow-list are saved and passed again, and `save` names any it left out (never their
+values). A flag sessionsnap doesn't know, or a flag that limits the agent but can't be saved exactly
+as given, leaves out the whole session: restore then opens a plain shell with the reason rather than
+resume the agent with fewer limits.
 
 | Agent | Flags kept | Restricting (also kept, fail closed) |
 |---|---|---|
@@ -247,33 +239,11 @@ another flag is one line in `src/adapters/agents/registry.rs`.
 | Codex | `--model`/`-m`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.inherit`/`.exclude`/`.include_only`/`.ignore_default_excludes` |
 | Every other agent | none: a session started with any flag is left out | every flag |
 
-Both `--flag value` and `--flag=value` work. A kept flag's values are checked too:
-
-- a name or mode (`--model`, `-s`, a `-c` value, …) must be one word of letters, digits and
-  `-_.:/@,`, at most 100 characters;
-- a path flag (`--settings`, `--mcp-config`, `--add-dir`, …) must hold a path: inline JSON
-  (a value starting with `{` or `[`) is left out;
-- no value may hold a credential in a format that can be told for certain: a token with a known
-  prefix (`sk-ant-`, `sk-proj-`, `sk-svcacct-`, `sk-admin-`, Stripe `sk_live_`/`rk_live_`, GitHub
-  `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`, Slack `xox…-`/`xapp-`, GitLab `glpat-`, Hugging
-  Face `hf_`, npm `npm_`, AWS `AKIA`/`ASIA` plus 16, Google `AIza` plus 35), a JWT, a URL with a
-  password (`scheme://user:pass@host`), a `Bearer` token, an `Authorization:`, `X-Api-Key:` or
-  `Api-Key:` header value. A password typed inside a permission rule or other free text (such as
-  `curl -u user:password`) is not detected; only token formats, auth headers and URLs with a
-  password are. Keep passwords out of permission rules and flag values.
-
-A value that fails is left out; a flag left with no value goes too, with a note. A flag that limits
-the agent (the "restricting" column) is never lost quietly: if it, or any of its values, can't be
-saved (a value of the wrong shape, a credential in it, a missing value, a `-c` key of a restricting
-family with an unexpected value), the tab's agent session is left out: the tab is saved with its
-session ID but none of its flags, and the reason in `leftOut`, and `save` says "left out its agent
-session: a restricting flag (`<name>`) could not be saved; resume it by hand". Restore then never
-resumes it: it warns with the reason and opens a plain shell, or skips the tab while its session is
-open, because resuming without the flag would allow more than you did. The reason names flags,
-never their values. (An agent record with a control character in its kind, ID or flags is saved as
-a plain terminal tab: its ID can't be trusted.) A launch
-that is not a session (Claude Code with `--print`/`-p` or `--no-session-persistence`, or a
-subcommand such as `claude mcp`) is left out the same way.
+Kept values are checked too: a name is one word, a path can't be inline JSON, and no value may hold
+a known credential format. A record of every session seen (`sessions.json`) keeps each session's
+newest launch, so an older copy of a snapshot never resumes it with other flags. The full rules
+(value checks, Codex `-c` keys, hidden and teammate flags, the record) are in
+[How flags are restored](https://sessionsnap.pawanpaudel.com.np/docs.html#restoring).
 
 **Caveat (Claude Code `--settings` under cmux):** cmux 0.65, the version checked, usually records a
 Claude Code launch without your `--settings`, when it can merge your settings file into its own hook
@@ -282,50 +252,6 @@ file are not restored. Resume such sessions by hand, or pass the restrictions wi
 (`--disallowedTools`, `--permission-mode`). When the merge can't run, cmux records your
 `--settings` as given, and the rules above apply. Other cmux versions are unverified. Codex launches
 are recorded as you typed them.
-
-Loading a snapshot applies the same lists and rules (for `show`, the web UI, diffs, saves and
-restore), so a snapshot saved by an older sessionsnap never shows or passes a flag that is no longer
-allowed. A tab whose saved flags can't be passed again (a restricting flag that can't be kept, or an
-untested agent's tab with flags) keeps its session ID but none of its flags, with the reason
-(`leftOut`): `show` gives it, and restore opens a plain shell in a new workspace, or skips the tab
-in an open one, with the reason. A `leftOut` edited by hand that is blank, longer than 200
-characters, or holds a control character or a credential is shown as "its flags were left out;
-resume it by hand".
-
-sessionsnap keeps a record of every session it has seen (`sessions.json`): the flags of its newest
-launch as read from cmux, or why it was left out. Every live read of cmux writes it, stamped with
-the time cmux was read: `save` (what it captured), and edits that read cmux (`--add-session`,
-`--session`, `ws --add-live`: every open session's launch). Copies (`save --from`, `ws --from`),
-other edits and restores never do, so an older copy of a session can't replace what was seen
-last. Once left out, a session stays left out. Pruning or deleting versions never removes from
-it. It is built from every snapshot the first time it is needed; a record that can't be read is
-kept as `sessions.json.bad-<time>` and built again. Before a save writes a version, it marks the
-record as about to change (`sessions.pending/`), and refuses to save if it can't; when the update
-then fails, the record is kept and completed the next time it is read, from the earliest failed
-update on (every version, when that time can't be trusted). Building or completing it from the snapshots compares every
-flag the versions keep, and version times are not trusted to tell which launch came last: a session
-the record lacks takes the flags its versions agree on; one whose versions disagree, or whose
-entry is contradicted by a version written since it was seen and since the failed update, is left
-out ("its flags differ between saved versions; resume it by
-hand") until the next save or edit reads it live from cmux and records that launch; one left out
-in any version, or whose live launch had flags that couldn't be kept, is left out for good.
-
-Everything that resumes a session reads it when the plan is made (`restore` of any snapshot or
-version, `recent`, and `apply`, which rebuilds the plan): a session the record has left out is left
-out (a plain shell with the reason, or skipped in an open workspace), and one it has flags for
-resumes with those, with a warning ("using the session's newest known flags") when the tab's own
-differ. A session put in a tab by an edit (`--add-session`, `--session`, `ws --from`) takes its
-flags from there too, or, when it is open in the terminal, the flags it runs with now (a launch that loses
-it leaves it out); a session seen nowhere resumes with no flags and a warning ("launch flags
-unknown; resuming with defaults").
-
-The tokens that pick another session are taken out before the list applies: the agent's own resume
-words and resume flags with the old ID, its continue flag, Claude Code's `--session-id <id>` and
-`--fork-session`, Codex's `resume|fork <uuid|--last>`. A Codex launch that is a subcommand
-(`codex exec`, `codex review`, …) is not a session and is left out.
-
-A tab with an invalid session ID, or an agent sessionsnap does not know, reopens as a plain shell
-in its folder, with a warning.
 
 Want another agent supported? See [Add an agent](ARCHITECTURE.md#add-an-agent).
 
