@@ -17,19 +17,37 @@ sha() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1"; else sha2
 
 # --- fake tools and releases -----------------------------------------------
 mkdir -p "$T/bin" "$T/dist"
+# FAKE_API_TAG: the API's latest tag_name (unset: the API fails, as when rate-limited).
+# FAKE_REDIRECT_TAG: where github.com's releases/latest redirects (unset: no release yet).
 cat >"$T/bin/curl" <<'EOF'
 #!/bin/sh
 out=""
 url=""
+head=0
+write=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift ;;
-    -w | --retry | -H | --connect-timeout | --max-time) shift ;;
+    -w) write="$2"; shift ;;
+    --retry | -H | --connect-timeout | --max-time) shift ;;
+    --*) ;;
+    -*I*) head=1 ;;
     -*) ;;
     *) url="$1" ;;
   esac
   shift
 done
+case "$url" in
+  https://api.github.com/repos/*/releases/latest)
+    [ -n "${FAKE_API_TAG:-}" ] || exit 22
+    printf '{\n  "url": "%s",\n  "tag_name": "v%s",\n  "name": "v%s"\n}\n' "$url" "$FAKE_API_TAG" "$FAKE_API_TAG"
+    exit 0 ;;
+  https://github.com/*/releases/latest)
+    # A HEAD request that follows the redirect; with no release GitHub lands on .../releases.
+    [ "$head" = 1 ] && [ "$write" = '%{url_effective}' ] || exit 22
+    if [ -n "${FAKE_REDIRECT_TAG:-}" ]; then printf '%s/tag/v%s' "${url%/latest}" "$FAKE_REDIRECT_TAG"; else printf '%s' "${url%/latest}"; fi
+    exit 0 ;;
+esac
 f="$FAKE_DIST/${url##*/}"
 [ -f "$f" ] || exit 22
 if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
@@ -82,6 +100,7 @@ run Darwin arm64 zsh || fail "macOS install"
 has_out "(universal-apple-darwin)" || fail "macOS picks the universal build"
 has_out "sessionsnap 9.9.9 is installed." || fail "macOS reports the version"
 has_out "install-cmux" || fail "macOS mentions the palette step"
+! has_out "comes first on PATH" || fail "no shadowing warning without another sessionsnap"
 [ -x "$T/home/.local/bin/sessionsnap" ] || fail "binary in ~/.local/bin"
 grep -qxF "export PATH=\"$T/home/.local/bin:\$PATH\"" "$T/home/.zshrc" || fail "zsh PATH line"
 # Re-running upgrades in place: one PATH line, no temp files left.
@@ -98,6 +117,30 @@ grep -qF "$T/home/.local/bin" "$T/home/.bashrc" || fail "bash PATH line in .bash
 run Linux aarch64 fish XDG_CONFIG_HOME="$T/home/xdg" || fail "Linux aarch64 install"
 has_out "(aarch64-unknown-linux-musl)" || fail "Linux aarch64 asset"
 grep -qxF "fish_add_path \"$T/home/.local/bin\"" "$T/home/xdg/fish/config.fish" || fail "fish PATH line"
+
+# An older sessionsnap earlier on PATH than the install dir: installed, with a warning naming it.
+mkdir -p "$T/shadow"
+printf '#!/bin/sh\necho "sessionsnap 0.0.1"\n' >"$T/shadow/sessionsnap"
+chmod 755 "$T/shadow/sessionsnap"
+run Linux x86_64 bash PATH="$T/shadow:$T/bin:/usr/bin:/bin:$T/home/.local/bin" || fail "install with a shadowing sessionsnap"
+has_out "$T/shadow/sessionsnap comes first on PATH" || fail "warns about the shadowing sessionsnap"
+has_out "put $T/home/.local/bin before $T/shadow in PATH" || fail "says how to fix the PATH order"
+# Already first on PATH (the dir as a symlink): no warning.
+ln -s "$T/home/.local/bin" "$T/linked"
+run Linux x86_64 bash PATH="$T/linked:$T/bin:/usr/bin:/bin:$T/shadow" || fail "install with the dir first on PATH"
+! has_out "comes first on PATH" || fail "no warning when the installed sessionsnap comes first"
+
+# No SESSIONSNAP_VERSION: the latest release, from the API (preferred over the redirect)...
+run Linux x86_64 bash SESSIONSNAP_VERSION= FAKE_API_TAG=9.9.9 FAKE_REDIRECT_TAG=7.7.7 || fail "latest release via the API"
+has_out "Looking up the latest release" || fail "looks up the latest release"
+has_out "sessionsnap 9.9.9 is installed." || fail "installs the API's latest release"
+# ...or, when the API fails, from where releases/latest redirects.
+run Linux x86_64 bash SESSIONSNAP_VERSION= FAKE_REDIRECT_TAG=9.9.9 || fail "latest release via the redirect"
+has_out "sessionsnap 9.9.9 is installed." || fail "installs the redirect's latest release"
+# No release published yet: a clear message, nothing installed.
+run Linux x86_64 bash SESSIONSNAP_VERSION= && fail "no release must be refused"
+has_out "no sessionsnap release is published yet" || fail "no-release message"
+[ ! -e "$T/home/.local/bin/sessionsnap" ] || fail "installed something with no release"
 
 run Linux riscv64 bash && fail "riscv64 must be refused"
 has_out "no sessionsnap build for Linux on riscv64" || fail "riscv64 message"

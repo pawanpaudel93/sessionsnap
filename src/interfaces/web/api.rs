@@ -605,6 +605,7 @@ mod tests {
 
     #[test]
     fn shows_run_one_at_a_time_and_at_most_once_a_gap() {
+        const GAP: Duration = Duration::from_secs(2);
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
         let finish_rx = std::sync::Mutex::new(finish_rx);
@@ -618,7 +619,9 @@ mod tests {
                 let _ = finish_rx.lock().unwrap().recv_timeout(Duration::from_secs(5));
                 Ok(Shown::whole("dock"))
             }),
-        );
+        )
+        // Wider than SHOW_GAP, so a loaded machine still asks for the "too soon" show in time.
+        .with_show_limits(GAP, SHOW_HANG);
         let show = || s.handle(&show_req(&[("content-type", "application/json")]), &|_, _| anyhow::bail!("no run"));
         std::thread::scope(|scope| {
             let first = scope.spawn(show);
@@ -630,7 +633,7 @@ mod tests {
         });
         finish_tx.send(()).unwrap();
         assert_eq!(show().status, 429, "too soon after the last");
-        std::thread::sleep(SHOW_GAP + Duration::from_millis(100));
+        std::thread::sleep(GAP + Duration::from_millis(100));
         finish_tx.send(()).unwrap();
         assert_eq!(show().status, 200, "once the gap has passed");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -639,6 +642,7 @@ mod tests {
     #[test]
     fn a_hung_show_blocks_later_ones_only_for_a_while() {
         use std::sync::mpsc::channel;
+        const HANG: Duration = Duration::from_secs(2);
         let ((started, started_rx), (release1, released1), (release2, released2)) =
             (channel(), channel::<()>(), channel::<()>());
         let (started, released) = (Mutex::new(started), [Mutex::new(released1), Mutex::new(released2)]);
@@ -656,13 +660,15 @@ mod tests {
                 Ok(Shown::whole("dock"))
             }),
         )
-        .with_show_limits(Duration::ZERO, Duration::from_millis(300));
+        // Each 429 below must come within HANG of a show's start: seconds, so a loaded machine
+        // still makes it, and the sleep only has to outlast it.
+        .with_show_limits(Duration::ZERO, HANG);
         let show = || s.handle(&show_req(&[("content-type", "application/json")]), &|_, _| anyhow::bail!("no run"));
         std::thread::scope(|scope| {
             let hung = scope.spawn(show);
             started_rx.recv_timeout(Duration::from_secs(10)).expect("the show started");
             assert_eq!(show().status, 429, "while the first runs");
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(HANG + Duration::from_millis(100));
             let second = scope.spawn(show);
             started_rx.recv_timeout(Duration::from_secs(10)).expect("the show started");
             release1.send(()).unwrap();

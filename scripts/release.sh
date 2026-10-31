@@ -3,7 +3,8 @@
 #
 # Bumps the version, runs the CI checks, builds dist/ (a universal macOS binary and static Linux
 # builds for x86_64 and arm64, each as a tarball with a .sha256), then commits, tags, pushes main
-# and the tag, and creates the GitHub Release with those assets. Uses your existing `gh` login.
+# and the tag, creates the GitHub Release as a draft with those assets, and publishes it. Uses your
+# existing `gh` login.
 # The Linux builds run in one Docker container of this Mac's own architecture
 # (RELEASE_RUST_IMAGE, default rust:1.99.0-alpine), cross-linking the other with rust-lld.
 #
@@ -289,14 +290,21 @@ INSTALL='curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh'
 } >"$DIST/NOTES.md"
 
 # --- publish ---------------------------------------------------------------
+# The release is created as a draft with every asset, then published: until that last step
+# nothing is `latest`, and each failure below prints the commands that finish or undo it.
+PRE=
+# A pre-release (X.Y.Z-rc1) must not become `latest`, which install.sh and `sessionsnap update` take.
+case "$VERSION" in *-*) PRE=" --prerelease" ;; esac
+CREATE="gh release create $TAG --repo $REPO --verify-tag --draft --title $TAG$PRE --notes-file dist/NOTES.md$ASSETS"
+PUBLISH="gh release edit $TAG --repo $REPO --draft=false"
 cat <<EOF
 
 Ready to publish $TAG:
   commit  "chore: release $TAG"  ($VERSION_FILES; skipped if unchanged)
   tag     $TAG (annotated)
   push    git push origin main && git push origin $TAG
-  release gh release create $TAG --repo $REPO --notes-file dist/NOTES.md
-         $ASSETS
+  draft   $CREATE
+  publish $PUBLISH
 EOF
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -316,24 +324,52 @@ if [ "$YES" != 1 ]; then
   esac
 fi
 
+nl='
+'
+# recover WHAT FINISH ABANDON: say what failed, print the commands that finish or undo the release.
+recover() {
+  printf '\033[31merror:\033[0m %s\n\nTo finish the release, from %s run:\n%s\n\nOr to abandon it:\n%s\n' \
+    "$1" "$ROOT" "$2" "$3" >&2
+  exit 1
+}
+
 say "Committing and tagging $TAG"
 # shellcheck disable=SC2086
 git add -- $VERSION_FILES
-git diff --cached --quiet || git commit --quiet -m "chore: release $TAG"
+UNDO_COMMIT=""
+KEPT=""
+if ! git diff --cached --quiet; then
+  git commit --quiet -m "chore: release $TAG"
+  UNDO_COMMIT="${nl}  git reset --keep HEAD~1"
+  # Once main is pushed, its release commit stays there.
+  KEPT="${nl}  (origin's main keeps \"chore: release $TAG\": release $TAG again later, or git revert it)"
+fi
 RESTORE=0
-git tag -a "$TAG" -m "$TAG"
+UNTAGGED=${UNDO_COMMIT#"$nl"}
+git tag -a "$TAG" -m "$TAG" ||
+  recover "tagging $TAG failed." "  git tag -a $TAG -m $TAG${nl}  git push origin main${nl}  git push origin $TAG${nl}  $CREATE${nl}  $PUBLISH" \
+    "${UNTAGGED:-  (nothing was committed or tagged)}"
 
 say "Pushing main and $TAG"
-git push origin main || die "push of main failed; the commit and tag $TAG are local only."
-git push origin "$TAG" || die "push of $TAG failed; retry: git push origin $TAG"
+git push origin main ||
+  recover "push of main failed; the commit and tag $TAG are local only." \
+    "  git push origin main${nl}  git push origin $TAG${nl}  $CREATE${nl}  $PUBLISH" "  git tag -d $TAG$UNDO_COMMIT"
+git push origin "$TAG" ||
+  recover "push of $TAG failed; main is pushed, the tag is local only." \
+    "  git push origin $TAG${nl}  $CREATE${nl}  $PUBLISH" "  git tag -d $TAG$KEPT"
+UNDO_TAG="  git push origin :refs/tags/$TAG$nl  git tag -d $TAG$KEPT"
 
-say "Creating GitHub Release $TAG"
-# A pre-release (X.Y.Z-rc1) must not become `latest`, which install.sh and `sessionsnap update` take.
-PRE=
-case "$VERSION" in *-*) PRE=--prerelease ;; esac
+say "Creating draft GitHub Release $TAG with its assets"
 # shellcheck disable=SC2086
-gh release create "$TAG" --repo "$REPO" --verify-tag --title "$TAG" $PRE --notes-file "$DIST/NOTES.md" $ASSETS ||
-  die "release failed; retry: gh release create $TAG --repo $REPO --verify-tag --title $TAG $PRE --notes-file dist/NOTES.md $ASSETS"
+gh release create "$TAG" --repo "$REPO" --verify-tag --draft --title "$TAG" $PRE --notes-file "$DIST/NOTES.md" $ASSETS ||
+  recover "creating the draft release failed; $TAG is on origin. A partial draft may exist: gh release view $TAG --repo $REPO" \
+    "  gh release delete $TAG --repo $REPO --yes   # only if that draft exists${nl}  $CREATE${nl}  $PUBLISH" \
+    "  gh release delete $TAG --repo $REPO --yes   # only if that draft exists${nl}$UNDO_TAG"
+
+say "Publishing $TAG"
+gh release edit "$TAG" --repo "$REPO" --draft=false ||
+  recover "publishing the draft failed; $TAG and its draft release (with all assets) are on origin." \
+    "  $PUBLISH" "  gh release delete $TAG --repo $REPO --yes${nl}$UNDO_TAG"
 
 echo
 say "Released $TAG: https://github.com/$REPO/releases/tag/$TAG"
