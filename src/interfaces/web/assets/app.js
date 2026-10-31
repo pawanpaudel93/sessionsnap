@@ -836,10 +836,9 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
   const input = h("input", { placeholder, "aria-label": placeholder });
   const show = (items) => {
     results.replaceChildren(...(items.length
-      ? items.map((it) => h("li", { tabindex: "0", onclick: it.pick,
-        onkeydown: (e) => { if (e.key === "Enter") it.pick(); } },
-      h("span", { class: "ellipsis" }, it.label),
-      it.sub ? h("span", { class: "muted small ellipsis" }, it.sub) : null))
+      ? items.map((it) => h("li", {}, h("button", { class: "pick", onclick: it.pick },
+        h("span", { class: "ellipsis" }, it.label),
+        it.sub ? h("span", { class: "muted small ellipsis" }, it.sub) : null)))
       : [h("li", { class: "note" }, input.value.trim() ? "No matches." : emptyNote)]));
   };
   // `load` returns null for "nothing typed yet": the list then stays empty.
@@ -857,7 +856,7 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
     input.timer = setTimeout(run, 250);
   });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") results.querySelector("li[tabindex]")?.focus();
+    if (e.key === "ArrowDown") results.querySelector("button")?.focus();
   });
   const el = h("div", { class: "picker" }, input, results);
   el.focusInput = () => input.focus();
@@ -1130,13 +1129,21 @@ async function renderRestore(name) {
     });
     const bodyEl = h("ol", { class: expanded.has(key) ? "ws-body" : "ws-body hidden" }, w.tabs.map((t, i) =>
       h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title), agentLabel(t), runsLabel(t)))));
-    const toggle = h("button", { class: `icon toggle ${expanded.has(key) ? "open" : ""}`, title: "Show tabs", "aria-label": "Show tabs",
-      onclick: () => {
-        const open = !expanded.has(key);
-        open ? expanded.add(key) : expanded.delete(key);
-        toggle.classList.toggle("open", open);
-        bodyEl.classList.toggle("hidden", !open);
-      } }, icon("chevron"));
+    // Says what a click does, like the editor's toggle.
+    const label = (open) => {
+      const text = open ? "Hide tabs" : "Show tabs";
+      toggle.title = text;
+      toggle.setAttribute("aria-label", text);
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.classList.toggle("open", open);
+    };
+    const toggle = h("button", { class: "icon toggle", onclick: () => {
+      const open = !expanded.has(key);
+      open ? expanded.add(key) : expanded.delete(key);
+      label(open);
+      bodyEl.classList.toggle("hidden", !open);
+    } }, icon("chevron"));
+    label(expanded.has(key));
     return h("div", { class: "ws" },
       h("div", { class: "ws-head" }, toggle,
         h("label", { class: "grow" }, wsBox, h("span", { class: "name ellipsis" }, w.name)),

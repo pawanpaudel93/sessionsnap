@@ -193,8 +193,13 @@ input[type="checkbox"] { height: auto; width: 14px; margin: 0; accent-color: var
 .picker input { width: 100%; border: none; border-bottom: 1px solid var(--line); border-radius: 0; height: 32px; }
 .picker input:focus { box-shadow: none; }
 .picker ul { max-height: 260px; overflow-y: auto; }
-.picker li { padding: 6px 10px; cursor: pointer; display: flex; flex-direction: column; }
-.picker li:hover, .picker li:focus-visible { background: var(--accent-bg); outline: none; }
+.picker .pick {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; height: auto; padding: 6px 10px;
+  border: none; border-radius: 0; background: none; text-align: left; white-space: normal;
+}
+.picker .pick > span { max-width: 100%; }
+.picker .pick:hover:not(:disabled), .picker .pick:focus-visible { background: var(--accent-bg); }
+.picker .pick:focus-visible { outline-offset: -2px; }
 .picker .note { padding: 8px 10px; color: var(--muted); font-size: 12px; }
 .add-ws { width: 100%; margin-top: 8px; height: 34px; border-style: dashed; color: var(--muted); background: none; }
 .add-ws-panel { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
