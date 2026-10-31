@@ -282,6 +282,8 @@ fn browser_open<'a>(os: &str, url: &'a str) -> Result<BrowserOpen<'a>> {
 
 /// A `list-panes` line; None for one that doesn't parse.
 fn parse_pane(line: &str) -> Option<Pane> {
+    // tmux before 3.5 writes the separator, a control character, as the text `\037`.
+    let line = line.replace("\\037", &SEP.to_string());
     let f: Vec<&str> = line.split(SEP).collect();
     let [started, session_id, session_name, kept_name, kept_as, window_name, pane_id, pid, cwd] = f[..] else {
         return None;
@@ -421,6 +423,18 @@ mod tests {
             ("logs", "/w/api/logs", Some("%2"))
         );
         assert_eq!(open.workspaces[0].reference.as_deref(), Some("$1"));
+    }
+
+    #[test]
+    fn panes_from_a_tmux_that_escapes_the_separator_are_read() {
+        // tmux 3.4 prints the 0x1f separator as `\037`.
+        let escaped = line("$1", "api", "", "server", "%1", 100, "/w/api").replace(SEP, "\\037");
+        let open = tmux(&[escaped], FakeProcs::default()).read_open_state().unwrap();
+        let tab = &open.workspaces[0].tabs[0];
+        assert_eq!(
+            (open.workspaces[0].name.as_str(), tab.title.as_str(), tab.cwd.as_str()),
+            ("api", "server", "/w/api")
+        );
     }
 
     #[test]
