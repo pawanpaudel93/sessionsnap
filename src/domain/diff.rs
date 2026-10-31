@@ -43,8 +43,8 @@ pub enum Change {
     },
 }
 
-/// Changes from `a` to `b`. Workspaces match by name (case-insensitive), then by cmux workspace ID
-/// (a rename); tabs by `Tab::key`.
+/// Changes from `a` to `b`. Workspaces match by name (case-insensitive), then as a rename by cmux
+/// workspace ID or, without one (tmux), by sharing most of their tabs; tabs match by `Tab::key`.
 pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
     let names = |ws: &[Workspace]| ws.iter().map(|w| w.name.to_lowercase()).collect::<HashSet<_>>();
     let nb = names(b);
@@ -61,7 +61,9 @@ pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
         let key = w.name.to_lowercase();
         if let Some(o) = a.iter().find(|o| o.name.to_lowercase() == key) {
             old.insert(key, o);
-        } else if let Some(o) = w.cmux_workspace_id.as_deref().and_then(|id| gone.get(id)) {
+        } else if let Some(o) =
+            w.cmux_workspace_id.as_deref().and_then(|id| gone.get(id).copied()).or_else(|| same_tabs(w, a, &nb, &old))
+        {
             out.push(Change::WorkspaceRenamed { from: o.name.clone(), to: w.name.clone() });
             old.insert(key, o);
         } else {
@@ -120,6 +122,23 @@ pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
         }
     }
     out
+}
+
+/// The unmatched workspace of `a` sharing the most tabs with `w`, if they share more than half of
+/// the larger one's tabs: `w` under its old name.
+fn same_tabs<'a>(
+    w: &Workspace,
+    a: &'a [Workspace],
+    nb: &HashSet<String>,
+    old: &HashMap<String, &Workspace>,
+) -> Option<&'a Workspace> {
+    let keys: HashSet<String> = w.tabs.iter().map(|t| t.key()).collect();
+    a.iter()
+        .filter(|o| !nb.contains(&o.name.to_lowercase()) && !old.values().any(|m| std::ptr::eq(*m, *o)))
+        .map(|o| (o.tabs.iter().filter(|t| keys.contains(&t.key())).count(), o))
+        .filter(|(shared, o)| shared * 2 > o.tabs.len().max(w.tabs.len()))
+        .max_by_key(|(shared, _)| *shared)
+        .map(|(_, o)| o)
 }
 
 /// key → (workspace name, title) of the first tab with that key.
@@ -203,11 +222,15 @@ mod tests {
             ]
         );
         assert_eq!(summary(&c), "1 workspace renamed, 1 workspace changed");
-        // Without a cmux ID (tmux) a rename stays a remove and an add.
+        // Without a cmux ID (tmux), the same tabs make it a rename.
         let (mut a2, mut b2) = (a.clone(), b.clone());
         a2[0].cmux_workspace_id = None;
         b2[0].cmux_workspace_id = None;
-        assert_eq!(summary(&diff(&a2, &b2)), "+1 workspace, -1 workspace, 1 tab moved");
+        assert_eq!(summary(&diff(&a2, &b2)), "1 workspace renamed, 1 workspace changed");
+        // Half the tabs or fewer in common: a new workspace that a tab moved to.
+        a2[0].tabs.push(claude("two", B));
+        b2[0].tabs = vec![claude("two", B), claude("three", C)];
+        assert_eq!(summary(&diff(&a2, &b2)), "+1 workspace, -1 workspace, +1 tab, -1 tab, 1 tab moved");
         assert_eq!(summary(&diff(&a, &a)), "no changes");
         // Changed launch flags show as a changed tab.
         let mut flagged = a.clone();
