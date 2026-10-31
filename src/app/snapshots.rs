@@ -73,7 +73,11 @@ fn save_as(
             let open = super::read_open(ctx.terminal.as_ref(), &ctx.agents)?;
             let terminal = ctx.terminal.name();
             // Not running and nothing saved by it (tmux keeps no state): nothing to snapshot.
-            if !open.live && (scheduled || open.workspaces.is_empty()) {
+            // Not live: either the terminal isn't running (a save would be stale), or it runs but
+            // doesn't answer this process (cmux's default socket mode, for a launchd job), and
+            // what it wrote moments ago is the state to save.
+            let running = !open.live && ctx.terminal.is_running();
+            if !open.live && (open.workspaces.is_empty() || (scheduled && !running)) {
                 return Err(failure(Exit::NothingToDo, format!("{terminal} is not running")));
             }
             if scheduled && open.workspaces.is_empty() {
@@ -85,9 +89,15 @@ fn save_as(
             let open_notes = open.warnings.iter().filter(|w| w.workspace.as_deref().is_none_or(saved));
             notes.splice(0..0, open_notes.map(|w| w.message.clone()));
             if !open.live {
-                let stale = format!(
-                    "{terminal} is not running: saved from what it last wrote to disk, which may be out of date"
-                );
+                let stale = if running {
+                    format!(
+                        "{terminal} didn't let sessionsnap connect (it only answers programs started inside it), so this was saved from the state it writes every few seconds"
+                    )
+                } else {
+                    format!(
+                        "{terminal} is not running: saved from what it last wrote to disk, which may be out of date"
+                    )
+                };
                 notes.insert(0, stale);
             }
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));

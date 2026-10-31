@@ -136,7 +136,9 @@ An automatic snapshot is saved every interval by launchd (macOS only) from the t
 in (cmux or tmux), even when sessionsnap isn't running. A run with no changes writes nothing, so its
 history holds one version per change. Runs are skipped while that terminal is not running or shows
 no workspaces, and a run from another terminal (`schedule run` by hand inside the other one) is
-skipped too. `list` shows automatic snapshots under their own heading, and only their schedule saves to them: copy a version
+skipped too. cmux, in its default socket mode, only answers programs started inside it, so a
+scheduled run (started by launchd) saves from the state cmux writes every few seconds, and says so.
+`list` shows automatic snapshots under their own heading, and only their schedule saves to them: copy a version
 out with `sessionsnap save <name> --from <auto>@<v>` to keep it.
 
 ```sh

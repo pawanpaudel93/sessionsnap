@@ -46,11 +46,26 @@ fn a_scheduled_save_skips_an_empty_or_stopped_cmux() {
     assert!(o.json["reason"].as_str().unwrap().contains("no workspaces"));
     env.fake.state.borrow_mut().workspaces = saved;
     env.fake.state.borrow_mut().live = false;
+    env.fake.running.set(false);
     let o = env.run(&["schedule", "run", "work"]).unwrap();
     assert!(o.json["reason"].as_str().unwrap().contains("not running"));
     let listed = env.run(&["schedule", "list"]).unwrap().json;
     assert_eq!(listed["schedules"][0]["lastRun"]["result"], "skipped");
     assert_eq!(env.run(&["history", "work"]).unwrap().json["versions"].as_array().unwrap().len(), 1);
+}
+
+/// cmux's default socket mode answers only programs started inside it, so a launchd job finds
+/// cmux running but can't connect: it saves from the state cmux writes every few seconds.
+#[test]
+fn a_scheduled_save_uses_the_state_file_when_cmux_runs_but_will_not_connect() {
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap();
+    env.fake.state.borrow_mut().workspaces.pop();
+    env.fake.state.borrow_mut().live = false; // read from the state file
+    let o = env.run(&["schedule", "run", "work"]).unwrap();
+    assert_eq!(o.json["version"], 2, "{}", o.json);
+    assert!(o.json["warnings"].to_string().contains("didn't let sessionsnap connect"), "{}", o.json);
+    assert_eq!(env.run(&["schedule", "list"]).unwrap().json["schedules"][0]["lastRun"]["result"], "saved");
 }
 
 #[test]
