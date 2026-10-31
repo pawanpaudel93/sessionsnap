@@ -69,6 +69,27 @@ fn full_save_keeps_colors_and_terminal_commands() {
     assert_eq!(shown.json["version"]["workspaces"][0]["color"], "blue");
 }
 
+/// A save of some workspaces keeps what a full save keeps: a terminal tab's saved command.
+#[test]
+fn partial_save_keeps_terminal_commands() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let dir = env.dir.path().join("store/snapshots/work");
+    let v1 = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "json"))
+        .unwrap();
+    let mut json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&v1).unwrap()).unwrap();
+    json["workspaces"][0]["tabs"][1]["command"] = "make dev".into();
+    std::fs::write(&v1, json.to_string()).unwrap();
+    env.fake.state.borrow_mut().workspaces[0].cwd = "/w/a2".into();
+    let o = env.run(&["save", "work", "-w", "Alpha"]).unwrap();
+    assert_eq!(o.json["version"], 2, "{}", o.json);
+    let shown = env.run(&["show", "work", "--json"]).unwrap();
+    assert_eq!(shown.json["version"]["workspaces"][0]["tabs"][1]["command"], "make dev", "{}", shown.json);
+}
+
 #[test]
 fn open_lists_live_workspaces() {
     let env = setup();

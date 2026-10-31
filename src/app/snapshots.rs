@@ -139,7 +139,7 @@ fn save_as(
             }
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
-                Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
+                Some(p) if !only.is_empty() => merge(&p.workspaces, carry_over(&p.workspaces, captured)),
                 Some(p) => carry_over(&p.workspaces, captured),
                 None => captured,
             };
