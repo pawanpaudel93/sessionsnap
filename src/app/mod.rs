@@ -19,11 +19,12 @@ pub mod update;
 use std::io::IsTerminal;
 
 use crate::adapters::agents::Agents;
+use crate::adapters::process::ProcessRunner;
 use crate::adapters::store::Store;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
-use crate::adapters::terminal::cmux::runner::ProcessRunner;
 use crate::adapters::terminal::procs::System;
 use crate::adapters::terminal::tmux::Tmux;
+use crate::domain::terminal::TerminalKind;
 use crate::ports::{OpenState, Scheduler, Terminal};
 
 /// Everything a command needs; tests build it with fakes.
@@ -49,16 +50,16 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    /// `terminal`: "cmux" or "tmux" (`--terminal`); None picks one with `terminal_for`.
+    /// `terminal`: a `TerminalKind` name (`--terminal`); None picks one with `terminal_for`.
     pub fn open_default(json: bool, yes: bool, terminal: Option<&str>) -> anyhow::Result<Ctx> {
         let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
         let inside = Inside { tmux: set("TMUX"), cmux: set("CMUX_WORKSPACE_ID") || set("CMUX_SURFACE_ID") };
         let terminal = Box::new(Detected {
-            asked: terminal.map(str::to_string),
+            asked: terminal.and_then(TerminalKind::parse),
             inside,
             cmux: CmuxCli::open_default()?,
             tmux: Tmux::open_default(),
-            tmux_chosen: std::cell::OnceCell::new(),
+            chosen: std::cell::OnceCell::new(),
         });
         let store = Store::open_default()?;
         let agents = Agents::open_default(&store.root().join("cache"))?;
@@ -79,31 +80,37 @@ impl Ctx {
 /// The terminal, picked (`terminal_for`) the first time a command uses it: picking may ask cmux
 /// whether it runs, which commands that never touch a terminal (`list`, `show`, `update`…) skip.
 struct Detected {
-    asked: Option<String>,
+    asked: Option<TerminalKind>,
     inside: Inside,
     cmux: CmuxCli<ProcessRunner>,
     tmux: Tmux<ProcessRunner, System<ProcessRunner>>,
-    tmux_chosen: std::cell::OnceCell<bool>,
+    chosen: std::cell::OnceCell<TerminalKind>,
 }
 
 impl Detected {
     fn get(&self) -> &dyn Terminal {
-        let tmux = *self.tmux_chosen.get_or_init(|| {
-            let pick = terminal_for(
-                self.asked.as_deref(),
-                self.inside,
-                || self.cmux.is_running(),
-                || self.tmux.has_sessions(),
-            );
-            pick == "tmux"
+        let kind = *self.chosen.get_or_init(|| {
+            terminal_for(self.asked, self.inside, || self.cmux.is_running(), || self.tmux.has_sessions())
         });
-        if tmux { &self.tmux } else { &self.cmux }
+        match kind {
+            TerminalKind::Cmux => &self.cmux,
+            TerminalKind::Tmux => &self.tmux,
+        }
+    }
+}
+
+/// Shows `url` in terminal `kind`'s place for pages, with a client of its own (the web UI shows
+/// pages from a thread of their own).
+pub fn show_url(kind: TerminalKind, url: &str) -> anyhow::Result<crate::ports::Shown> {
+    match kind {
+        TerminalKind::Cmux => CmuxCli::open_default()?.show_url(url),
+        TerminalKind::Tmux => Tmux::open_default().show_url(url),
     }
 }
 
 impl Terminal for Detected {
-    fn name(&self) -> &'static str {
-        self.get().name()
+    fn kind(&self) -> TerminalKind {
+        self.get().kind()
     }
     fn is_running(&self) -> bool {
         self.get().is_running()
@@ -138,17 +145,17 @@ pub struct Inside {
 /// (tmux) first; else, outside both (another terminal app, launchd), whichever runs: cmux, then a
 /// tmux with sessions; else cmux.
 pub fn terminal_for(
-    asked: Option<&str>,
+    asked: Option<TerminalKind>,
     inside: Inside,
     cmux_running: impl FnOnce() -> bool,
     tmux_running: impl FnOnce() -> bool,
-) -> &str {
+) -> TerminalKind {
     match asked {
         Some(t) => t,
-        None if inside.tmux => "tmux",
-        None if inside.cmux => "cmux",
-        None if !cmux_running() && tmux_running() => "tmux",
-        None => "cmux",
+        None if inside.tmux => TerminalKind::Tmux,
+        None if inside.cmux => TerminalKind::Cmux,
+        None if !cmux_running() && tmux_running() => TerminalKind::Tmux,
+        None => TerminalKind::Cmux,
     }
 }
 
@@ -215,19 +222,20 @@ mod tests {
 
     #[test]
     fn picks_the_terminal_asked_for_else_the_one_it_runs_in_else_the_one_running() {
+        use TerminalKind::{Cmux, Tmux};
         let never = || -> bool { panic!("not probed when the answer is known") };
         let (tmux, cmux, both) =
             (Inside { tmux: true, cmux: false }, Inside { tmux: false, cmux: true }, Inside { tmux: true, cmux: true });
-        assert_eq!(terminal_for(Some("cmux"), tmux, never, never), "cmux");
-        assert_eq!(terminal_for(Some("tmux"), cmux, never, never), "tmux");
-        assert_eq!(terminal_for(None, tmux, never, never), "tmux");
-        assert_eq!(terminal_for(None, both, never, never), "tmux", "tmux inside a cmux tab");
-        assert_eq!(terminal_for(None, cmux, never, never), "cmux");
+        assert_eq!(terminal_for(Some(Cmux), tmux, never, never), Cmux);
+        assert_eq!(terminal_for(Some(Tmux), cmux, never, never), Tmux);
+        assert_eq!(terminal_for(None, tmux, never, never), Tmux);
+        assert_eq!(terminal_for(None, both, never, never), Tmux, "tmux inside a cmux tab");
+        assert_eq!(terminal_for(None, cmux, never, never), Cmux);
         // Outside both: the one running, cmux first.
         let outside = Inside::default();
-        assert_eq!(terminal_for(None, outside, || true, never), "cmux");
-        assert_eq!(terminal_for(None, outside, || false, || true), "tmux");
-        assert_eq!(terminal_for(None, outside, || false, || false), "cmux");
+        assert_eq!(terminal_for(None, outside, || true, never), Cmux);
+        assert_eq!(terminal_for(None, outside, || false, || true), Tmux);
+        assert_eq!(terminal_for(None, outside, || false, || false), Cmux);
     }
 
     #[test]

@@ -1,3 +1,6 @@
+//! Running other programs (cmux, tmux, ps, osascript…): the `Runner` the adapters use, so tests
+//! can fake them, with timeouts that stop a hung program and whatever it started.
+
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;

@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use super::runner::{Output, ProcessRunner, Runner};
 use super::{socket, state_file, tree};
+use crate::adapters::process::{Output, ProcessRunner, Runner};
 use crate::error::{Exit, failure};
 use crate::ports::{LaunchTab, OpenState, Shown, Terminal};
 

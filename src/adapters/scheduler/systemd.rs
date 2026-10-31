@@ -4,11 +4,11 @@
 //! logged in to (a server), `loginctl enable-linger` keeps them running.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result};
 
 use crate::adapters::home_dir;
+use crate::adapters::process::Output;
 use crate::domain::schedule::Schedule;
 use crate::error::{Exit, failure};
 use crate::ports::Scheduler;
@@ -45,20 +45,17 @@ impl Systemd {
         format!("{UNIT_PREFIX}{}", name.to_ascii_lowercase())
     }
 
-    fn systemctl(&self, args: &[&str]) -> Result<std::process::Output> {
-        Command::new(&self.systemctl)
-            .arg("--user")
-            .args(args)
-            .output()
-            .with_context(|| format!("running {}", self.systemctl))
+    fn systemctl(&self, args: &[&str]) -> Result<Output> {
+        let args: Vec<&str> = ["--user"].into_iter().chain(args.iter().copied()).collect();
+        super::run(&self.systemctl, &args).with_context(|| format!("running {}", self.systemctl))
     }
 
     fn systemctl_ok(&self, args: &[&str]) -> Result<()> {
         let out = self.systemctl(args)?;
-        if !out.status.success() {
+        if !out.success {
             return Err(failure(
                 Exit::Error,
-                format!("systemctl --user {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()),
+                format!("systemctl --user {} failed: {}", args.join(" "), out.stderr.trim()),
             ));
         }
         Ok(())
@@ -125,7 +122,7 @@ impl Scheduler for Systemd {
 /// <name>` once; the timer starts it every interval (first one interval from now: `schedule add`
 /// has just saved).
 pub fn units(program: &Path, name: &str, schedule: &Schedule, env: &[(String, String)]) -> Result<(String, String)> {
-    let terminal = schedule.terminal.as_deref().unwrap_or("cmux");
+    let terminal = schedule.terminal.unwrap_or_default().name();
     let program = program.to_string_lossy();
     let exec = [program.as_ref(), "--terminal", terminal, "schedule", "run", "--", name]
         .iter()
@@ -183,7 +180,7 @@ mod tests {
             created_at: "t".into(),
             stopped: false,
             last_run: None,
-            terminal: terminal.map(String::from),
+            terminal: terminal.and_then(crate::domain::terminal::TerminalKind::parse),
         }
     }
 

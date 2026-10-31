@@ -8,6 +8,7 @@ use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
 use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name, validate_new_name};
+use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, failure};
 
 /// What writing a version did.
@@ -111,7 +112,7 @@ fn save_as(
                 kind: kind.into(),
                 cmux_state_version: open.state_version,
                 from: None,
-                terminal: (terminal != "cmux").then(|| terminal.to_string()),
+                terminal: Some(ctx.terminal.kind()).filter(|&t| t != TerminalKind::Cmux),
             };
             (workspaces, source, notes)
         }

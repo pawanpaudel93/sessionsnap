@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 use crate::domain::flags::FlagCheck;
 use crate::domain::model::{SessionRef, Version};
 use crate::domain::schedule::Schedule;
+use crate::domain::terminal::TerminalKind;
 use anyhow::Result;
 
 /// What is open in the terminal.
@@ -103,9 +104,13 @@ pub struct LaunchTab {
 /// What sessionsnap needs from a terminal: read what is open, open workspaces and tabs. Implemented
 /// by `adapters::terminal::cmux::cli::CmuxCli` and `adapters::terminal::tmux::Tmux`.
 pub trait Terminal {
-    /// The terminal's name, as `--terminal` and saved versions give it.
+    /// Which terminal this is.
+    fn kind(&self) -> TerminalKind {
+        TerminalKind::Cmux
+    }
+    /// Its name, as `--terminal`, versions and messages give it.
     fn name(&self) -> &'static str {
-        "cmux"
+        self.kind().name()
     }
     /// True when the terminal is running and answers.
     fn is_running(&self) -> bool;

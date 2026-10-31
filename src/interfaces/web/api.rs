@@ -1,5 +1,6 @@
 //! The UI server's routes. Every API call runs one sessionsnap command through `cli::run_json`.
 
+use crate::domain::terminal::TerminalKind;
 use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
@@ -34,8 +35,8 @@ pub struct Server<'a> {
     pub token: String,
     /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes its terminal's.
     pub show: Box<ShowFn<'a>>,
-    /// The terminal the page's commands use ("cmux" or "tmux"), for its wording.
-    pub terminal: &'static str,
+    /// The terminal the page's commands use, for its wording.
+    pub terminal: TerminalKind,
     shows: ShowGate,
     /// Commands run one at a time, as before the server had workers. The store's per-snapshot lock
     /// guards its files; this also keeps one page's commands in order and bounds the work.
@@ -110,11 +111,11 @@ struct RunBody {
 
 impl<'a> Server<'a> {
     pub fn new(port: u16, token: String, show: Box<ShowFn<'a>>) -> Self {
-        Server { port, token, show, terminal: "cmux", shows: ShowGate::default(), runs: Mutex::new(()) }
+        Server { port, token, show, terminal: TerminalKind::Cmux, shows: ShowGate::default(), runs: Mutex::new(()) }
     }
 
     /// The server for a page whose commands use `terminal`.
-    pub fn for_terminal(mut self, terminal: &'static str) -> Self {
+    pub fn for_terminal(mut self, terminal: TerminalKind) -> Self {
         self.terminal = terminal;
         self
     }
@@ -351,7 +352,7 @@ mod tests {
             assert_eq!(s.handle(&req("DELETE", "/", &[], ""), mk).status, 405);
             let hello = body(&s.handle(&req("GET", "/api/hello", &[], ""), mk));
             assert_eq!((hello["app"].as_str(), hello["terminal"].as_str()), (Some("sessionsnap"), Some("cmux")));
-            let tmux = server().for_terminal("tmux");
+            let tmux = server().for_terminal(TerminalKind::Tmux);
             assert_eq!(body(&tmux.handle(&req("GET", "/api/hello", &[], ""), mk))["terminal"], "tmux");
         });
     }

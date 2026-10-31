@@ -74,7 +74,7 @@ impl crate::ports::Scheduler for FakeScheduler {
         if self.dir.join("scheduler.fail").exists() {
             anyhow::bail!("launchctl said no");
         }
-        let terminal = schedule.terminal.as_deref().map(|t| format!(" {t}")).unwrap_or_default();
+        let terminal = schedule.terminal.map(|t| format!(" {t}")).unwrap_or_default();
         self.write(format!("install {name} {}{terminal}", schedule.interval));
         Ok(())
     }
@@ -240,8 +240,8 @@ fn open_tab(t: &LaunchTab) -> OpenTab {
 }
 
 impl Terminal for FakeTerminal {
-    fn name(&self) -> &'static str {
-        self.name.get()
+    fn kind(&self) -> crate::domain::terminal::TerminalKind {
+        crate::domain::terminal::TerminalKind::parse(self.name.get()).unwrap_or_default()
     }
 
     fn is_running(&self) -> bool {
