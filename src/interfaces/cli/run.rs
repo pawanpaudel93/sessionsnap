@@ -709,11 +709,14 @@ fn recent(
     }
     let (list, open) = app::sessions::recent(ctx, hours, agent)?;
     if list.is_empty() {
-        return Ok(Outcome::ok(
-            json!({"sessions": []}),
-            format!("No agent sessions from the last {hours}h are missing from {}.", ctx.terminal.name()),
-        )
-        .with_exit(Exit::NothingToDo));
+        let text = format!("No agent sessions from the last {hours}h are missing from {}.", ctx.terminal.name());
+        // A plan was asked for: the same empty plan as `restore --plan` gives.
+        if wants_plan {
+            let mut out = plan_then_apply(ctx, app::restore::sessions_source(&list), plan_only)?;
+            out.text = text;
+            return Ok(out);
+        }
+        return Ok(Outcome::ok(json!({"sessions": []}), text).with_exit(Exit::NothingToDo));
     }
     if !wants_plan {
         let total = list.len();
