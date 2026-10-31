@@ -108,14 +108,14 @@ impl Scheduler for Launchd {
     }
 }
 
-/// The agent's plist: runs `<program> [--terminal <t>] schedule run -- <name>` every interval, not
-/// at load (`schedule add` has just saved).
+/// The agent's plist: runs `<program> --terminal <t> schedule run -- <name>` every interval, not at
+/// load (`schedule add` has just saved). The terminal is always named: launchd runs outside both.
 pub fn plist(label: &str, program: &Path, name: &str, schedule: &Schedule, env: &[(String, String)]) -> String {
     let s = |v: &str| format!("<string>{}</string>", xml(v));
     let program = program.to_string_lossy();
-    let terminal = schedule.terminal.as_deref().map(|t| ["--terminal", t]);
+    let terminal = schedule.terminal.as_deref().unwrap_or("cmux");
     let args: Vec<String> = std::iter::once(program.as_ref())
-        .chain(terminal.iter().flatten().copied())
+        .chain(["--terminal", terminal])
         .chain(["schedule", "run", "--", name])
         .map(s)
         .collect();
@@ -187,7 +187,7 @@ mod tests {
             &every(600),
             &[("PATH".into(), "/a&b".into())],
         );
-        assert!(p.contains("<string>/bin/s&lt;x&gt;</string><string>schedule</string><string>run</string><string>--</string><string>-work</string>"), "{p}");
+        assert!(p.contains("<string>/bin/s&lt;x&gt;</string><string>--terminal</string><string>cmux</string><string>schedule</string><string>run</string><string>--</string><string>-work</string>"), "{p}");
         assert!(p.contains("<key>StartInterval</key><integer>600</integer>"));
         assert!(p.contains("<key>PATH</key><string>/a&amp;b</string>"));
         assert!(p.contains("<key>RunAtLoad</key><false/>"));
@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn plist_names_the_terminal_when_not_cmux() {
+    fn plist_names_a_tmux_schedules_terminal() {
         let tmux = Schedule { terminal: Some("tmux".into()), ..every(60) };
         let p = plist("l", Path::new("/bin/s"), "w", &tmux, &[]);
         assert!(

@@ -6,8 +6,8 @@ resumed with its original flags (those on the agent's allow-list). Claude Code a
 supported (their session histories are read); 15 more agents are resume-only and untested, and
 resume only sessions started without flags. It is one Rust binary: a CLI
 with `--json`, a web UI in the cmux Dock, cmux palette commands, and a Claude Code skill. It runs
-on macOS with cmux 0.64+, and with tmux on macOS and Linux (picked inside tmux, or with
-`--terminal tmux`). cmux on Linux is a different app with a different command line, not supported
+on macOS with cmux 0.64+, and with tmux on macOS and Linux. It uses the terminal it runs in (tmux first;
+outside both, the one running); `--terminal cmux|tmux` picks one. cmux on Linux is a different app with a different command line, not supported
 yet.
 
 ## Using sessionsnap

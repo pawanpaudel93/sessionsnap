@@ -45,6 +45,11 @@ struct Pane {
 }
 
 impl<R: Runner, P: Processes> Tmux<R, P> {
+    /// A tmux server runs, with at least one session.
+    pub fn has_sessions(&self) -> bool {
+        self.tmux(&["list-sessions"]).is_ok_and(|o| o.success)
+    }
+
     fn tmux(&self, args: &[&str]) -> Result<Output> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         self.runner.run(&self.program, &args).map_err(|_| self.not_installed())
@@ -171,7 +176,8 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
                 }),
             }
         }
-        Ok(OpenState { live: true, state_version: None, workspaces, warnings })
+        // A tmux server always has a session: none open means none runs, and tmux keeps no state.
+        Ok(OpenState { live: !workspaces.is_empty(), state_version: None, workspaces, warnings })
     }
 
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {
@@ -340,7 +346,8 @@ mod tests {
     fn no_server_is_nothing_open() {
         let mut t = tmux(&[], FakeProcs::default());
         t.runner.panes = None;
-        assert!(t.read_open_state().unwrap().workspaces.is_empty());
+        let open = t.read_open_state().unwrap();
+        assert!(open.workspaces.is_empty() && !open.live);
     }
 
     #[test]

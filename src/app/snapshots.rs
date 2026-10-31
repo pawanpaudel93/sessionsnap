@@ -72,7 +72,8 @@ fn save_as(
             read_at = super::known::now();
             let open = super::read_open(ctx.terminal.as_ref(), &ctx.agents)?;
             let terminal = ctx.terminal.name();
-            if scheduled && !open.live {
+            // Not running and nothing saved by it (tmux keeps no state): nothing to snapshot.
+            if !open.live && (scheduled || open.workspaces.is_empty()) {
                 return Err(failure(Exit::NothingToDo, format!("{terminal} is not running")));
             }
             if scheduled && open.workspaces.is_empty() {

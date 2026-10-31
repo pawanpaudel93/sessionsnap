@@ -64,3 +64,14 @@ fn an_agent_found_in_a_tabs_processes_is_saved_and_a_hostile_flag_never_reaches_
     let command = launched[0].command.as_deref().unwrap();
     assert!(command.contains(A) && !command.contains("rm -rf"), "{command}");
 }
+
+#[test]
+fn a_save_with_nothing_running_writes_nothing() {
+    let env = setup();
+    env.fake.name.set("tmux");
+    *env.fake.state.borrow_mut() = Default::default(); // not live, nothing open
+    let e = env.run(&["save", "x"]).unwrap_err();
+    assert_eq!(sessionsnap::error::exit_of(&e), Exit::NothingToDo);
+    assert_eq!(e.to_string(), "tmux is not running");
+    assert_eq!(env.run(&["list", "--json"]).unwrap().json["snapshots"].as_array().unwrap().len(), 0);
+}

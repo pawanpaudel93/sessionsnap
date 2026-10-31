@@ -142,8 +142,9 @@ agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; `uninstall`
 
 ### tmux
 
-Run inside tmux, sessionsnap saves from and restores into tmux; elsewhere it uses cmux.
-`--terminal tmux` or `--terminal cmux` picks one. Each tmux session is a workspace and each pane a
+sessionsnap works out which terminal it runs in: inside tmux it uses tmux (even tmux in a cmux tab),
+inside cmux it uses cmux, and from anywhere else (another terminal app) the one that is running:
+cmux, else a tmux with sessions. `--terminal tmux` or `--terminal cmux` picks one. Each tmux session is a workspace and each pane a
 tab; a restore opens each tab in its own window (splits are not saved), types the agent's resume
 command into its shell, and keeps a name tmux can't hold (`.` or `:`) in the session option
 `@sessionsnap_name`.

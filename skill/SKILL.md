@@ -10,7 +10,7 @@ the flags the agent was started with that are on its allow-list) as named snapsh
 and reopens only what is missing. Claude Code and Codex are fully supported (their session
 histories are read); 15 more agents are resumed with cmux's documented commands, only when started
 without flags (`sessionsnap agents --json` lists them). Inside tmux it saves and restores tmux
-sessions instead (`--terminal cmux|tmux` picks one); there, a pane whose agent session can't be told
+sessions instead (it uses the terminal it runs in; `--terminal cmux|tmux` picks one); there, a pane whose agent session can't be told
 is saved as a plain tab, and `save` says so.
 
 ## Rules

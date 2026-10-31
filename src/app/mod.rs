@@ -47,11 +47,14 @@ pub struct Ctx {
 impl Ctx {
     /// `terminal`: "cmux" or "tmux" (`--terminal`); None picks one with `terminal_for`.
     pub fn open_default(json: bool, yes: bool, terminal: Option<&str>) -> anyhow::Result<Ctx> {
-        let in_tmux = std::env::var_os("TMUX").is_some_and(|v| !v.is_empty());
-        let terminal: Box<dyn Terminal> = match terminal_for(terminal, in_tmux) {
-            "tmux" => Box::new(Tmux::open_default()),
-            _ => Box::new(CmuxCli::open_default()?),
-        };
+        let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
+        let inside = Inside { tmux: set("TMUX"), cmux: set("CMUX_WORKSPACE_ID") || set("CMUX_SURFACE_ID") };
+        let (cmux, tmux) = (CmuxCli::open_default()?, Tmux::open_default());
+        let terminal: Box<dyn Terminal> =
+            match terminal_for(terminal, inside, || cmux.is_running(), || tmux.has_sessions()) {
+                "tmux" => Box::new(tmux),
+                _ => Box::new(cmux),
+            };
         Ok(Ctx {
             store: Store::open_default()?,
             agents: Agents::open_default()?,
@@ -65,9 +68,31 @@ impl Ctx {
     }
 }
 
-/// The terminal to use: the one asked for, else tmux when run inside it (`$TMUX`), else cmux.
-pub fn terminal_for(asked: Option<&str>, in_tmux: bool) -> &str {
-    asked.unwrap_or(if in_tmux { "tmux" } else { "cmux" })
+/// Which terminals sessionsnap runs inside (tmux in a cmux tab is inside both).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Inside {
+    /// `$TMUX` is set.
+    pub tmux: bool,
+    /// cmux's `$CMUX_WORKSPACE_ID` or `$CMUX_SURFACE_ID` is set.
+    pub cmux: bool,
+}
+
+/// The terminal to use: the one asked for; else the one sessionsnap runs inside, the innermost
+/// (tmux) first; else, outside both (another terminal app, launchd), whichever runs: cmux, then a
+/// tmux with sessions; else cmux.
+pub fn terminal_for(
+    asked: Option<&str>,
+    inside: Inside,
+    cmux_running: impl FnOnce() -> bool,
+    tmux_running: impl FnOnce() -> bool,
+) -> &str {
+    match asked {
+        Some(t) => t,
+        None if inside.tmux => "tmux",
+        None if inside.cmux => "cmux",
+        None if !cmux_running() && tmux_running() => "tmux",
+        None => "cmux",
+    }
 }
 
 /// Version `version` (latest when None) of snapshot `name`, with agent tabs named by registry kind.
@@ -132,11 +157,20 @@ mod tests {
     use crate::testing::{A, FakeTerminal, open_ws};
 
     #[test]
-    fn picks_the_terminal_asked_for_else_tmux_inside_tmux() {
-        assert_eq!(terminal_for(Some("cmux"), true), "cmux");
-        assert_eq!(terminal_for(Some("tmux"), false), "tmux");
-        assert_eq!(terminal_for(None, true), "tmux");
-        assert_eq!(terminal_for(None, false), "cmux");
+    fn picks_the_terminal_asked_for_else_the_one_it_runs_in_else_the_one_running() {
+        let never = || -> bool { panic!("not probed when the answer is known") };
+        let (tmux, cmux, both) =
+            (Inside { tmux: true, cmux: false }, Inside { tmux: false, cmux: true }, Inside { tmux: true, cmux: true });
+        assert_eq!(terminal_for(Some("cmux"), tmux, never, never), "cmux");
+        assert_eq!(terminal_for(Some("tmux"), cmux, never, never), "tmux");
+        assert_eq!(terminal_for(None, tmux, never, never), "tmux");
+        assert_eq!(terminal_for(None, both, never, never), "tmux", "tmux inside a cmux tab");
+        assert_eq!(terminal_for(None, cmux, never, never), "cmux");
+        // Outside both: the one running, cmux first.
+        let outside = Inside::default();
+        assert_eq!(terminal_for(None, outside, || true, never), "cmux");
+        assert_eq!(terminal_for(None, outside, || false, || true), "tmux");
+        assert_eq!(terminal_for(None, outside, || false, || false), "cmux");
     }
 
     #[test]

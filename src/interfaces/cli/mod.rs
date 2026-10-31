@@ -25,7 +25,8 @@ pub struct Cli {
     /// Answer yes to confirmations
     #[arg(long, short = 'y', global = true)]
     pub yes: bool,
-    /// Terminal to save from and restore into (default: tmux when run inside tmux, else cmux)
+    /// Terminal to save from and restore into (default: the one this runs in, tmux first; outside
+    /// both, cmux if it runs, else tmux if it has sessions)
     #[arg(long, global = true, value_parser = ["cmux", "tmux"])]
     pub terminal: Option<String>,
     #[command(subcommand)]

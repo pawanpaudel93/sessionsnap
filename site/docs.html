@@ -264,9 +264,10 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
           <section class="doc-section" id="tmux">
             <h2>tmux</h2>
             <p>
-              Run inside tmux, sessionsnap saves from and restores into tmux; elsewhere it uses cmux.
-              <code translate="no">--terminal tmux</code> or <code translate="no">--terminal cmux</code>
-              picks one. Each tmux session is a workspace and each pane a tab. A restore opens each tab
+              sessionsnap works out which terminal it runs in: inside tmux it uses tmux (even tmux in
+              a cmux tab), inside cmux it uses cmux, and from anywhere else the one that is running:
+              cmux, else a tmux with sessions. <code translate="no">--terminal tmux</code> or
+              <code translate="no">--terminal cmux</code> picks one. Each tmux session is a workspace and each pane a tab. A restore opens each tab
               in its own window (splits are not saved) and types the agent's resume command into its
               shell; a name tmux can't hold (<code translate="no">.</code> or <code translate="no">:</code>)
               is kept in the session option <code translate="no">@sessionsnap_name</code>.
