@@ -27,8 +27,10 @@ fn write_atomic<T: Serialize>(path: &Path, value: &T, private: bool) -> Result<(
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    // One left by a crashed run with this pid would keep its permissions: start a new file.
+    let _ = fs::remove_file(&tmp);
     let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     if private {
         use std::os::unix::fs::OpenOptionsExt;
@@ -37,11 +39,17 @@ fn write_atomic<T: Serialize>(path: &Path, value: &T, private: bool) -> Result<(
     #[cfg(not(unix))]
     let _ = private;
     let mut file = options.open(&tmp).with_context(|| format!("writing {}", tmp.display()))?;
-    file.write_all((serde_json::to_string_pretty(value)? + "\n").as_bytes())
-        .and_then(|()| file.sync_all())
-        .with_context(|| format!("writing {}", tmp.display()))?;
-    drop(file);
-    fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))?;
+    let written = (|| -> Result<()> {
+        file.write_all((serde_json::to_string_pretty(value)? + "\n").as_bytes())
+            .and_then(|()| file.sync_all())
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        drop(file);
+        fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written?;
     // The new name is in the folder: sync it too, where the system allows.
     #[cfg(unix)]
     if let Some(dir) = path.parent()
@@ -62,4 +70,36 @@ pub fn make_private_dir(dir: &Path) -> Result<()> {
             .with_context(|| format!("restricting {}", dir.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A temporary file left by a crashed run with the same pid can't keep its wider permissions.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_write_is_private_even_over_a_stale_tmp() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("a.json");
+        let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+        fs::write(&tmp, "stale").unwrap();
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_json_atomic(&path, &serde_json::json!({"a": 1})).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(!tmp.exists());
+        assert_eq!(read_json::<serde_json::Value>(&path).unwrap()["a"], 1);
+    }
+
+    /// A write that fails leaves no temporary file behind.
+    #[test]
+    fn a_failed_write_removes_its_tmp() {
+        let d = tempfile::tempdir().unwrap();
+        // A folder where the file goes: the rename into place fails.
+        let path = d.path().join("a.json");
+        fs::create_dir_all(path.join("x")).unwrap();
+        assert!(write_json_atomic(&path, &1).is_err());
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1, "only the folder is left");
+    }
 }

@@ -24,13 +24,12 @@ pub enum Commit {
 /// version of `name`. Holds the snapshot's lock from reading its latest version to writing the
 /// next, so a save or edit landing meanwhile is never undone.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
-    refuse_scheduled(ctx, name)?;
     save_as(ctx, name, only, from, message, false)
 }
 
-/// An automatic snapshot is only saved by its schedule.
+/// An automatic snapshot is only saved by its schedule. Checked under the snapshot's lock, which
+/// `schedule add` takes too, so a schedule added meanwhile is seen.
 fn refuse_scheduled(ctx: &Ctx, name: &str) -> Result<()> {
-    validate_name(name)?;
     if let Some(key) = super::schedule::find(&ctx.store.read_schedules()?, name) {
         return Err(failure(
             Exit::Refused,
@@ -52,13 +51,13 @@ pub fn import(
     maps: &[(String, String)],
     message: Option<String>,
 ) -> Result<Commit> {
-    refuse_scheduled(ctx, name)?;
     let mut workspaces = imported.workspaces;
     map_folders(&mut workspaces, maps);
     // Another machine's cmux IDs would match unrelated workspaces here.
     workspaces.iter_mut().for_each(|w| w.cmux_workspace_id = None);
     let from = format!("{}@{}", imported.snapshot, imported.version);
     let lock = ctx.store.lock(name)?;
+    refuse_scheduled(ctx, name)?;
     let new = is_new(ctx, name);
     if new {
         validate_new_name(name)?;
@@ -86,6 +85,12 @@ fn save_as(
     scheduled: bool,
 ) -> Result<Commit> {
     let lock = ctx.store.lock(name)?;
+    if !scheduled {
+        refuse_scheduled(ctx, name)?;
+    } else if super::schedule::find(&ctx.store.read_schedules()?, name).is_none() {
+        // Deleted or renamed since the run read its schedule: writing would bring the name back.
+        return Err(failure(Exit::NothingToDo, format!("'{name}' is no longer an automatic snapshot")));
+    }
     let new = is_new(ctx, name);
     if new {
         validate_new_name(name)?;
@@ -139,7 +144,7 @@ fn save_as(
             }
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
-                Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
+                Some(p) if !only.is_empty() => merge(&p.workspaces, carry_over(&p.workspaces, captured)),
                 Some(p) => carry_over(&p.workspaces, captured),
                 None => captured,
             };
@@ -314,17 +319,22 @@ pub fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Vec<u32>> {
     ctx.store.prune(name, keep)
 }
 
-/// Deletes snapshot `name`, and its schedule if it has one.
+/// Deletes snapshot `name`, then its schedule if it has one (a delete that fails keeps it
+/// automatic). Under the snapshot's lock throughout, so a scheduled save waiting on it finds the
+/// schedule gone and writes nothing.
 pub fn delete(ctx: &Ctx, name: &str) -> Result<()> {
-    ctx.store.versions(name)?;
-    super::schedule::deleting(ctx, name)?;
-    ctx.store.delete(name)
+    let lock = ctx.store.lock(name)?;
+    ctx.store.delete_locked(&lock, name)?;
+    super::schedule::deleting(ctx, name)
 }
 
-/// Renames snapshot `old` to `new`, with its schedule; returns the name it had.
+/// Renames snapshot `old` to `new`, with its schedule; returns the name it had. Under both
+/// snapshots' locks throughout, like `delete`.
 pub fn rename(ctx: &Ctx, old: &str, new: &str) -> Result<String> {
     validate_name(old)?;
-    let from = ctx.store.rename(old, new)?;
+    validate_new_name(new)?;
+    let locks = ctx.store.lock_rename(old, new)?;
+    let from = ctx.store.rename_locked(&locks, old, new)?;
     super::schedule::renamed(ctx, &from, new)?;
     Ok(from)
 }

@@ -227,7 +227,8 @@ impl Store {
 
     /// Replaces the record of every session seen, while holding its lock; readable by the owner
     /// only, synced to disk.
-    pub fn write_sessions(&self, _lock: &Lock, known: &KnownSessions) -> Result<()> {
+    pub fn write_sessions(&self, lock: &Lock, known: &KnownSessions) -> Result<()> {
+        still_held(lock, "sessions.json")?;
         make_private_dir(&self.root)?;
         write_private_json_atomic(&self.root.join("sessions.json"), known)
     }
@@ -334,7 +335,7 @@ impl Store {
         make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
         in_new_dir(&dir, || {
-            remove_leftovers(&dir);
+            remove_leftovers(&dir, STALE);
             let now = chrono::Local::now();
             let mut version = Version {
                 sessionsnap: FORMAT,
@@ -374,7 +375,8 @@ impl Store {
     }
 
     /// Replaces every schedule, while holding their lock.
-    pub fn write_schedules(&self, _lock: &Lock, schedules: &Schedules) -> Result<()> {
+    pub fn write_schedules(&self, lock: &Lock, schedules: &Schedules) -> Result<()> {
+        still_held(lock, "schedules.json")?;
         make_private_dir(&self.root)?;
         write_private_json_atomic(&self.root.join("schedules.json"), schedules)
     }
@@ -383,12 +385,26 @@ impl Store {
     /// returns the name it was stored under. Refuses (exit 4) a `new` that is another snapshot.
     pub fn rename(&self, old: &str, new: &str) -> Result<String> {
         validate_new_name(new)?;
-        let same = old.eq_ignore_ascii_case(new);
-        // In name order, so two renames between the same names never wait on each other.
+        let locks = self.lock_rename(old, new)?;
+        self.rename_locked(&locks, old, new)
+    }
+
+    /// The locks a rename of `old` to `new` holds: both snapshots', in name order, so two renames
+    /// between the same names never wait on each other.
+    pub fn lock_rename(&self, old: &str, new: &str) -> Result<Vec<Lock>> {
         let (first, second) =
             if old.to_ascii_lowercase() <= new.to_ascii_lowercase() { (old, new) } else { (new, old) };
-        let _first = self.lock(first)?;
-        let _second = if same { None } else { Some(self.lock(second)?) };
+        let mut locks = vec![self.lock(first)?];
+        if !old.eq_ignore_ascii_case(new) {
+            locks.push(self.lock(second)?);
+        }
+        Ok(locks)
+    }
+
+    /// `rename`, while holding the `lock_rename` locks.
+    pub fn rename_locked(&self, _locks: &[Lock], old: &str, new: &str) -> Result<String> {
+        validate_new_name(new)?;
+        let same = old.eq_ignore_ascii_case(new);
         self.versions(old)?;
         let from = self.stored_name(old);
         if !same && self.has_versions(new) {
@@ -396,7 +412,9 @@ impl Store {
         }
         let to = self.snapshots_dir().join(new);
         if !same && to.is_dir() {
-            // An empty folder left behind by a failed save is not a snapshot.
+            // An empty folder left behind by a failed save is not a snapshot. Its lock is held, so
+            // what a crashed save left in it is gone for good, however recent.
+            remove_leftovers(&to, Duration::ZERO);
             fs::remove_dir(&to).with_context(|| format!("removing {}", to.display()))?;
         }
         fs::rename(self.snapshot_dir(&from), &to).with_context(|| format!("renaming snapshot '{from}' to '{new}'"))?;
@@ -405,7 +423,12 @@ impl Store {
 
     /// Deletes snapshot `name` and every version, under its lock.
     pub fn delete(&self, name: &str) -> Result<()> {
-        let _lock = self.lock(name)?;
+        let lock = self.lock(name)?;
+        self.delete_locked(&lock, name)
+    }
+
+    /// `delete`, while holding the snapshot's `lock`.
+    pub fn delete_locked(&self, _lock: &Lock, name: &str) -> Result<()> {
         self.versions(name)?;
         fs::remove_dir_all(self.snapshot_dir(name))?;
         Ok(())
@@ -456,6 +479,15 @@ fn resolve_name<'a>(stored: &'a [(String, bool)], name: &'a str) -> &'a str {
         .filter(|(s, _)| s.eq_ignore_ascii_case(name))
         .min_by_key(|(s, has_versions)| (!has_versions, s != name, s.as_str()))
         .map_or(name, |(s, _)| s.as_str())
+}
+
+/// Refuses (exit 6) to write `what` under a lock broken while its holder took too long: another
+/// may hold it now, and would lose what it writes.
+fn still_held(lock: &Lock, what: &str) -> Result<()> {
+    if lock.still_held() {
+        return Ok(());
+    }
+    Err(failure(Exit::PlanStale, format!("{what} was locked by another sessionsnap meanwhile; try again")))
 }
 
 /// Runs `f` with `dir` created; removes `dir` again when this made it and `f` failed, so a failed
@@ -529,13 +561,13 @@ fn publish(
 }
 
 /// Removes what a save that crashed may have left in `dir`: temporary files and number claims,
-/// older than a stale lock (a live save holds the lock, so it has none that old).
-fn remove_leftovers(dir: &Path) {
+/// at least `age` old (a stale lock's age while a live save may hold the lock: it has none that old).
+fn remove_leftovers(dir: &Path, age: Duration) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let leftover = (name.starts_with('.') && name.ends_with(".tmp")) || name.ends_with(".claim");
-        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|m| m.elapsed().unwrap_or_default() > STALE);
+        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|m| m.elapsed().unwrap_or_default() >= age);
         if leftover && old {
             let _ = fs::remove_file(e.path());
         }
@@ -964,6 +996,14 @@ mod tests {
         fs::create_dir_all(s.snapshots_dir().join("c")).unwrap();
         s.rename("a", "c").unwrap();
         assert_eq!(s.list().unwrap(), vec!["b".to_string(), "c".to_string()]);
+        // Nor is one holding only what a crashed save left (a claim, a temporary file).
+        let d = s.snapshots_dir().join("d");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("0001.claim"), "").unwrap();
+        fs::write(d.join(".0001-20260101T000000.1-0.tmp"), "{").unwrap();
+        s.rename("c", "d").unwrap();
+        assert_eq!(s.list().unwrap(), vec!["b".to_string(), "d".to_string()]);
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "only c's version moved in");
     }
 
     #[test]
@@ -979,5 +1019,27 @@ mod tests {
         );
         s.write_schedules(&lock, &all).unwrap();
         assert_eq!(s.read_schedules().unwrap(), all);
+    }
+
+    /// A write under a lock broken meanwhile (its holder took too long) is refused.
+    #[test]
+    fn writes_under_a_broken_lock_are_refused() {
+        let (_d, s) = store();
+        let break_lock = |file: &str| {
+            let f = fs::OpenOptions::new().write(true).open(s.root().join("locks").join(file)).unwrap();
+            f.set_modified(std::time::SystemTime::now() - Duration::from_secs(120)).unwrap();
+        };
+        let slow = s.lock_schedules().unwrap();
+        break_lock("schedules.lock");
+        let _other = s.lock_schedules().unwrap();
+        let err = s.write_schedules(&slow, &Schedules::new()).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::PlanStale, "{err}");
+        assert!(!s.root().join("schedules.json").exists());
+        let slow = s.lock_sessions().unwrap();
+        break_lock("sessions.lock");
+        let _other = s.lock_sessions().unwrap();
+        let err = s.write_sessions(&slow, &KnownSessions::default()).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::PlanStale, "{err}");
+        assert!(!s.root().join("sessions.json").exists());
     }
 }

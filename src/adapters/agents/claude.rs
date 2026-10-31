@@ -163,8 +163,11 @@ impl Claude {
         self.projects().join(Self::project_dir_name(cwd)).join(format!("{session_id}.jsonl"))
     }
 
-    /// Finds a session's transcript in any project.
+    /// Finds a session's transcript in any project; none for an ID that isn't one (a path).
     pub fn find_transcript(&self, session_id: &str) -> Option<PathBuf> {
+        if !is_session_id(session_id) {
+            return None;
+        }
         let name = format!("{session_id}.jsonl");
         fs::read_dir(self.projects()).ok()?.flatten().map(|e| e.path().join(&name)).find(|p| p.is_file())
     }
@@ -249,6 +252,9 @@ impl SessionHistory for Claude {
     }
 
     fn title_for(&self, cwd: &str, session_id: &str) -> Option<String> {
+        if !is_session_id(session_id) {
+            return None;
+        }
         let direct = self.transcript_path(cwd, session_id);
         let path = if direct.is_file() { direct } else { self.find_transcript(session_id)? };
         self.info(&path).ok().and_then(|i| i.title.or(i.first_prompt))
@@ -397,6 +403,23 @@ mod tests {
         assert_eq!(c.title_for("/w/a", A).as_deref(), Some("login fix"));
         // The session is found even when the tab's folder is not the transcript's project.
         assert_eq!(c.title_for("/elsewhere", A).as_deref(), Some("login fix"));
+    }
+
+    /// A session ID from a snapshot file is never a path: `../x` finds nothing outside the projects.
+    #[test]
+    fn a_hostile_session_id_finds_no_transcript() {
+        let d = tempfile::tempdir().unwrap();
+        let c = Claude::new(d.path().join("claude"));
+        write_raw(&d.path().join("claude"), "/w/a", A, &[json!({"type": "custom-title", "customTitle": "t"})]);
+        fs::write(d.path().join("evil.jsonl"), format!("{}\n", json!({"type": "custom-title", "customTitle": "evil"})))
+            .unwrap();
+        let hostile = "../../../evil";
+        assert!(c.find_transcript(&format!("../-w-a/{A}")).is_none());
+        assert!(c.find_transcript(hostile).is_none());
+        assert!(!c.contains(hostile));
+        assert!(c.find(hostile).unwrap().is_none());
+        assert_eq!(c.title_for("/w/a", hostile), None);
+        assert_eq!(c.title_for("/w/a", A).as_deref(), Some("t"));
     }
 
     #[test]
