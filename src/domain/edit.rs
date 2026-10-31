@@ -392,6 +392,7 @@ mod tests {
                 color: None,
                 cwd: "/w/a".into(),
                 git_branch: None,
+                pinned: false,
                 cmux_workspace_id: None,
                 tabs: vec![
                     agent_tab("claude", "one", "/w/a", A),
@@ -403,6 +404,7 @@ mod tests {
                 color: None,
                 cwd: "/w/b".into(),
                 git_branch: None,
+                pinned: false,
                 cmux_workspace_id: None,
                 tabs: vec![agent_tab("claude", "two", "/w/b", B)],
             },
@@ -609,6 +611,7 @@ mod tests {
                 color: None,
                 cwd: "/w/c".into(),
                 git_branch: None,
+                pinned: false,
                 cmux_workspace_id: None,
                 tabs: vec![],
             }],

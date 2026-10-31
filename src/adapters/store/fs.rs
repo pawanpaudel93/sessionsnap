@@ -10,14 +10,15 @@ use anyhow::{Context, Result};
 
 use super::lock::{Lock, STALE};
 use crate::domain::known::KnownSessions;
-use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name};
+use crate::domain::model::{FORMAT, Source, Version, Workspace, validate_name, validate_new_name};
 use crate::domain::plan::Plan;
+use crate::domain::schedule::Schedules;
 use crate::error::{Exit, failure};
 use crate::ports::Snapshots;
 use crate::util::json::{make_private_dir, read_json, write_private_json_atomic};
 
 /// Snapshot versions live in `<root>/snapshots/<name>/<NNNN>-<timestamp>.json`; restore plans in
-/// `<root>/plans/<id>.json`.
+/// `<root>/plans/<id>.json`; automatic snapshots' schedules in `<root>/schedules.json`.
 pub struct Store {
     root: PathBuf,
 }
@@ -195,7 +196,11 @@ impl Store {
             let found = format.map_or("an unknown format".to_string(), |f| format!("format {f}"));
             return Ok(Err(format!("{found}, expected {FORMAT}")));
         }
-        Ok(serde_json::from_value(raw).map_err(|e| format!("not a sessionsnap version: {e}")))
+        // A renamed snapshot's older versions still hold the old name: the folder's name wins.
+        let stored = self.stored_name(name);
+        Ok(serde_json::from_value(raw)
+            .map(|v: Version| Version { snapshot: stored, ..v })
+            .map_err(|e| format!("not a sessionsnap version: {e}")))
     }
 
     /// The lock of snapshot `name` (any case): saves, edits, prunes and deletes of one snapshot
@@ -362,6 +367,51 @@ impl Store {
             publish(&dir, &mut version, &now.format("%Y%m%dT%H%M%S").to_string(), |a, b| fs::hard_link(a, b))?;
             Ok(version)
         })
+    }
+
+    /// The lock of `schedules.json`. Taken after a snapshot's lock, never before.
+    pub fn lock_schedules(&self) -> Result<Lock> {
+        self.lock_file("schedules.lock")
+    }
+
+    /// Every automatic snapshot's schedule; none when there is no `schedules.json`.
+    pub fn read_schedules(&self) -> Result<Schedules> {
+        let path = self.root.join("schedules.json");
+        match fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display())),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(Schedules::new()),
+            Err(e) => Err(anyhow::Error::new(e).context(format!("reading {}", path.display()))),
+        }
+    }
+
+    /// Replaces every schedule, while holding their lock.
+    pub fn write_schedules(&self, _lock: &Lock, schedules: &Schedules) -> Result<()> {
+        make_private_dir(&self.root)?;
+        write_private_json_atomic(&self.root.join("schedules.json"), schedules)
+    }
+
+    /// Renames snapshot `old` to `new` (a new name, or `old` in another case), under both locks;
+    /// returns the name it was stored under. Refuses (exit 4) a `new` that is another snapshot.
+    pub fn rename(&self, old: &str, new: &str) -> Result<String> {
+        validate_new_name(new)?;
+        let same = old.eq_ignore_ascii_case(new);
+        // In name order, so two renames between the same names never wait on each other.
+        let (first, second) =
+            if old.to_ascii_lowercase() <= new.to_ascii_lowercase() { (old, new) } else { (new, old) };
+        let _first = self.lock(first)?;
+        let _second = if same { None } else { Some(self.lock(second)?) };
+        self.versions(old)?;
+        let from = self.stored_name(old);
+        if !same && self.has_versions(new) {
+            return Err(failure(Exit::Refused, format!("snapshot '{new}' already exists")));
+        }
+        let to = self.snapshots_dir().join(new);
+        if !same && to.is_dir() {
+            // An empty folder left behind by a failed save is not a snapshot.
+            fs::remove_dir(&to).with_context(|| format!("removing {}", to.display()))?;
+        }
+        fs::rename(self.snapshot_dir(&from), &to).with_context(|| format!("renaming snapshot '{from}' to '{new}'"))?;
+        Ok(from)
     }
 
     /// Deletes snapshot `name` and every version, under its lock.
@@ -553,6 +603,7 @@ mod tests {
             color: None,
             cwd: "/w".into(),
             git_branch: None,
+            pinned: false,
             cmux_workspace_id: None,
             tabs: vec![Tab::Terminal { title: "sh".into(), cwd: "/w".into(), command: None }],
         }
@@ -894,5 +945,47 @@ mod tests {
         assert_eq!(s.versions("work").unwrap(), vec![3]);
         s.delete("work").unwrap();
         assert!(s.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rename_moves_every_version_and_names_them_after_the_folder() {
+        let (_d, s) = store();
+        s.save_new("work", "m", Source::default(), vec![ws("A")]).unwrap();
+        s.save_new("work", "m", Source::default(), vec![ws("B")]).unwrap();
+        assert_eq!(s.rename("Work", "job").unwrap(), "work");
+        assert_eq!(s.list().unwrap(), vec!["job".to_string()]);
+        assert_eq!(s.versions("job").unwrap(), vec![1, 2]);
+        assert_eq!(s.load("job", Some(1)).unwrap().snapshot, "job");
+        assert_eq!(exit_of(&s.versions("work").unwrap_err()), Exit::NotFound);
+        // Only the case changes.
+        s.rename("job", "Job").unwrap();
+        assert_eq!(s.list().unwrap(), vec!["Job".to_string()]);
+    }
+
+    #[test]
+    fn rename_refuses_an_existing_name_and_a_missing_snapshot() {
+        let (_d, s) = store();
+        s.save_new("a", "m", Source::default(), vec![ws("A")]).unwrap();
+        s.save_new("b", "m", Source::default(), vec![ws("B")]).unwrap();
+        assert_eq!(exit_of(&s.rename("a", "B").unwrap_err()), Exit::Refused);
+        assert_eq!(exit_of(&s.rename("zzz", "c").unwrap_err()), Exit::NotFound);
+        assert!(s.rename("a", "--c").is_err());
+        assert_eq!(s.list().unwrap(), vec!["a".to_string(), "b".to_string()]);
+        // An empty folder left behind is no snapshot.
+        fs::create_dir_all(s.snapshots_dir().join("c")).unwrap();
+        s.rename("a", "c").unwrap();
+        assert_eq!(s.list().unwrap(), vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn schedules_read_empty_then_as_written() {
+        use crate::domain::schedule::Schedule;
+        let (_d, s) = store();
+        assert!(s.read_schedules().unwrap().is_empty());
+        let lock = s.lock_schedules().unwrap();
+        let mut all = Schedules::new();
+        all.insert("work".into(), Schedule { interval: 600, created_at: "t".into(), stopped: false, last_run: None });
+        s.write_schedules(&lock, &all).unwrap();
+        assert_eq!(s.read_schedules().unwrap(), all);
     }
 }

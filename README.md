@@ -114,6 +114,31 @@ sessionsnap tab work Cascadia#4 --move "Cascadia Community"
 sessionsnap tab work Cascadia --add-session <session-id>
 sessionsnap tab work Cascadia --add-session <id> --agent opencode
 sessionsnap agents                    # supported agents and whether each is on PATH
+sessionsnap rename work job           # rename a snapshot (and its schedule)
+```
+
+### Automatic snapshots
+
+An automatic snapshot is saved from what is open in cmux every interval by launchd (macOS only),
+even when sessionsnap isn't running. A run with no changes writes nothing, so its history holds one
+version per change. Runs are skipped while cmux is not running or shows no workspaces. `list` shows
+automatic snapshots under their own heading, and only their schedule saves to them: copy a version
+out with `sessionsnap save <name> --from <auto>@<v>` to keep it.
+
+```sh
+sessionsnap schedule add work --interval 30m   # new automatic snapshot; saves once now
+sessionsnap schedule add daily --interval 1d   # as many as you like, each with its own interval
+sessionsnap schedule list                      # interval, running/stopped, latest version, last run
+sessionsnap schedule edit work --interval 2h
+sessionsnap schedule stop work                 # pause; `schedule start work` resumes
+sessionsnap schedule run work                  # save it now
+sessionsnap schedule remove work               # make it a normal snapshot (versions kept)
+```
+
+Intervals are a number and a unit (`30m`, `2h`, `1d`; at least `1m`). Each schedule is a launchd
+agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; `uninstall` removes them.
+
+```sh
 sessionsnap update --check            # is there a newer release?
 sessionsnap update                    # install it over this binary
 ```
@@ -276,7 +301,11 @@ Want another agent supported? See [Add an agent](ARCHITECTURE.md#add-an-agent).
 right sidebar). From the palette: "sessionsnap: Open UI" (it runs in its own "sessionsnap UI"
 workspace).
 
-- **Snapshots:** save what is open, update a snapshot from what is open, delete one.
+- **Snapshots:** save what is open, update a snapshot from what is open, rename (the pencil or a
+  double-click on its name) or delete one. The list has Manual and Automatic sections.
+- **Automatic snapshots:** start one with a name and any interval ("Save automatically"); on its
+  page, see whether it runs and how its last run went, run it now, stop or start it, change its
+  interval, or make it a normal snapshot.
 - **Workspaces:** rename (double-click), reorder, remove, drag tabs to reorder or move them, add an
   agent session or a shell tab, add a workspace from cmux or from another snapshot. Edits are
   previewed and saved together as one version. Hover an agent tab's icon for the flags it resumes

@@ -42,10 +42,44 @@ pub fn ctx(dir: &Path, terminal: FakeTerminal, json: bool, yes: bool, input: Opt
             vec![],
         ),
         terminal: Box::new(terminal),
+        scheduler: Box::new(FakeScheduler { dir: dir.to_path_buf() }),
         json,
         yes,
         interactive: false,
         input,
+    }
+}
+
+/// A scheduler that logs `install <name> <interval>` and `remove <name>` lines to
+/// `dir/scheduler.log`, and fails every install while `dir/scheduler.fail` exists.
+pub struct FakeScheduler {
+    pub dir: std::path::PathBuf,
+}
+
+impl FakeScheduler {
+    pub fn log(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("scheduler.log")).unwrap_or_default().lines().map(str::to_string).collect()
+    }
+
+    fn write(&self, line: String) {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(self.dir.join("scheduler.log")).unwrap();
+        writeln!(f, "{line}").unwrap();
+    }
+}
+
+impl crate::ports::Scheduler for FakeScheduler {
+    fn install(&self, name: &str, interval: u64) -> anyhow::Result<()> {
+        if self.dir.join("scheduler.fail").exists() {
+            anyhow::bail!("launchctl said no");
+        }
+        self.write(format!("install {name} {interval}"));
+        Ok(())
+    }
+
+    fn remove(&self, name: &str) -> anyhow::Result<()> {
+        self.write(format!("remove {name}"));
+        Ok(())
     }
 }
 
@@ -98,6 +132,7 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
         name: name.to_string(),
         cwd: cwd.to_string(),
         git_branch: None,
+        pinned: false,
         tabs: tabs
             .iter()
             .enumerate()

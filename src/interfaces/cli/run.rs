@@ -4,7 +4,7 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use super::{Command, Ctx, Outcome, TabArgs, WsArgs, human, pick};
+use super::{Command, Ctx, Outcome, ScheduleCommand, TabArgs, WsArgs, human, pick};
 use crate::app;
 use crate::app::edit::Edited;
 use crate::app::snapshots::Commit;
@@ -14,6 +14,7 @@ use crate::domain::edit::Op;
 use crate::domain::model::SessionRef;
 use crate::domain::model::tab_count;
 use crate::domain::plan::{Plan, PlanSource};
+use crate::domain::schedule::{Schedule, format_interval};
 use crate::error::{Exit, failure};
 use crate::ports::SessionInfo;
 
@@ -27,6 +28,11 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Diff { a, b } => diff_cmd(ctx, &a, &b),
         Command::Prune { name, keep } => prune(ctx, &name, keep),
         Command::Delete { name } => delete(ctx, &name),
+        Command::Rename { old, new } => {
+            let from = app::snapshots::rename(ctx, &old, &new)?;
+            Ok(Outcome::ok(json!({"from": from, "to": new}), format!("Renamed {from} to {new}")))
+        }
+        Command::Schedule(command) => schedule(ctx, command),
         Command::Ws(args) => {
             let ops = ws_ops(&args)?;
             edit_snapshot(ctx, &args.name, ops, args.message, false, None)
@@ -201,14 +207,21 @@ fn open_now(ctx: &Ctx) -> Result<Outcome> {
 }
 
 fn list(ctx: &Ctx) -> Result<Outcome> {
+    let schedules = ctx.store.read_schedules()?;
     let rows: Vec<Value> = app::snapshots::list(ctx)?
         .into_iter()
-        .map(|(name, (n, v))| match v {
-            Ok(v) => json!({
-                "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
-                "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
-            }),
-            Err(why) => json!({"name": name, "latestVersion": n, "error": format!("unreadable: {why}")}),
+        .map(|(name, (n, v))| {
+            let mut row = match v {
+                Ok(v) => json!({
+                    "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
+                    "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
+                }),
+                Err(why) => json!({"name": name, "latestVersion": n, "error": format!("unreadable: {why}")}),
+            };
+            if let Some(s) = schedules.get(&name) {
+                row["schedule"] = schedule_json(s);
+            }
+            row
         })
         .collect();
     let text = human::list(&rows);
@@ -266,6 +279,100 @@ fn delete(ctx: &Ctx, name: &str) -> Result<Outcome> {
     confirm(ctx, &format!("Delete snapshot {name} and its {count} version(s)?"))?;
     app::snapshots::delete(ctx, name)?;
     Ok(Outcome::ok(json!({"snapshot": name, "deleted": true}), format!("Deleted {name}")))
+}
+
+fn schedule_json(s: &Schedule) -> Value {
+    json!({
+        "interval": format_interval(s.interval), "intervalSeconds": s.interval, "running": !s.stopped,
+        "createdAt": s.created_at, "lastRun": s.last_run,
+    })
+}
+
+fn schedule(ctx: &Ctx, command: ScheduleCommand) -> Result<Outcome> {
+    match command {
+        ScheduleCommand::Add { name, interval } => {
+            let (s, first) = app::schedule::add(ctx, &name, &interval)?;
+            let every = format_interval(s.interval);
+            let (first_json, first_text) = match first {
+                Ok(Commit::Saved { version, .. }) => (
+                    json!({"saved": true, "version": version.version}),
+                    format!(
+                        "saved v{} ({} workspaces, {} tabs)",
+                        version.version,
+                        version.workspaces.len(),
+                        tab_count(&version.workspaces)
+                    ),
+                ),
+                Ok(Commit::Unchanged { version, .. }) => {
+                    (json!({"saved": false, "version": version}), format!("no changes since v{version}"))
+                }
+                Err(e) => (json!({"saved": false, "reason": format!("{e:#}")}), format!("not saved yet ({e:#})")),
+            };
+            Ok(Outcome::ok(
+                json!({"snapshot": name, "schedule": schedule_json(&s), "firstSave": first_json}),
+                format!("Saving {name} every {every}; first save: {first_text}"),
+            ))
+        }
+        ScheduleCommand::List => {
+            let listed = app::schedule::list(ctx)?;
+            let rows: Vec<Value> = listed
+                .iter()
+                .map(|(name, s, latest)| {
+                    let mut row = schedule_json(s);
+                    row["name"] = json!(name);
+                    if let Some((n, at)) = latest {
+                        row["latestVersion"] = json!(n);
+                        row["latestAt"] = json!(at);
+                    }
+                    row
+                })
+                .collect();
+            let text = human::schedules(&rows);
+            Ok(Outcome::ok(json!({"schedules": rows}), text))
+        }
+        ScheduleCommand::Edit { name, interval } => {
+            let (key, s) = app::schedule::edit(ctx, &name, &interval)?;
+            let every = format_interval(s.interval);
+            Ok(Outcome::ok(
+                json!({"snapshot": key, "schedule": schedule_json(&s)}),
+                format!("Saving {key} every {every}"),
+            ))
+        }
+        ScheduleCommand::Stop { name } => start_stop(ctx, &name, false),
+        ScheduleCommand::Start { name } => start_stop(ctx, &name, true),
+        ScheduleCommand::Remove { name } => {
+            let key = app::schedule::remove(ctx, &name)?;
+            Ok(Outcome::ok(
+                json!({"snapshot": key, "removed": true}),
+                format!("{key} is no longer saved automatically; its versions are kept"),
+            ))
+        }
+        ScheduleCommand::Run { name } => match app::schedule::run(ctx, &name) {
+            Err(e) if crate::error::exit_of(&e) == Exit::NothingToDo => Ok(Outcome::ok(
+                json!({"snapshot": name, "changed": false, "skipped": true, "reason": format!("{e:#}")}),
+                format!("{name}: skipped ({e:#})"),
+            )
+            .with_exit(Exit::NothingToDo)),
+            result => Ok(committed(result?)),
+        },
+    }
+}
+
+fn start_stop(ctx: &Ctx, name: &str, run: bool) -> Result<Outcome> {
+    let (key, s) = match app::schedule::set_running(ctx, name, run) {
+        Err(e) if crate::error::exit_of(&e) == Exit::NothingToDo => {
+            return Ok(
+                Outcome::ok(json!({"snapshot": name, "changed": false}), format!("{e:#}")).with_exit(Exit::NothingToDo)
+            );
+        }
+        result => result?,
+    };
+    let text = if run {
+        format!("Saving {key} every {} again", format_interval(s.interval))
+    } else {
+        format!("Stopped {key}: no saves until `sessionsnap schedule start {key}`")
+    };
+    Ok(Outcome::ok(json!({"snapshot": key, "changed": true, "schedule": schedule_json(&s)}), text))
 }
 
 /// Proceeds with --yes or an interactive yes; otherwise refuses (exit 4).

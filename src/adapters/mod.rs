@@ -12,6 +12,7 @@ use crate::error::{Exit, failure};
 
 pub mod agents;
 pub mod releases;
+pub mod scheduler;
 pub mod store;
 pub mod terminal;
 

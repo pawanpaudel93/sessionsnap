@@ -13,3 +13,4 @@ pub mod flags;
 pub mod known;
 pub mod model;
 pub mod plan;
+pub mod schedule;

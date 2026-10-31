@@ -18,8 +18,8 @@ restoring don't work yet: cmux on Linux is a different app with a different comm
 - Pass `--yes` only for an action the user asked for by name (`delete`, `prune`, `install-cmux`,
   `uninstall`). Without it, a command that would ask exits 4 instead of prompting.
 - `save` only reads cmux; with no changes it writes nothing and exits 3.
-- Never schedule or automate saving unless the user asks. Don't start `sessionsnap ui` unless they
-  ask for the UI.
+- Never start an automatic snapshot (`schedule add`) or automate saving unless the user asks.
+  Don't start `sessionsnap ui` unless they ask for the UI.
 - `skill/SKILL.md` (installed with `sessionsnap install-skill`) has the full command table and the
   edit operations.
 

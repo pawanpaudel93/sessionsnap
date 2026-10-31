@@ -18,7 +18,7 @@ const APP_CSS: &str = include_str!("assets/app.css");
 /// Commands the page may run (not `ui` nor the installers).
 pub const ALLOWED: &[&str] = &[
     "list", "open", "show", "history", "diff", "save", "ws", "tab", "edit", "restore", "apply", "sessions", "recent",
-    "delete", "prune", "agents",
+    "delete", "prune", "agents", "rename", "schedule",
 ];
 
 /// Builds the context for one API call; the `Option<String>` is the call's `input`.
@@ -350,6 +350,23 @@ mod tests {
             let r = body(&s.handle(&api(r#"{"args":["show","nope"]}"#), mk));
             assert_eq!(r["exit"], 7);
             assert_eq!(r["result"]["error"]["code"], "not-found");
+        });
+    }
+
+    /// Automatic snapshots are managed from the page too, with the arguments `cliArgs` builds.
+    #[test]
+    fn manages_automatic_snapshots() {
+        with_store(|mk| {
+            let s = server();
+            let run = |args: &str| body(&s.handle(&api(&format!(r#"{{"args":{args}}}"#)), mk));
+            let r = run(r#"["schedule","add","--interval=30m","work"]"#);
+            assert_eq!(r["result"]["schedule"]["interval"], "30m", "{r}");
+            assert_eq!(r["result"]["firstSave"]["reason"], "cmux shows no workspaces");
+            assert_eq!(run(r#"["schedule","stop","work"]"#)["result"]["schedule"]["running"], false);
+            assert_eq!(run(r#"["schedule","edit","--interval=2h","work"]"#)["result"]["schedule"]["interval"], "2h");
+            assert_eq!(run(r#"["schedule","start","work"]"#)["result"]["schedule"]["running"], true);
+            assert_eq!(run(r#"["schedule","list"]"#)["result"]["schedules"][0]["name"], "work");
+            assert_eq!(run(r#"["schedule","remove","work"]"#)["result"]["removed"], true);
         });
     }
 

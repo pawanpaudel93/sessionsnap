@@ -11,11 +11,11 @@ Claude Code and Codex are fully supported and tested (their session histories ar
 - Always pass `--json` and read the result; never parse the text output.
 - Restoring is two steps: `sessionsnap restore <name> --plan --json`, show the user the plan, then `sessionsnap apply <planId> --json` once they agree.
 - Exit codes: 0 ok, 1 error, 2 cmux unreachable, 3 nothing to do, 4 refused, 5 unknown cmux state or snapshot format, 6 plan stale, 7 not found.
-- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action. Never schedule saves unless asked.
+- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action. Never start an automatic snapshot (`schedule add`) unless asked.
 
 ## Commands
 
-`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `update`, `uninstall`. Every command has `--help`.
+`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `rename`, `schedule`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `update`, `uninstall`. Every command has `--help`.
 
 ## Links
 

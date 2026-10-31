@@ -125,6 +125,7 @@ fn copied_workspaces_get_known_flags() {
         color: None,
         cwd: "/w/a".into(),
         git_branch: None,
+        pinned: false,
         cmux_workspace_id: None,
         tabs: vec![tab],
     };

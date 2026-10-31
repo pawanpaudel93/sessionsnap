@@ -216,13 +216,44 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                       <code translate="no">--pick</code>: choose or name the snapshot interactively.
                     </td>
                   </tr>
-                  <tr><td><code translate="no">sessionsnap list</code></td><td>List snapshots with their latest version, workspace and tab counts, time and message.</td></tr>
+                  <tr><td><code translate="no">sessionsnap list</code></td><td>List snapshots with their latest version, workspace and tab counts, time and message: the ones you saved under Manual, then the automatic ones under Automatic.</td></tr>
                   <tr><td><code translate="no">sessionsnap open</code></td><td>List the workspaces and tabs open in cmux now.</td></tr>
                   <tr><td><code translate="no">sessionsnap show &lt;name&gt;[@v]</code></td><td>Show a snapshot's workspaces and tabs: each tab's position, kind (<code translate="no">shell</code> or the agent, such as <code translate="no">claude</code>) and title.</td></tr>
                   <tr><td><code translate="no">sessionsnap history &lt;name&gt;</code></td><td>List a snapshot's versions.</td></tr>
                   <tr><td><code translate="no">sessionsnap diff &lt;name&gt;@a &lt;name&gt;@b</code></td><td>Compare two versions: workspaces and tabs added (<code translate="no">+</code>), removed (<code translate="no">-</code>), moved (<code translate="no">→</code>) and renamed (<code translate="no">~</code>).</td></tr>
                   <tr><td><code translate="no">sessionsnap prune &lt;name&gt; --keep &lt;n&gt;</code></td><td>Delete all but the newest <code translate="no">n</code> versions. Asks first.</td></tr>
-                  <tr><td><code translate="no">sessionsnap delete &lt;name&gt;</code></td><td>Delete a snapshot and all its versions. Asks first.</td></tr>
+                  <tr><td><code translate="no">sessionsnap delete &lt;name&gt;</code></td><td>Delete a snapshot and all its versions, and its schedule if it has one. Asks first.</td></tr>
+                  <tr><td><code translate="no">sessionsnap rename &lt;old&gt; &lt;new&gt;</code></td><td>Rename a snapshot; an automatic one keeps its schedule.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="doc-section" id="automatic">
+            <h2>Automatic snapshots</h2>
+            <p>
+              An automatic snapshot is saved from what is open in cmux every interval, by launchd
+              (macOS only), even when sessionsnap is not running. Like any save, a run with no
+              changes writes nothing, so its history holds one version per change. Runs are skipped
+              while cmux is not running or shows no workspaces. Automatic snapshots are listed apart
+              from the ones you save, and only their schedule saves to them; to keep a version for
+              good, copy it out with <code translate="no">sessionsnap save &lt;name&gt; --from &lt;auto&gt;@&lt;v&gt;</code>.
+              Intervals are a number and a unit: <code translate="no">30m</code>, <code translate="no">2h</code>,
+              <code translate="no">1d</code> (at least <code translate="no">1m</code>).
+            </p>
+            <div class="table-wrap">
+              <table class="data-table stack">
+                <thead>
+                  <tr><th scope="col">Command</th><th scope="col">Description</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code translate="no">sessionsnap schedule add &lt;name&gt; --interval &lt;30m&gt;</code></td><td>Start a new automatic snapshot and save it once now. Several can run, each with its own interval.</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule list</code></td><td>Each automatic snapshot: interval, running or stopped, latest version and how its last run went. Alias: <code translate="no">ls</code>.</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule edit &lt;name&gt; --interval &lt;2h&gt;</code></td><td>Change how often it is saved.</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule stop &lt;name&gt;</code></td><td>Pause it: no saves until it is started again.</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule start &lt;name&gt;</code></td><td>Resume a stopped one.</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule run &lt;name&gt;</code></td><td>Save it now, as its schedule does (exits 3 when nothing changed or the run was skipped).</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule remove &lt;name&gt;</code></td><td>Make it a normal snapshot: no more saves, its versions are kept. Alias: <code translate="no">rm</code>.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -541,7 +572,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">install-skill</code> installs a Claude Code skill at
               <code translate="no">~/.claude/skills/sessionsnap</code>. It tells Claude to use
               <code translate="no">--json</code>, to show you a restore plan before applying it, and never
-              to schedule saves on its own.
+              to start an automatic snapshot on its own.
             </p>
           </section>
 

@@ -77,10 +77,15 @@ const commands = pendingTracker((state) => {
 // when one starts with `-`: the only place the server allows a `--`.
 function cliArgs(args) {
   // How many positionals follow each command the page sends; its options come after them.
-  const positionals = { save: 1, delete: 1, edit: 1, show: 1, history: 1, diff: 2, restore: 1, apply: 1 };
+  const positionals = { save: 1, delete: 1, edit: 1, show: 1, history: 1, diff: 2, restore: 1, apply: 1, rename: 2,
+    "schedule add": 1, "schedule edit": 1, "schedule stop": 1, "schedule start": 1, "schedule run": 1,
+    "schedule remove": 1 };
   const valued = { "-m": "--message", "--message": "--message", "--search": "--search", "--tab": "--tab",
-    "--days": "--days", "--hours": "--hours", "--base": "--base" };
-  const [command, ...rest] = args;
+    "--days": "--days", "--hours": "--hours", "--base": "--base", "--interval": "--interval" };
+  // `schedule <sub>`: the subcommand is part of the command.
+  const head = args[0] === "schedule" ? args.slice(0, 2) : args.slice(0, 1);
+  const command = head.join(" ");
+  const rest = args.slice(head.length);
   const n = positionals[command] || 0;
   const values = rest.slice(0, n);
   const options = [];
@@ -90,7 +95,7 @@ function cliArgs(args) {
     else options.push(rest[i]);
   }
   const dashed = values.some((v) => v.startsWith("-"));
-  return [command, ...options, ...(dashed ? ["--"] : []), ...values];
+  return [...head, ...options, ...(dashed ? ["--"] : []), ...values];
 }
 
 // Returns `inTurn(task, wanted)`, which runs `task` once every task given before it has settled.
@@ -405,12 +410,25 @@ async function viewList() {
   }, { class: "primary" });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
   const open = (s) => go("snapshot", { snapshot: s.name, tab: "edit", version: null });
-  return h("section", { class: "stack" },
-    h("div", { class: "row" }, name, save),
-    shown.length === 0
-      ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
-        "Name one above to save the workspaces and tabs open in cmux now.")
-      : h("ul", { class: "list" }, shown.map((s) => {
+  // Automatic snapshots (saved on a schedule) are listed apart from the ones saved by hand.
+  const auto = shown.filter((s) => s.schedule);
+  const manual = shown.filter((s) => !s.schedule);
+  const autoName = h("input", { class: "name", placeholder: "Name, e.g. work-auto", "aria-label": "Automatic snapshot name" });
+  const every = intervalInput("30m");
+  const addAuto = actionButton("Save automatically", async () => {
+    const n = autoName.value.trim();
+    if (!n) {
+      autoName.focus();
+      return toast("Give the automatic snapshot a name.", "error");
+    }
+    const r = await sessionsnap(["schedule", "add", n, "--interval", every.value.trim()]);
+    const first = r.result.firstSave;
+    toast(`Saving ${n} every ${r.result.schedule.interval}` +
+      (first.reason ? ` (first save skipped: ${first.reason})` : ""));
+    render();
+  }, { title: "Save what is open in cmux now and every interval, by launchd (macOS)" });
+  autoName.addEventListener("keydown", (e) => { if (e.key === "Enter") addAuto.click(); });
+  const list = (items) => h("ul", { class: "list" }, items.map((s) => {
         const pend = opsOf(s.name).length;
         const li = h("li", { class: "item clickable", tabindex: "0", role: "button", onclick: () => open(s),
           onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(s); } } },
@@ -419,6 +437,8 @@ async function viewList() {
             h("strong", { class: "ellipsis" }, s.name),
             h("span", { class: "pill" }, `v${s.latestVersion}`),
             pend ? h("span", { class: "pill accent" }, `${pend} unsaved`) : null,
+            s.schedule ? h("span", { class: "pill" }, `every ${s.schedule.interval}`) : null,
+            s.schedule && !s.schedule.running ? h("span", { class: "pill warn" }, "stopped") : null,
             s.error ? h("span", { class: "pill warn" }, "unreadable") : null,
             h("span", { class: "grow" }),
             s.error ? null : h("span", { class: "muted small" }, time(s.createdAt))),
@@ -428,7 +448,20 @@ async function viewList() {
           s.message ? h("div", { class: "faint small ellipsis" }, s.message) : null),
         icon("chevron", "chev"));
         return li;
-      })),
+      }));
+  return h("section", { class: "stack" },
+    h("div", { class: "row" }, name, save),
+    shown.length === 0
+      ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
+        "Name one above to save the workspaces and tabs open in cmux now.")
+      : null,
+    auto.length && manual.length ? h("h2", { class: "section-title" }, "Manual") : null,
+    manual.length ? list(manual) : null,
+    h("h2", { class: "section-title" }, "Automatic"),
+    auto.length ? list(auto) : null,
+    h("div", { class: "row wrap" }, autoName, h("span", { class: "muted small" }, "every"), every, addAuto),
+    auto.length ? null : h("p", { class: "muted small" },
+      "An automatic snapshot is saved from what is open in cmux every interval, even when this page is closed. Only changes make a new version."),
     hidden ? h("p", { class: "muted small" },
       `${plural(hidden, "snapshot")} with a name starting with "--" ${hidden === 1 ? "is" : "are"} not shown here. Use the CLI: sessionsnap list, then sessionsnap show -- <name>.`) : null);
 }
@@ -437,7 +470,27 @@ async function viewSnapshot() {
   const name = state.snapshot;
   // The header and tabs come first, so a body that fails still leaves History, Restore and Discard.
   const body = h("div", {});
-  const update = actionButton("Update", async () => {
+  const schedules = (await sessionsnap(["schedule", "list"])).result.schedules;
+  const sched = schedules.find((s) => s.name.toLowerCase() === name.toLowerCase());
+  const title = editable(name, (to) => guard(async () => {
+    if (opsOf(name).length) {
+      render();
+      return toast("Save or discard your edits first.", "error");
+    }
+    const r = await sessionsnap(["rename", name, to]);
+    pending.delete(name);
+    toast(`Renamed ${r.result.from} to ${to}`);
+    go("snapshot", { snapshot: to });
+  }));
+  const rename = iconButton("pencil", "Rename snapshot", () => title.startEdit());
+  const runNow = actionButton("Run now", async () => {
+    if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
+    const r = await sessionsnap(["schedule", "run", name]);
+    toast(r.result.skipped ? `Skipped: ${r.result.reason}`
+      : r.exit === 3 ? "Nothing changed since the last version." : `Saved v${r.result.version}: ${r.result.message}`);
+    render();
+  }, { title: "Save what is open in cmux now, as the schedule does" });
+  const update = sched ? runNow : actionButton("Update", async () => {
     if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
     const r = await sessionsnap(["save", name]);
     toast(r.exit === 3 ? "Nothing changed since the last version." : `Saved v${r.result.version}: ${r.result.message}`);
@@ -480,9 +533,55 @@ async function viewSnapshot() {
   return h("section", { class: "stack" },
     h("div", {},
       h("div", { class: "crumb" }, h("button", { class: "link", onclick: () => go("list") }, icon("back"), "Snapshots")),
-      h("div", { class: "page-title" }, h("h1", {}, name), h("span", { class: "grow" }), update, del)),
+      h("div", { class: "page-title" }, h("h1", {}, title), rename, h("span", { class: "grow" }), update, del)),
+    sched ? schedulePanel(sched) : null,
     tabs,
     body);
+}
+
+// An interval field: any number and unit (30s, 10m, 2h, 1d), with common ones to pick from.
+function intervalInput(value) {
+  const id = `intervals-${++intervalInput.n}`;
+  const input = h("input", { class: "interval", value, list: id, "aria-label": "Interval, e.g. 30m, 2h, 1d",
+    title: "A number and a unit: s, m, h or d (at least 1m)" });
+  return h("span", { class: "interval-wrap" }, input,
+    h("datalist", { id }, ["5m", "15m", "30m", "1h", "2h", "6h", "1d"].map((v) => h("option", { value: v }))));
+}
+intervalInput.n = 0;
+// The interval field inside `intervalInput`'s wrapper.
+function intervalOf(wrap) { return wrap.querySelector("input").value.trim(); }
+
+// An automatic snapshot's schedule: running or stopped, its last run, and its controls.
+function schedulePanel(s) {
+  const name = s.name;
+  const every = intervalInput(s.interval);
+  const change = actionButton("Change", async () => {
+    const r = await sessionsnap(["schedule", "edit", name, "--interval", intervalOf(every)]);
+    toast(`${name} is saved every ${r.result.schedule.interval}${s.running ? "" : " once started"}`);
+    render();
+  }, { class: "ghost" });
+  const toggle = actionButton(s.running ? "Stop" : "Start", async () => {
+    await sessionsnap(["schedule", s.running ? "stop" : "start", name]);
+    toast(s.running ? `Stopped ${name}` : `Saving ${name} every ${s.interval} again`);
+    render();
+  }, { title: s.running ? "Pause: no saves until started again" : "Resume saving every interval" });
+  const manual = actionButton("Make manual", async () => {
+    await sessionsnap(["schedule", "remove", name]);
+    toast(`${name} is no longer saved automatically; its versions are kept`);
+    render();
+  }, { class: "ghost", title: "Stop saving it automatically; its versions are kept" });
+  const last = s.lastRun;
+  const lastText = !last ? "Not run yet"
+    : [`Last run: ${last.result}`, last.version ? ` v${last.version}` : "", last.reason ? ` (${last.reason})` : ""].join("");
+  return h("div", { class: "schedule-panel" },
+    h("div", { class: "meta" },
+      h("span", { class: `pill ${s.running ? "accent" : "warn"}` }, s.running ? "Running" : "Stopped"),
+      h("span", { class: "muted small" }, `Saved automatically every ${s.interval}`),
+      h("span", { class: "grow" }),
+      h("span", { class: last && last.result === "failed" ? "error small" : "muted small" }, lastText,
+        last ? " · " : null, last ? time(last.at) : null)),
+    h("div", { class: "row wrap" }, h("span", { class: "muted small" }, "Every"), every, change,
+      h("span", { class: "grow" }), toggle, manual));
 }
 
 // ---- Editor: ops are previewed with `edit --dry-run` and saved together as one version ----

@@ -209,6 +209,7 @@ mod tests {
             color: None,
             cwd: cwd.into(),
             git_branch: None,
+            pinned: false,
             cmux_workspace_id: id.map(str::to_string),
             tabs,
         }

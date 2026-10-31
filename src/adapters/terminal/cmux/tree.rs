@@ -132,6 +132,7 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> (Vec<OpenWorksp
                 name: fw.map(|f| f.name.clone()).unwrap_or_else(|| clean_title(&tw.title)),
                 cwd: fw.map(|f| f.cwd.clone()).unwrap_or_default(),
                 git_branch: fw.and_then(|f| f.git_branch.clone()),
+                pinned: fw.is_some_and(|f| f.pinned),
                 tabs,
             }
         })
@@ -153,6 +154,7 @@ pub fn from_file(file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
             name: f.name.clone(),
             cwd: f.cwd.clone(),
             git_branch: f.git_branch.clone(),
+            pinned: f.pinned,
             tabs: f
                 .panels
                 .iter()

@@ -65,8 +65,13 @@ pub enum Command {
         #[arg(long)]
         keep: usize,
     },
-    /// Delete a snapshot and all its versions
+    /// Delete a snapshot and all its versions (and its schedule)
     Delete { name: String },
+    /// Rename a snapshot (and its schedule)
+    Rename { old: String, new: String },
+    /// Save a snapshot automatically every so often (macOS)
+    #[command(subcommand)]
+    Schedule(ScheduleCommand),
     /// Edit a workspace in a saved snapshot
     Ws(WsArgs),
     /// Edit a tab in a saved snapshot
@@ -168,6 +173,36 @@ pub enum Command {
         #[arg(long)]
         check: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ScheduleCommand {
+    /// Start an automatic snapshot: save what is open in cmux now and every --interval
+    Add {
+        /// A new snapshot name (automatic snapshots are kept apart from the ones you save)
+        name: String,
+        /// How often: a number and a unit, e.g. 30m, 2h, 1d (at least 1m)
+        #[arg(long)]
+        interval: String,
+    },
+    /// List automatic snapshots, how often each is saved and how its last save went
+    #[command(visible_alias = "ls")]
+    List,
+    /// Change how often an automatic snapshot is saved
+    Edit {
+        name: String,
+        #[arg(long)]
+        interval: String,
+    },
+    /// Pause an automatic snapshot: no saves until it is started again
+    Stop { name: String },
+    /// Resume a stopped automatic snapshot
+    Start { name: String },
+    /// Make an automatic snapshot a normal one: no more saves, its versions are kept
+    #[command(visible_alias = "rm")]
+    Remove { name: String },
+    /// Save an automatic snapshot now, as its schedule does
+    Run { name: String },
 }
 
 #[derive(Args, Debug)]

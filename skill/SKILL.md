@@ -25,7 +25,8 @@ without flags (`sessionsnap agents --json` lists them).
 - Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action.
 - `install-cmux` (the cmux palette) is macOS-only; on Linux it exits 4 and changes nothing.
 - Run `update` (it replaces the sessionsnap binary) or `uninstall` only when the user asks; `update --check` is safe.
-- Never schedule or automate saving (cron, loops, hooks) unless the user asks for it.
+- Never start an automatic snapshot (`schedule add`) or automate saving any other way (cron, loops,
+  hooks) unless the user asks for it.
 - Do not start `sessionsnap ui` unless the user asks for the UI; it is for people.
 - `sessionsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
 - `save` only reads cmux. If nothing changed it writes nothing and exits 3. Its `warnings` name the
@@ -55,6 +56,12 @@ without flags (`sessionsnap agents --json` lists them).
 | Edit a workspace | `sessionsnap ws <name> <ws> --rename/--color/--index/--remove --json` |
 | Many edits as one version | `sessionsnap edit <name> --batch - --json` with a JSON array on stdin, e.g. `[{"op":"tab-move","tab":"Alpha#2","to":"Beta"}]` |
 | Workspaces and tabs open in cmux now | `sessionsnap open --json` |
+| Rename a snapshot | `sessionsnap rename <old> <new> --json` |
+| Save automatically every interval (macOS) | `sessionsnap schedule add <name> --interval 30m --json` (a new name; saves once now) |
+| Automatic snapshots | `sessionsnap schedule list --json` (`running`, `lastRun`); `list --json` rows of automatic ones have `schedule` |
+| Pause / resume / change one | `sessionsnap schedule stop\|start <name> --json`, `sessionsnap schedule edit <name> --interval 2h --json` |
+| Save one now | `sessionsnap schedule run <name> --json` |
+| Make it a normal snapshot | `sessionsnap schedule remove <name> --json` (versions kept; `save` to an automatic one is refused, exit 4) |
 | Preview edits without saving | `sessionsnap edit <name> --batch - --dry-run --json` (ops on stdin); save them with `--base <baseVersion>` from the preview, which exits 6 if the snapshot changed since |
 | Newer release? | `sessionsnap update --check --json` (`updateAvailable`) |
 | Install the latest release | `sessionsnap update --json` |

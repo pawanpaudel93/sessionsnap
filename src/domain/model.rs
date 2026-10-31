@@ -40,6 +40,9 @@ pub struct Workspace {
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
+    /// Pinned in cmux when saved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmux_workspace_id: Option<String>,
     pub tabs: Vec<Tab>,
