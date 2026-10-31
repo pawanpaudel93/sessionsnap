@@ -65,7 +65,7 @@ is saved as a plain tab, and `save` says so.
 | Many edits as one version | `sessionsnap edit <name> --batch - --json` with a JSON array on stdin, e.g. `[{"op":"tab-move","tab":"Alpha#2","to":"Beta"}]` |
 | Workspaces and tabs open in the terminal now | `sessionsnap open --json` |
 | Rename a snapshot | `sessionsnap rename <old> <new> --json` |
-| Save automatically every interval (macOS) | `sessionsnap schedule add <name> --interval 30m --json` (a new name; saves once now) |
+| Save automatically every interval (launchd on macOS, systemd on Linux) | `sessionsnap schedule add <name> --interval 30m --json` (a new name; saves once now) |
 | Automatic snapshots | `sessionsnap schedule list --json` (`running`, `lastRun`); `list --json` rows of automatic ones have `schedule` |
 | Pause / resume / change one | `sessionsnap schedule stop\|start <name> --json`, `sessionsnap schedule edit <name> --interval 2h --json` |
 | Save one now | `sessionsnap schedule run <name> --json` |

@@ -235,7 +235,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
           <section class="doc-section" id="automatic">
             <h2>Automatic snapshots</h2>
             <p>
-              An automatic snapshot is saved every interval, by launchd (macOS only), from the terminal
+              An automatic snapshot is saved every interval (by launchd on macOS, a systemd user timer on
+              Linux; on a machine nobody stays logged in to, run <code translate="no">loginctl enable-linger</code>
+              once), from the terminal
               it was added in (cmux or tmux), even when sessionsnap is not running. Like any save, a
               run with no changes writes nothing, so its history holds one version per change. Runs
               are skipped while that terminal is not running or shows no workspaces, and so is a run from the other
@@ -649,6 +651,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>Transcript cache (private: what was read of each Claude Code transcript, so a save reads only what was appended)</td><td><code translate="no">~/.sessionsnap/cache/</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Automatic snapshots' schedules</td><td><code translate="no">~/.sessionsnap/schedules.json</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Schedules' launchd agents (macOS)</td><td><code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.&lt;name&gt;.plist</code></td></tr>
+                  <tr><td>Schedules' systemd units (Linux)</td><td><code translate="no">~/.config/systemd/user/sessionsnap-schedule-&lt;name&gt;.{timer,service}</code>; <code translate="no">XDG_CONFIG_HOME</code></td></tr>
                   <tr><td>Claude Code transcripts (read)</td><td><code translate="no">~/.claude/projects</code>; <code translate="no">SESSIONSNAP_CLAUDE_DIR</code> (another <code translate="no">~/.claude</code>)</td></tr>
                   <tr><td>Codex sessions (read)</td><td><code translate="no">~/.codex/sessions</code>; <code translate="no">SESSIONSNAP_CODEX_DIR</code> (another <code translate="no">~/.codex</code>)</td></tr>
                   <tr><td>cmux binary</td><td><code translate="no">cmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_CMUX_BIN</code></td></tr>
@@ -724,7 +727,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <ul>
               <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay (if its <code translate="no">"commands"</code> array holds comments, this step is skipped and you remove those entries by hand);</li>
               <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>, only if sessionsnap wrote it;</li>
-              <li>every automatic snapshot's launchd agent (<code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.*</code>, macOS), even with <code translate="no">--keep-data</code>, which keeps the snapshots and <code translate="no">schedules.json</code>;</li>
+              <li>every automatic snapshot's launchd agent (<code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.*</code>, macOS) or systemd timer (<code translate="no">~/.config/systemd/user/sessionsnap-schedule-*</code>, Linux), even with <code translate="no">--keep-data</code>, which keeps the snapshots and <code translate="no">schedules.json</code>;</li>
               <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a symlink, or a folder holding files sessionsnap did not make, is left alone;</li>
               <li>the <code translate="no">sessionsnap</code> binary. One installed with cargo is left; run <code translate="no">cargo uninstall sessionsnap</code> afterwards.</li>
             </ul>

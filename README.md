@@ -50,7 +50,8 @@ you ask for.
 - **Scriptable:** every command takes `--json` and `--yes`, with stable exit codes.
 - **Web UI and palette:** a page in the cmux Dock (or the browser from tmux), and commands in the
   cmux command palette.
-- **Automatic snapshots:** `schedule add` saves a snapshot every interval through launchd (macOS).
+- **Automatic snapshots:** `schedule add` saves a snapshot every interval, through launchd on macOS
+  or a systemd user timer on Linux.
 - **tmux too:** inside tmux, sessionsnap saves and restores tmux sessions, on macOS and Linux.
 
 ## Requirements
@@ -134,7 +135,7 @@ sessionsnap rename work job           # rename a snapshot (and its schedule)
 
 ### Automatic snapshots
 
-An automatic snapshot is saved every interval by launchd (macOS only) from the terminal it was added
+An automatic snapshot is saved every interval (by launchd on macOS, a systemd user timer on Linux) from the terminal it was added
 in (cmux or tmux), even when sessionsnap isn't running. A run with no changes writes nothing, so its
 history holds one version per change. Runs are skipped while that terminal is not running or shows
 no workspaces, and a run from another terminal (`schedule run` by hand inside the other one) is
@@ -153,8 +154,11 @@ sessionsnap schedule run work                  # save it now
 sessionsnap schedule remove work               # make it a normal snapshot (versions kept)
 ```
 
-Intervals are a number and a unit (`30m`, `2h`, `1d`; at least `1m`). Each schedule is a launchd
-agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; `uninstall` removes them.
+Intervals are a number and a unit (`30m`, `2h`, `1d`; at least `1m`). On macOS each schedule is a
+launchd agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; on Linux a systemd user
+timer and service, `~/.config/systemd/user/sessionsnap-schedule-<name>.{timer,service}` (on a machine
+nobody stays logged in to, run `loginctl enable-linger` once so they keep running). `uninstall` removes
+them.
 
 ### tmux
 
@@ -315,6 +319,7 @@ Details:
 | Transcript cache (private; what was read of each Claude Code transcript, so a save reads only what was appended) | `~/.sessionsnap/cache/` | `SESSIONSNAP_HOME` |
 | Automatic snapshots' schedules | `~/.sessionsnap/schedules.json` | `SESSIONSNAP_HOME` |
 | Schedules' launchd agents (macOS) | `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist` | none |
+| Schedules' systemd units (Linux) | `~/.config/systemd/user/sessionsnap-schedule-<name>.{timer,service}` | `XDG_CONFIG_HOME` |
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
@@ -367,7 +372,7 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 Early: cmux on macOS, and tmux on macOS and Linux; the code is organised so other terminals can be
 added (see [ARCHITECTURE.md](ARCHITECTURE.md)). cmux on Linux is a different app (cmux Browser,
 backed by cmux-tui) with a different command line and state files, and needs its own terminal
-adapter. Automatic snapshots need launchd, so macOS only.
+adapter. Automatic snapshots use launchd on macOS and systemd user timers on Linux.
 
 Verified with cmux 0.64.22 on macOS:
 
@@ -396,7 +401,7 @@ This removes the `"sessionsnap: …"` palette commands from cmux's `cmux.json` (
 up next to itself; your other commands and comments stay; if its `"commands"` array holds
 comments, the step is skipped and you remove those entries by hand), the Claude Code skill
 (`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), every automatic snapshot's launchd
-agent (macOS; removed even with `--keep-data`, which keeps the snapshots and `schedules.json`),
+agent (macOS) or systemd timer (Linux; removed even with `--keep-data`, which keeps the snapshots and `schedules.json`),
 `~/.sessionsnap` (or `SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap
 did not make), and the `sessionsnap` binary. Anything already gone is
 reported, not an error. If a step fails (say the binary's folder is not writable), the others still
@@ -440,7 +445,8 @@ it), and writes to `dist/` one
 `sessionsnap-X.Y.Z-<target>.tar.gz` plus `.sha256` per target (`universal-apple-darwin`,
 `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes from the
 Conventional Commit subjects since the last tag). Then it asks, commits `chore: release vX.Y.Z`,
-tags, dates the version's `CHANGELOG.md` section (and refuses a version it has no section for),
+tags, turns `CHANGELOG.md`'s `## [Unreleased]` section into the version's, dated (and refuses a
+version with no section),
 pushes `main` and the tag, and creates the GitHub Release. `-y` skips the question;
 `RELEASE_ALLOW_DIRTY=1` lets a dry run work on a dirty tree or another branch.
 
