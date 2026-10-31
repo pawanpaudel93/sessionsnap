@@ -9,12 +9,27 @@ use anyhow::{Context, Result};
 
 use crate::error::{Exit, failure};
 
-/// Held while the file at `path` is the one this lock made (same inode); removed when dropped,
-/// only if it still is.
+/// Held while the file at `path` is the one this lock made (same inode and same token inside);
+/// removed when dropped, only if it still is. The token matters on Linux, which can give a new
+/// lock file the inode of one just removed.
 #[derive(Debug)]
 pub struct Lock {
     path: PathBuf,
     id: FileId,
+    token: String,
+}
+
+/// A token no other lock file has: this process, the time, and a count.
+fn new_token() -> String {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    format!("{}-{nanos}-{}", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed))
+}
+
+/// The lock file at `path` as it is now: its identity and the token inside (None when gone).
+fn current(path: &Path) -> Option<(FileId, String)> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    Some((FileId::of(&meta), fs::read_to_string(path).unwrap_or_default()))
 }
 
 /// A lock this old was left by a holder that crashed, and is broken.
@@ -32,9 +47,12 @@ impl Lock {
         let started = Instant::now();
         loop {
             match fs::OpenOptions::new().write(true).create_new(true).open(path) {
-                Ok(file) => {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    let token = new_token();
+                    file.write_all(token.as_bytes()).with_context(|| format!("locking {}", path.display()))?;
                     let meta = file.metadata().with_context(|| format!("locking {}", path.display()))?;
-                    return Ok(Lock { path: path.to_path_buf(), id: FileId::of(&meta) });
+                    return Ok(Lock { path: path.to_path_buf(), id: FileId::of(&meta), token });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     // The path itself (a symlink is a lock too, never followed).
@@ -43,7 +61,7 @@ impl Lock {
                         .as_ref()
                         .is_ok_and(|m| m.modified().is_ok_and(|m| m.elapsed().unwrap_or_default() > stale));
                     if let (true, Ok(meta)) = (old, &meta) {
-                        break_stale(path, FileId::of(meta));
+                        break_stale(path, (FileId::of(meta), fs::read_to_string(path).unwrap_or_default()));
                     } else if started.elapsed() > wait {
                         return Err(failure(
                             Exit::Error,
@@ -61,7 +79,7 @@ impl Lock {
     /// True while the lock file at the path is still this one: a holder that ran past `STALE` may
     /// have had it broken and taken by another.
     pub fn still_held(&self) -> bool {
-        fs::symlink_metadata(&self.path).is_ok_and(|m| FileId::of(&m) == self.id)
+        current(&self.path).is_some_and(|(id, token)| id == self.id && token == self.token)
     }
 
     pub fn path(&self) -> &Path {
@@ -72,7 +90,7 @@ impl Lock {
 impl Drop for Lock {
     fn drop(&mut self) {
         // A lock broken as stale may have a new holder by now: leave theirs alone.
-        if fs::symlink_metadata(&self.path).is_ok_and(|m| FileId::of(&m) == self.id) {
+        if self.still_held() {
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -81,13 +99,13 @@ impl Drop for Lock {
 /// Breaks the stale lock `seen` at `path`: moves it aside under a name of its own, and removes it
 /// only when it is the one that was seen. When another waiter broke it first and a new holder
 /// took the path meanwhile, the new lock is moved back.
-fn break_stale(path: &Path, seen: FileId) {
+fn break_stale(path: &Path, seen: (FileId, String)) {
     static COUNT: AtomicU64 = AtomicU64::new(0);
     let aside = path.with_extension(format!("stale-{}-{}", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed)));
     if fs::rename(path, &aside).is_err() {
         return;
     }
-    if fs::symlink_metadata(&aside).is_ok_and(|m| FileId::of(&m) != seen) {
+    if current(&aside).is_some_and(|now| now != seen) {
         // Not the stale one: give it back (unless yet another holder took the path).
         let _ = fs::hard_link(&aside, path);
     }
@@ -194,8 +212,22 @@ mod tests {
         let path = d.path().join("x.lock");
         let holder = Lock::acquire(&path).unwrap();
         // A waiter saw some earlier lock as stale, but the path now holds `holder`'s.
-        break_stale(&path, FileId(0, 0));
-        assert!(fs::metadata(&path).is_ok_and(|m| FileId::of(&m) == holder.id));
+        break_stale(&path, (FileId(0, 0), String::new()));
+        assert!(holder.still_held(), "put back as it was");
         assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1);
+    }
+
+    /// Linux can give a new lock file the inode of one just removed: the token inside still tells
+    /// the old holder the file is no longer its own, so it never removes the new holder's lock.
+    #[test]
+    fn the_same_inode_with_another_token_is_not_ours() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("x.lock");
+        let first = Lock::acquire(&path).unwrap();
+        // What a new holder on a reused inode looks like: same file, another token.
+        fs::write(&path, "another-holder").unwrap();
+        assert!(!first.still_held());
+        drop(first);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "another-holder", "left for its holder");
     }
 }
