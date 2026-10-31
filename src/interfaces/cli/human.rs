@@ -177,21 +177,23 @@ pub fn changes(changes: &[Change]) -> String {
 }
 
 pub fn plan(p: &crate::domain::plan::Plan) -> String {
+    use crate::domain::model::Tab;
     use crate::domain::plan::Action;
+    // A tab's command runs on restore, so it is shown, escaped: the snapshot may come from elsewhere.
+    let tab = |t: &Tab| match t {
+        Tab::Terminal { command: Some(c), .. } => format!("    + {} (runs: {})\n", t.title(), c.escape_debug()),
+        _ => format!("    + {}\n", t.title()),
+    };
     let mut s = String::new();
     for action in &p.actions {
         match action {
             Action::CreateWorkspace { name, tabs, .. } => {
                 s.push_str(&format!("+ create workspace {name} ({})\n", count(tabs.len(), "tab")));
-                for t in tabs {
-                    s.push_str(&format!("    + {}\n", t.title()));
-                }
+                tabs.iter().for_each(|t| s.push_str(&tab(t)));
             }
             Action::AddTabs { workspace_name, tabs, .. } => {
                 s.push_str(&format!("~ add to {workspace_name}:\n"));
-                for t in tabs {
-                    s.push_str(&format!("    + {}\n", t.title()));
-                }
+                tabs.iter().for_each(|t| s.push_str(&tab(t)));
             }
         }
     }
