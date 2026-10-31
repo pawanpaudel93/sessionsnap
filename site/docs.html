@@ -219,7 +219,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                       <code translate="no">--pick</code>: choose or name the snapshot interactively.
                     </td>
                   </tr>
-                  <tr><td><code translate="no">sessionsnap list</code></td><td>List snapshots with their latest version, workspace and tab counts, time and message: the ones you saved under Manual, then the automatic ones under Automatic.</td></tr>
+                  <tr><td><code translate="no">sessionsnap list [--cwd &lt;dir&gt;]</code></td><td>List snapshots with their latest version, workspace and tab counts, time, message and workspace names: the ones you saved under Manual, then the automatic ones under Automatic. With <code translate="no">--json</code> each row also has its <code translate="no">folders</code> and <code translate="no">agents</code>. <code translate="no">--cwd &lt;dir&gt;</code> (<code translate="no">.</code> for this one) keeps only the snapshots with a workspace or tab in that folder or below.</td></tr>
                   <tr><td><code translate="no">sessionsnap open</code></td><td>List the workspaces and tabs open in the terminal now.</td></tr>
                   <tr><td><code translate="no">sessionsnap show &lt;name&gt;[@v]</code></td><td>Show a snapshot's workspaces and tabs: each tab's position, kind (<code translate="no">shell</code> or the agent, such as <code translate="no">claude</code>) and title.</td></tr>
                   <tr><td><code translate="no">sessionsnap history &lt;name&gt;</code></td><td>List a snapshot's versions.</td></tr>
@@ -378,7 +378,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr>
                     <td><code translate="no">sessionsnap restore [name][@v]</code></td>
                     <td>
-                      Make the plan, ask, then reopen what is missing. <code translate="no">--plan</code>
+                      Make the plan, ask, then reopen what is missing; with no name, the most recently
+                      saved snapshot (after a reboot, the one to bring back). <code translate="no">--plan</code>
                       (alias <code translate="no">--dry-run</code>): only make and print the plan.
                       <code translate="no">-w, --workspace &lt;ws&gt;</code> and
                       <code translate="no">--tab &lt;ws&gt;#&lt;n&gt;</code> (both repeatable): only these. A tab

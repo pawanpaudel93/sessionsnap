@@ -21,6 +21,8 @@ use std::io::IsTerminal;
 use crate::adapters::agents::Agents;
 use crate::adapters::store::Store;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
+use crate::adapters::terminal::cmux::runner::ProcessRunner;
+use crate::adapters::terminal::procs::System;
 use crate::adapters::terminal::tmux::Tmux;
 use crate::ports::{OpenState, Scheduler, Terminal};
 
@@ -51,12 +53,13 @@ impl Ctx {
     pub fn open_default(json: bool, yes: bool, terminal: Option<&str>) -> anyhow::Result<Ctx> {
         let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
         let inside = Inside { tmux: set("TMUX"), cmux: set("CMUX_WORKSPACE_ID") || set("CMUX_SURFACE_ID") };
-        let (cmux, tmux) = (CmuxCli::open_default()?, Tmux::open_default());
-        let terminal: Box<dyn Terminal> =
-            match terminal_for(terminal, inside, || cmux.is_running(), || tmux.has_sessions()) {
-                "tmux" => Box::new(tmux),
-                _ => Box::new(cmux),
-            };
+        let terminal = Box::new(Detected {
+            asked: terminal.map(str::to_string),
+            inside,
+            cmux: CmuxCli::open_default()?,
+            tmux: Tmux::open_default(),
+            tmux_chosen: std::cell::OnceCell::new(),
+        });
         Ok(Ctx {
             store: Store::open_default()?,
             agents: Agents::open_default()?,
@@ -68,6 +71,55 @@ impl Ctx {
             input: None,
             folder_exists: |path| std::path::Path::new(path).is_dir(),
         })
+    }
+}
+
+/// The terminal, picked (`terminal_for`) the first time a command uses it: picking may ask cmux
+/// whether it runs, which commands that never touch a terminal (`list`, `show`, `update`…) skip.
+struct Detected {
+    asked: Option<String>,
+    inside: Inside,
+    cmux: CmuxCli<ProcessRunner>,
+    tmux: Tmux<ProcessRunner, System<ProcessRunner>>,
+    tmux_chosen: std::cell::OnceCell<bool>,
+}
+
+impl Detected {
+    fn get(&self) -> &dyn Terminal {
+        let tmux = *self.tmux_chosen.get_or_init(|| {
+            let pick = terminal_for(
+                self.asked.as_deref(),
+                self.inside,
+                || self.cmux.is_running(),
+                || self.tmux.has_sessions(),
+            );
+            pick == "tmux"
+        });
+        if tmux { &self.tmux } else { &self.cmux }
+    }
+}
+
+impl Terminal for Detected {
+    fn name(&self) -> &'static str {
+        self.get().name()
+    }
+    fn is_running(&self) -> bool {
+        self.get().is_running()
+    }
+    fn ensure_running(&self) -> anyhow::Result<()> {
+        self.get().ensure_running()
+    }
+    fn read_open_state(&self) -> anyhow::Result<OpenState> {
+        self.get().read_open_state()
+    }
+    fn create_workspace(&self, name: &str, cwd: &str, tabs: &[crate::ports::LaunchTab]) -> anyhow::Result<String> {
+        self.get().create_workspace(name, cwd, tabs)
+    }
+    fn add_tab(&self, workspace_ref: &str, tab: &crate::ports::LaunchTab) -> anyhow::Result<()> {
+        self.get().add_tab(workspace_ref, tab)
+    }
+    fn show_url(&self, url: &str) -> anyhow::Result<crate::ports::Shown> {
+        self.get().show_url(url)
     }
 }
 

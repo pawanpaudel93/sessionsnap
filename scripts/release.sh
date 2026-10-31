@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cut a sessionsnap release from a Mac: scripts/release.sh X.Y.Z [--dry-run] [-y]
+# Cut a sessionsnap release from a Mac: scripts/release.sh X.Y.Z [--dry-run] [--local-ci] [-y]
 #
 # Bumps the version, runs the CI checks, builds dist/ (a universal macOS binary and static Linux
 # builds for x86_64 and arm64, each as a tarball with a .sha256), then commits, tags, pushes main
@@ -9,6 +9,8 @@
 #
 #   --dry-run  build dist/ and show what would be published; commit, tag, push nothing
 #   -y         don't ask before publishing
+#   --local-ci don't require a passing CI run on the commit: run CI's Linux and minimum-Rust jobs
+#              here instead, in Docker (scripts/ci-local.sh), as well as the usual checks
 #
 # RELEASE_ALLOW_DIRTY=1 lets --dry-run run on a dirty tree or another branch (for testing the
 # script only).
@@ -30,17 +32,19 @@ die() {
 has() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
-  echo "usage: scripts/release.sh X.Y.Z [--dry-run] [-y]" >&2
+  echo "usage: scripts/release.sh X.Y.Z [--dry-run] [--local-ci] [-y]" >&2
   exit 2
 }
 
 VERSION=""
 DRY_RUN=0
 YES=0
+LOCAL_CI=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     -y | --yes) YES=1 ;;
+    --local-ci) LOCAL_CI=1 ;;
     -h | --help) usage ;;
     -*) die "unknown option: $arg" ;;
     *)
@@ -103,8 +107,8 @@ else
   [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
     die "main is not in sync with origin/main; pull or push first."
 fi
-# Publish only a commit CI passed (it also ran the Linux job).
-if [ "$DRY_RUN" = 0 ]; then
+# Publish only a commit CI passed (it also ran the Linux job); with --local-ci, those jobs run below.
+if [ "$DRY_RUN" = 0 ] && [ "$LOCAL_CI" = 0 ]; then
   ci=$(gh run list --repo "$REPO" --workflow ci.yml --commit "$(git rev-parse HEAD)" \
     --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null || true)
   case "$ci" in
@@ -164,6 +168,10 @@ subst CHANGELOG.md "s/^## \[$VERSION_RE\] - Unreleased\$/## [$VERSION] - $(date 
 
 # --- checks (the same script CI runs) ----------------------------------------
 scripts/check.sh
+if [ "$LOCAL_CI" = 1 ]; then
+  scripts/ci-local.sh linux
+  scripts/ci-local.sh msrv
+fi
 
 rm -rf "$DIST"
 mkdir -p "$DIST"

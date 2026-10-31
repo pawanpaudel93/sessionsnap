@@ -50,11 +50,11 @@ is saved as a plain tab, and `save` says so.
 |---|---|
 | Save / update everything open | `sessionsnap save <name> --json` |
 | Update only some workspaces | `sessionsnap save <name> -w <ws> -w <ws> --json` |
-| List snapshots | `sessionsnap list --json` |
+| List snapshots | `sessionsnap list [--cwd <dir>] --json` (rows have `workspaceNames`, `folders`, `agents`; `--cwd .` keeps the ones with something in this folder) |
 | Contents | `sessionsnap show <name>[@v] --json` |
 | Versions | `sessionsnap history <name> --json` |
 | Compare | `sessionsnap diff <name>@a <name>@b --json` |
-| Restore (plan) | `sessionsnap restore <name>[@v] [-w <ws>] [--tab <ws>#<n>] --plan --json` (a `--tab` tab is added to its open workspace, shells too) |
+| Restore (plan) | `sessionsnap restore <name>[@v] [-w <ws>] [--tab <ws>#<n>] --plan --json` (a `--tab` tab is added to its open workspace, shells too; with no name, the most recently saved snapshot, named in `snapshot`) |
 | Apply a plan | `sessionsnap apply <planId> --json` |
 | Lost sessions not open in the terminal | `sessionsnap recent [--hours 24] [--agent <kind>] --json`, then `sessionsnap recent --plan --json` |
 | Find a session | `sessionsnap sessions --search "<text>" [--agent <kind>] --json` |

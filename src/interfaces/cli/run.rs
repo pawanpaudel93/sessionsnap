@@ -21,7 +21,7 @@ use crate::ports::SessionInfo;
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
     match command {
         Command::Save { name, workspaces, from, message, pick } => save(ctx, name, &workspaces, from, message, pick),
-        Command::List => list(ctx),
+        Command::List { cwd } => list(ctx, cwd.as_deref()),
         Command::Open => open_now(ctx),
         Command::Show { snapshot } => show(ctx, &snapshot),
         Command::History { name } => history(ctx, &name),
@@ -210,16 +210,46 @@ fn open_now(ctx: &Ctx) -> Result<Outcome> {
     Ok(Outcome::ok(json!({"live": open.live, "workspaces": rows}), text.join("\n")))
 }
 
-fn list(ctx: &Ctx) -> Result<Outcome> {
+fn list(ctx: &Ctx, cwd: Option<&str>) -> Result<Outcome> {
     let schedules = ctx.store.read_schedules()?;
+    // `--cwd .` and other relative folders mean the folder they name from here.
+    let dir = cwd.map(|d| {
+        std::fs::canonicalize(d)
+            .map_or_else(|_| d.trim_end_matches('/').to_string(), |p| p.to_string_lossy().into_owned())
+    });
+    let under = |path: &str| dir.as_deref().is_none_or(|d| path == d || path.starts_with(&format!("{d}/")));
     let rows: Vec<Value> = app::snapshots::list(ctx)?
         .into_iter()
+        .filter(|(_, (_, v))| match (&dir, v) {
+            (None, _) => true,
+            (Some(_), Ok(v)) => v.workspaces.iter().any(|w| under(&w.cwd) || w.tabs.iter().any(|t| under(t.cwd()))),
+            (Some(_), Err(_)) => false,
+        })
         .map(|(name, (n, v))| {
             let mut row = match v {
-                Ok(v) => json!({
-                    "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
-                    "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
-                }),
+                // What it holds, so a person or an agent can pick one without `show`-ing each.
+                Ok(v) => {
+                    let mut seen = std::collections::HashSet::new();
+                    let folders: Vec<&str> =
+                        v.workspaces.iter().map(|w| w.cwd.as_str()).filter(|f| seen.insert(*f)).collect();
+                    let mut agents: Vec<&str> = v
+                        .workspaces
+                        .iter()
+                        .flat_map(|w| &w.tabs)
+                        .filter_map(|t| match t {
+                            crate::domain::model::Tab::Agent { agent, .. } => Some(agent.as_str()),
+                            crate::domain::model::Tab::Terminal { .. } => None,
+                        })
+                        .collect();
+                    agents.sort_unstable();
+                    agents.dedup();
+                    json!({
+                        "name": name, "latestVersion": v.version, "createdAt": v.created_at, "message": v.message,
+                        "workspaces": v.workspaces.len(), "tabs": tab_count(&v.workspaces),
+                        "workspaceNames": v.workspaces.iter().map(|w| &w.name).collect::<Vec<_>>(),
+                        "folders": folders, "agents": agents,
+                    })
+                }
                 Err(why) => json!({"name": name, "latestVersion": n, "error": format!("unreadable: {why}")}),
             };
             if let Some(s) = schedules.get(&name) {
@@ -509,13 +539,19 @@ fn restore(
     plan_only: bool,
     pick_flag: bool,
 ) -> Result<Outcome> {
-    let snapshot = match snapshot {
-        Some(s) => s,
-        None if pick_flag && ctx.interactive => pick::choose_snapshot(app::snapshots::names(ctx)?)?,
-        None => return Err(failure(Exit::Error, "give a snapshot (or --pick in a terminal)")),
+    let (snapshot, latest) = match snapshot {
+        Some(s) => (s, false),
+        None if pick_flag && ctx.interactive => (pick::choose_snapshot(app::snapshots::names(ctx)?)?, false),
+        // After a reboot, the thing to bring back is usually the last one saved.
+        None => (app::snapshots::most_recent(ctx)?, true),
     };
     let source = app::restore::snapshot_source(ctx, &snapshot, workspaces, tabs)?;
-    plan_then_apply(ctx, source, plan_only)
+    let mut out = plan_then_apply(ctx, source, plan_only)?;
+    if latest {
+        out.json["snapshot"] = json!(snapshot);
+        out.text = format!("The most recently saved snapshot: {snapshot}\n{}", out.text);
+    }
+    Ok(out)
 }
 
 /// Makes and saves a plan; applies it with --yes or an interactive yes, else prints how to apply.

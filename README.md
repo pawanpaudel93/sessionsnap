@@ -119,6 +119,8 @@ sessionsnap show work                 # workspaces and tabs
 sessionsnap history work              # versions
 sessionsnap diff work@3 work@4
 sessionsnap restore work --plan       # what would be reopened
+sessionsnap restore                   # after a reboot: the most recently saved snapshot (plan first)
+sessionsnap list --cwd .              # snapshots with something in this folder (or below)
 sessionsnap restore work              # plan, confirm, reopen what is missing
 sessionsnap restore work --tab 'Cascadia#3'   # just that tab, into Cascadia if it is open
 sessionsnap recent                    # agent sessions from the last 24h not open in the terminal
@@ -422,9 +424,12 @@ No test runs cmux, an agent or a browser; they use fakes and temp dirs.
 ```sh
 scripts/release.sh 0.2.0 --dry-run   # build dist/ and show what would be published
 scripts/release.sh 0.2.0             # bump, check, build, commit, tag, push, GitHub release
+scripts/release.sh 0.2.0 --local-ci  # the same, with CI's jobs run here in Docker instead of CI's
+scripts/ci-local.sh                  # just CI's jobs, here: check.sh, on Linux too, and the minimum Rust
 ```
 
-Run it on a Mac, on a clean `main` that matches `origin/main` and has passed CI, with Docker
+Run it on a Mac, on a clean `main` that matches `origin/main` and has passed CI (or with
+`--local-ci`, which runs CI's Linux and minimum-Rust jobs locally in Docker instead), with Docker
 running, the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets, and `gh` logged in. It
 refuses a version older than the current one, sets the version in `Cargo.toml`, `Cargo.lock`
 and the site's nav badge and JSON-LD `version` (examples in the text are left alone), runs
@@ -434,7 +439,8 @@ it), and writes to `dist/` one
 `sessionsnap-X.Y.Z-<target>.tar.gz` plus `.sha256` per target (`universal-apple-darwin`,
 `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes from the
 Conventional Commit subjects since the last tag). Then it asks, commits `chore: release vX.Y.Z`,
-tags, pushes `main` and the tag, and creates the GitHub Release. `-y` skips the question;
+tags, dates the version's `CHANGELOG.md` section (and refuses a version it has no section for),
+pushes `main` and the tag, and creates the GitHub Release. `-y` skips the question;
 `RELEASE_ALLOW_DIRTY=1` lets a dry run work on a dirty tree or another branch.
 
 </details>

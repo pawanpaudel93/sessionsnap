@@ -55,6 +55,11 @@ pub fn list(rows: &[Value]) -> String {
     out.join("\n")
 }
 
+/// `s`, cut to `max` characters with an ellipsis.
+fn shorten(s: &str, max: usize) -> String {
+    if s.chars().count() <= max { s.to_string() } else { format!("{}…", s.chars().take(max - 1).collect::<String>()) }
+}
+
 fn list_rows(rows: &[&Value]) -> String {
     rows.iter()
         .map(|r| {
@@ -62,8 +67,12 @@ fn list_rows(rows: &[&Value]) -> String {
                 let (name, v) = (r["name"].as_str().unwrap_or(""), r["latestVersion"].as_u64().unwrap_or(0));
                 return format!("{name:<20} v{v:<4} {why}");
             }
+            let names: Vec<&str> =
+                r["workspaceNames"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let names =
+                if names.is_empty() { String::new() } else { format!("\n  {}", shorten(&names.join(", "), 76)) };
             format!(
-                "{:<20} v{:<4} {:>3} ws {:>4} tabs  {}  {}",
+                "{:<20} v{:<4} {:>3} ws {:>4} tabs  {}  {}{names}",
                 r["name"].as_str().unwrap_or(""),
                 r["latestVersion"].as_u64().unwrap_or(0),
                 r["workspaces"].as_u64().unwrap_or(0),

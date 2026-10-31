@@ -207,6 +207,17 @@ pub fn names(ctx: &Ctx) -> Result<Vec<String>> {
     ctx.store.list()
 }
 
+/// The snapshot saved most recently (automatic ones too): what `restore` with no name restores.
+pub fn most_recent(ctx: &Ctx) -> Result<String> {
+    let at = |v: &Version| chrono::DateTime::parse_from_rfc3339(&v.created_at).ok();
+    list(ctx)?
+        .into_iter()
+        .filter_map(|(name, (_, v))| Some((at(v.as_ref().ok()?)?, name)))
+        .max()
+        .map(|(_, name)| name)
+        .ok_or_else(|| failure(Exit::NotFound, "no snapshots yet; save one with `sessionsnap save <name>`"))
+}
+
 /// A version as listed: its number, and its contents or why its file cannot be read.
 pub type Listed = (u32, std::result::Result<Version, String>);
 
