@@ -318,6 +318,11 @@ function agentLabel(t) {
   return t.type === "agent" && agentIcon(t.agent) === "agent" ? h("span", { class: "faint small ellipsis" }, agentName(t.agent)) : null;
 }
 
+// A shell tab's command, shown as text: it runs on restore, and the snapshot may come from elsewhere.
+function runsLabel(t) {
+  return t.type !== "agent" && t.command ? h("span", { class: "mono muted ellipsis", title: t.command }, `runs: ${t.command}`) : null;
+}
+
 function go(view, extra = {}) {
   Object.assign(state, { view }, extra);
   render();
@@ -766,6 +771,7 @@ function editTab(w, t, pos) {
     kindIcon(t),
     h("div", { class: "title" }, title,
       agentLabel(t),
+      runsLabel(t),
       where ? h("span", { class: "mono faint ellipsis", title: t.cwd }, where) : null),
     h("div", { class: "actions" },
       iconButton("open", "Restore this tab", () => {
@@ -1101,7 +1107,7 @@ async function renderRestore(name) {
       sync();
     });
     const bodyEl = h("ol", { class: expanded.has(key) ? "ws-body" : "ws-body hidden" }, w.tabs.map((t, i) =>
-      h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title), agentLabel(t)))));
+      h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title), agentLabel(t), runsLabel(t)))));
     const toggle = h("button", { class: `icon toggle ${expanded.has(key) ? "open" : ""}`, title: "Show tabs", "aria-label": "Show tabs",
       onclick: () => {
         const open = !expanded.has(key);
@@ -1162,7 +1168,7 @@ function renderPlan(r) {
     h("div", {}, plan.actions.map((a) => h("div", { class: "group" },
       h("div", { class: "row" }, icon(a.action === "create-workspace" ? "plus" : "chevron"),
         a.action === "create-workspace" ? h("span", {}, "New workspace ", h("strong", {}, a.name)) : h("span", {}, "Add to ", h("strong", {}, a.workspaceName))),
-      h("ul", {}, a.tabs.map((t) => h("li", { class: "ellipsis" }, t.title)))))),
+      h("ul", {}, a.tabs.map((t) => h("li", { class: "ellipsis" }, t.title, t.type !== "agent" && t.command ? h("span", { class: "mono" }, `  runs: ${t.command}`) : null)))))),
     plan.skipped.length
       ? h("details", {}, h("summary", {}, `${plan.skipped.length} already open or skipped`),
         h("ul", { class: "muted small" }, plan.skipped.map((s) => h("li", {}, s))))
