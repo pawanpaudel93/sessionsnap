@@ -658,8 +658,8 @@ async function renderEdit(name) {
         for (const k of keys) allOpen ? expanded.delete(k) : expanded.add(k);
         render();
       } }, allOpen ? "Collapse all" : "Expand all")),
-    h("div", { class: "hint" }, "Double-click a name to rename · drag tabs to reorder or move"),
-    h("div", { class: "ws-list" }, workspaces.map((w, wi) => editWorkspace(name, w, wi, workspaces.length))),
+    h("div", { class: "hint" }, "Double-click a name to rename · drag tabs, or use their buttons, to reorder or move"),
+    h("div", { class: "ws-list" }, workspaces.map((w, wi) => editWorkspace(name, w, wi, workspaces.map((x) => x.name)))),
     addWorkspace(name, new Set(workspaces.map((w) => w.name))),
     saveBar(name));
 }
@@ -711,7 +711,8 @@ function editable(text, onsave, cls = "") {
   return span;
 }
 
-function editWorkspace(name, w, wi, count) {
+function editWorkspace(name, w, wi, names) {
+  const count = names.length;
   const key = `${name}/${w.name}`;
   const open = expanded.has(key);
   const toggle = () => {
@@ -742,7 +743,7 @@ function editWorkspace(name, w, wi, count) {
   });
   const card = h("div", { class: "ws" }, head,
     open ? h("div", { class: "ws-body" },
-      h("ol", {}, w.tabs.map((t, ti) => editTab(w, t, ti + 1))),
+      h("ol", {}, w.tabs.map((t, ti) => editTab(w, t, ti + 1, names))),
       addTabRow(w)) : null);
   card.addEventListener("dragover", (e) => {
     if (!dragged) return;
@@ -762,7 +763,8 @@ function editWorkspace(name, w, wi, count) {
   return card;
 }
 
-function editTab(w, t, pos) {
+// `names`: every workspace's, for "Move to…". The buttons do what dragging does, by keyboard or touch.
+function editTab(w, t, pos, names) {
   const ref = `${w.name}#${pos}`;
   const title = editable(t.title, (to) => pushOp(said({ op: "tab-rename", tab: ref, to }, `Renamed tab ${t.title} to ${to}`)));
   const where = relPath(t.cwd, w.cwd);
@@ -780,6 +782,15 @@ function editTab(w, t, pos) {
         go("snapshot", { tab: "restore", version: null, pick: ref });
       }),
       iconButton("pencil", "Rename tab", () => title.startEdit()),
+      h("button", { class: "icon", title: `Move ${t.title} up`, "aria-label": `Move ${t.title} up`, disabled: pos === 1,
+        onclick: () => pushOp(said({ op: "tab-index", tab: ref, index: pos - 1 }, `Moved ${t.title} to position ${pos - 1}`)) }, icon("up")),
+      h("button", { class: "icon", title: `Move ${t.title} down`, "aria-label": `Move ${t.title} down`, disabled: pos === w.tabs.length,
+        onclick: () => pushOp(said({ op: "tab-index", tab: ref, index: pos + 1 }, `Moved ${t.title} to position ${pos + 1}`)) }, icon("down")),
+      names.length > 1 ? h("select", { class: "move-to", title: `Move ${t.title} to another workspace`,
+        "aria-label": `Move ${t.title} to another workspace`,
+        onchange: (e) => pushOp(said({ op: "tab-move", tab: ref, to: e.target.value }, `Moved ${t.title} to ${e.target.value}`)) },
+      h("option", { value: "", selected: true, disabled: true }, "Move to…"),
+      names.filter((n) => n !== w.name).map((n) => h("option", { value: n }, n))) : null,
       iconButton("close", "Remove tab from the snapshot", () => pushOp(said({ op: "tab-remove", tab: ref }, `Removed tab ${t.title}`)), "remove")));
   li.addEventListener("dragstart", (e) => {
     dragged = { ws: w.name, pos, title: t.title };
