@@ -82,7 +82,7 @@ older=$(printf '%s %s\n' "${VERSION%%-*}" "${CURRENT%%-*}" | tr '.' ' ' |
 
 # Files that record the version: Cargo's, and on the site only the marked spots (the nav badge,
 # and the home page's JSON-LD "version"), never examples in the text.
-VERSION_FILES="Cargo.toml Cargo.lock"
+VERSION_FILES="Cargo.toml Cargo.lock CHANGELOG.md"
 SITE_FILES=""
 for f in site/index.html site/docs.html; do
   [ ! -f "$f" ] || SITE_FILES="$SITE_FILES $f"
@@ -157,6 +157,10 @@ else
 fi
 [ "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)" = "$VERSION" ] ||
   die "Cargo.toml did not take the new version."
+# The changelog describes every release: its "Unreleased" section for this version gets today's date.
+grep -q "^## \[$VERSION\] - " CHANGELOG.md || die "CHANGELOG.md has no section for $VERSION; write one first."
+VERSION_RE=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+subst CHANGELOG.md "s/^## \[$VERSION_RE\] - Unreleased\$/## [$VERSION] - $(date +%Y-%m-%d)/"
 
 # --- checks (the same script CI runs) ----------------------------------------
 scripts/check.sh
@@ -257,7 +261,7 @@ INSTALL='curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh'
   if [ -z "$PREV" ]; then
     # The first release: its history is the pre-release work, so a short summary instead.
     printf 'First release.\n\n'
-    printf 'sessionsnap saves named, versioned snapshots of cmux workspaces and the coding-agent sessions in their tabs (Claude Code, Codex and more), and reopens only what is missing, each agent tab resumed in its folder with its saved flags.\n\n'
+    printf 'Save and resume your coding-agent sessions in cmux and tmux. sessionsnap saves named, versioned snapshots of your cmux workspaces or tmux sessions and the coding-agent sessions in their tabs (Claude Code, Codex and more), and reopens only what is missing, each agent tab resumed in its folder with its saved flags. See CHANGELOG.md for everything in this release.\n\n'
     printf 'Install (macOS and Linux):\n\n```sh\n%s\n```\n' "$INSTALL"
   else
     printf 'Install or upgrade (macOS and Linux):\n\n```sh\n%s\n```\n\n' "$INSTALL"
