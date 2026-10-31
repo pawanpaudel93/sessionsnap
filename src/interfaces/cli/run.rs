@@ -353,6 +353,10 @@ fn diff_cmd(ctx: &Ctx, a: &str, b: &str) -> Result<Outcome> {
 }
 
 fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Outcome> {
+    // Before asking: the store refuses it anyway, after the user said yes.
+    if keep == 0 {
+        return Err(failure(Exit::Error, "--keep must be at least 1"));
+    }
     let count = app::snapshots::version_count(ctx, name)?;
     if count <= keep {
         return Ok(Outcome::ok(
