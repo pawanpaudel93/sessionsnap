@@ -78,7 +78,7 @@ pub enum Command {
     Delete { name: String },
     /// Rename a snapshot (and its schedule)
     Rename { old: String, new: String },
-    /// Save a snapshot automatically every so often (macOS)
+    /// Save a snapshot automatically every so often (launchd on macOS, systemd on Linux)
     #[command(subcommand)]
     Schedule(ScheduleCommand),
     /// Edit a workspace in a saved snapshot
@@ -183,7 +183,7 @@ pub enum Command {
     },
     /// Print the man page (roff), e.g. `sessionsnap man > ~/.local/share/man/man1/sessionsnap.1`
     Man,
-    /// Remove sessionsnap: palette commands, skill, schedules (launchd agents), snapshots and this binary (asks first)
+    /// Remove sessionsnap: palette commands, skill, schedules (launchd agents or systemd timers), snapshots and this binary (asks first)
     Uninstall {
         /// Keep your snapshots (~/.sessionsnap)
         #[arg(long)]

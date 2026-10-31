@@ -432,7 +432,7 @@ async function viewList() {
     toast(`Saving ${n} every ${r.result.schedule.interval}` +
       (first.reason ? ` (first save skipped: ${first.reason})` : ""));
     render();
-  }, { title: `Save what is open in ${TERMINAL} now and every interval, by launchd (macOS)` });
+  }, { title: `Save what is open in ${TERMINAL} now and every interval (launchd on macOS, systemd on Linux)` });
   autoName.addEventListener("keydown", (e) => { if (e.key === "Enter") addAuto.click(); });
   const list = (items) => h("ul", { class: "list" }, items.map((s) => {
         const pend = opsOf(s.name).length;

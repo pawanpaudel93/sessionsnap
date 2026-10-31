@@ -27,9 +27,7 @@ pub struct Launchd {
 
 impl Launchd {
     pub fn open_default() -> Result<Self> {
-        // PATH finds cmux and the agents; SESSIONSNAP_* point at the same store and folders as
-        // the command that made the schedule.
-        let env = std::env::vars().filter(|(k, _)| k == "PATH" || k.starts_with("SESSIONSNAP_")).collect();
+        let env = super::run_env();
         Ok(Launchd {
             agents_dir: home_dir()?.join("Library/LaunchAgents"),
             program: std::env::current_exe()?,

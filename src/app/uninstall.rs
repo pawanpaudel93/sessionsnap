@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::adapters::agents::claude::{SkillRemoval, uninstall_skill};
 use crate::adapters::scheduler::launchd::{LABEL_PREFIX, Launchd};
+use crate::adapters::scheduler::systemd::{Systemd, UNIT_PREFIX};
 use crate::adapters::terminal::cmux::palette::uninstall_cmux;
 
 /// Everything uninstall touches; `paths()` finds the real ones, tests pass temp dirs.
@@ -25,6 +26,8 @@ pub struct Paths {
     pub rc_files: Vec<PathBuf>,
     /// Where scheduled saves' launchd agents are (macOS only).
     pub launch_agents: Option<PathBuf>,
+    /// Where scheduled saves' systemd units are (Linux only).
+    pub systemd_units: Option<PathBuf>,
 }
 
 /// The paths of this install.
@@ -42,6 +45,9 @@ pub fn paths(data: &Path) -> Result<Paths> {
         rc_files: rc_files(&crate::adapters::home_dir()?, env_dir("ZDOTDIR"), env_dir("XDG_CONFIG_HOME")),
         launch_agents: (std::env::consts::OS == "macos")
             .then(|| crate::adapters::home_dir().map(|h| h.join("Library/LaunchAgents")))
+            .transpose()?,
+        systemd_units: (std::env::consts::OS == "linux")
+            .then(|| Systemd::open_default().map(|s| s.units_dir))
             .transpose()?,
     })
 }
@@ -89,6 +95,9 @@ pub fn preview(p: &Paths, keep_data: bool) -> Vec<String> {
     ];
     if p.launch_agents.is_some() {
         lines.push("every automatic snapshot's schedule (its launchd agent)".into());
+    }
+    if p.systemd_units.is_some() {
+        lines.push("every automatic snapshot's schedule (its systemd timer)".into());
     }
     if keep_data {
         lines.push(format!("(keeping your snapshots in {})", p.data.display()));
@@ -147,6 +156,16 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
         steps.push(match launchd.remove_all() {
             Ok(labels) if labels.is_empty() => step(what, "already gone", None),
             Ok(labels) => step(what, "removed", Some(labels.join(", "))),
+            Err(e) => failed(what, e),
+        });
+    }
+    if let Some(dir) = &p.systemd_units {
+        let systemd =
+            Systemd { units_dir: dir.clone(), program: p.exe.clone(), systemctl: "systemctl".into(), env: vec![] };
+        let what = format!("scheduled saves ({}/{UNIT_PREFIX}*)", dir.display());
+        steps.push(match systemd.remove_all() {
+            Ok(units) if units.is_empty() => step(what, "already gone", None),
+            Ok(units) => step(what, "removed", Some(units.join(", "))),
             Err(e) => failed(what, e),
         });
     }
@@ -267,6 +286,7 @@ mod tests {
             cargo_bin: Some(dir.join(".cargo/bin")),
             rc_files: rc_files(dir, None, None),
             launch_agents: None,
+            systemd_units: None,
         };
         std::fs::create_dir_all(p.cmux_config.parent().unwrap()).unwrap();
         std::fs::write(&p.cmux_config, r#"{"commands": [{"name": "Mine", "command": "ls"}]}"#).unwrap();
