@@ -32,8 +32,10 @@ pub struct Server<'a> {
     pub port: u16,
     /// Random per start; the page gets it from the link fragment `#t=…` and sends it as X-Sessionsnap-Token.
     pub token: String,
-    /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes the cmux backend's.
+    /// Called by `POST /api/show` with the keyed link; `sessionsnap ui` passes its terminal's.
     pub show: Box<ShowFn<'a>>,
+    /// The terminal the page's commands use ("cmux" or "tmux"), for its wording.
+    pub terminal: &'static str,
     shows: ShowGate,
     /// Commands run one at a time, as before the server had workers. The store's per-snapshot lock
     /// guards its files; this also keeps one page's commands in order and bounds the work.
@@ -108,7 +110,13 @@ struct RunBody {
 
 impl<'a> Server<'a> {
     pub fn new(port: u16, token: String, show: Box<ShowFn<'a>>) -> Self {
-        Server { port, token, show, shows: ShowGate::default(), runs: Mutex::new(()) }
+        Server { port, token, show, terminal: "cmux", shows: ShowGate::default(), runs: Mutex::new(()) }
+    }
+
+    /// The server for a page whose commands use `terminal`.
+    pub fn for_terminal(mut self, terminal: &'static str) -> Self {
+        self.terminal = terminal;
+        self
     }
 
     /// Tests set shorter limits for shows.
@@ -133,7 +141,8 @@ impl<'a> Server<'a> {
                 Response { status: 200, content_type: "text/css; charset=utf-8", body: APP_CSS.into() }
             }
             ("GET", "/api/hello") => {
-                Response::json(200, &json!({"app": "sessionsnap", "version": env!("CARGO_PKG_VERSION")}))
+                let version = env!("CARGO_PKG_VERSION");
+                Response::json(200, &json!({"app": "sessionsnap", "version": version, "terminal": self.terminal}))
             }
             ("POST", "/api/run") => self.run(req, make_ctx),
             ("POST", "/api/show") => self.show(req),
@@ -205,15 +214,19 @@ impl<'a> Server<'a> {
             Ok(shown) => {
                 if let Some(why) = &shown.fragment_error {
                     eprintln!(
-                        "sessionsnap: showed the UI in cmux but could not hand it its key ({}).\n\
-                         Open this link in cmux's browser, or click Reconnect on the page to try again:\n{link}",
+                        "sessionsnap: showed the UI in {} but could not hand it its key ({}).\n\
+                         Open this link, or click Reconnect on the page to try again:\n{link}",
+                        self.terminal,
                         why.replace(&self.token, "…")
                     );
                 }
                 Response::json(200, &json!({"shown": shown.place, "keyed": shown.fragment_error.is_none()}))
             }
             // cmux's message could quote the link; the key stays out of the answer.
-            Err(e) => Response::text(502, &format!("could not show the UI in cmux: {e:#}").replace(&self.token, "…")),
+            Err(e) => Response::text(
+                502,
+                &format!("could not show the UI in {}: {e:#}", self.terminal).replace(&self.token, "…"),
+            ),
         }
     }
 
@@ -336,7 +349,10 @@ mod tests {
             assert_eq!(s.handle(&req("GET", "/app.css", &[], ""), mk).status, 200);
             assert_eq!(s.handle(&req("GET", "/nope", &[], ""), mk).status, 404);
             assert_eq!(s.handle(&req("DELETE", "/", &[], ""), mk).status, 405);
-            assert_eq!(body(&s.handle(&req("GET", "/api/hello", &[], ""), mk))["app"], "sessionsnap");
+            let hello = body(&s.handle(&req("GET", "/api/hello", &[], ""), mk));
+            assert_eq!((hello["app"].as_str(), hello["terminal"].as_str()), (Some("sessionsnap"), Some("cmux")));
+            let tmux = server().for_terminal("tmux");
+            assert_eq!(body(&tmux.handle(&req("GET", "/api/hello", &[], ""), mk))["terminal"], "tmux");
         });
     }
 

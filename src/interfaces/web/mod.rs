@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::adapters::terminal::cmux::cli::CmuxCli;
+use crate::adapters::terminal::tmux::Tmux;
 use crate::error::{Exit, failure};
 use crate::interfaces::cli::{Ctx, Outcome};
 use crate::ports::Terminal;
@@ -138,9 +139,9 @@ fn report_shown(response: &http::Response) {
         let place = v["shown"].as_str().unwrap_or("?");
         if v["keyed"] == false {
             // `show_page` printed the keyed link just above.
-            eprintln!("Showed it in cmux ({place}) without its key: open the link above.");
+            eprintln!("Showed it ({place}) without its key: open the link above.");
         } else {
-            eprintln!("Showed it in cmux ({place}).");
+            eprintln!("Showed it ({place}).");
         }
     } else {
         eprintln!("sessionsnap: {}\nRun `sessionsnap ui` again to show it.", body.trim());
@@ -270,7 +271,7 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
 }
 
 /// `sessionsnap ui`: serves the page on 127.0.0.1 and shows it in cmux; returns once idle.
-pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
+pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
     let url = format!("http://127.0.0.1:{port}/");
     let idle = idle_minutes
         .checked_mul(60)
@@ -283,9 +284,15 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
             return Err(failure(Exit::Error, format!("cannot listen on 127.0.0.1:{port} ({e}); pick another --port")));
         }
     };
-    // Shows run on their own thread, so each opens its own cmux client. The key travels in the
-    // link's fragment, which the browser keeps to itself.
-    let server = Server::new(port, new_token()?, Box::new(|u| CmuxCli::open_default()?.show_url(u)));
+    // Shows run on their own thread, so each opens its own terminal client: cmux shows the page in
+    // its Dock, tmux in the default browser. The key travels in the link's fragment, which the
+    // browser keeps to itself.
+    let terminal = ctx.terminal.name();
+    let show = move |u: &str| match terminal {
+        "tmux" => Tmux::open_default().show_url(u),
+        _ => CmuxCli::open_default()?.show_url(u),
+    };
+    let server = Server::new(port, new_token()?, Box::new(show)).for_terminal(terminal);
     eprintln!("sessionsnap UI at {url}. It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
     if !open {
         eprintln!("Run `sessionsnap ui` again to show it.");

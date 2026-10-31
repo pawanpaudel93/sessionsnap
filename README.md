@@ -155,7 +155,8 @@ is the one the arguments name (`--resume <id>`, `codex resume <id>`); else, for 
 Codex, the session in that folder changed most recently since the agent started. When several panes
 run the same agent in one folder with no ID in their command, none is guessed: they are saved as
 plain tabs, and `save` says so. Each version records the terminal it came from, and an automatic
-snapshot keeps saving from the terminal it was added in. The web UI and palette stay in cmux.
+snapshot keeps saving from the terminal it was added in. The palette is cmux's; the web UI works
+with both (see [Web UI](#web-ui)).
 
 ```sh
 sessionsnap update --check            # is there a newer release?
@@ -318,7 +319,10 @@ Want another agent supported? See [Add an agent](ARCHITECTURE.md#add-an-agent).
 
 `sessionsnap ui` serves a small page on `http://127.0.0.1:47317/` and shows it in the cmux Dock (the
 right sidebar). From the palette: "sessionsnap: Open UI" (it runs in its own "sessionsnap UI"
-workspace).
+workspace). Run in tmux, it opens the page in your default browser instead, and the page saves from
+and restores into tmux. On macOS the page gets its key through `osascript`'s input, never a command
+line; on Linux `xdg-open` would need it on one, so the page opens without it and the keyed link is
+printed in the terminal running `sessionsnap ui`.
 
 - **Snapshots:** save what is open, update a snapshot from what is open, rename (the pencil or a
   double-click on its name) or delete one. The list has Manual and Automatic sections.

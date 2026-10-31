@@ -280,8 +280,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               the agent started. When several panes run the same agent in one folder with no ID in
               their command, none is guessed: they are saved as plain tabs, and
               <code translate="no">save</code> says so. Each version records the terminal it came from,
-              and an automatic snapshot keeps saving from the terminal it was added in. The web UI and
-              palette stay in cmux.
+              and an automatic snapshot keeps saving from the terminal it was added in. The palette is
+              cmux's; the web UI works with both (see <a href="#web-ui">Web UI</a>).
             </p>
           </section>
 
@@ -545,7 +545,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               <code translate="no">sessionsnap ui</code> serves a small page on
               <code translate="no">http://127.0.0.1:47317/</code> and shows it in the cmux Dock (the right
-              sidebar). The page runs the same commands as the CLI.
+              sidebar). Run in tmux, it opens the page in your default browser instead, and the page
+              saves from and restores into tmux. On macOS the page gets its key through
+              <code translate="no">osascript</code>'s input, never a command line; on Linux the page opens
+              without it and the keyed link is printed in the terminal running
+              <code translate="no">sessionsnap ui</code>. The page runs the same commands as the CLI.
             </p>
             <ul>
               <li><strong>Snapshots:</strong> save what is open, update a snapshot from what is open, delete one.</li>

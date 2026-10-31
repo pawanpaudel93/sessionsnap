@@ -215,9 +215,38 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
         self.type_command(&window, tab)
     }
 
-    fn show_url(&self, _url: &str) -> Result<Shown> {
-        Err(failure(Exit::Refused, "the web UI page shows in cmux; with tmux, open its link in a browser"))
+    /// tmux has no browser: the default browser shows the page (`browser_open`).
+    fn show_url(&self, url: &str) -> Result<Shown> {
+        let (program, args, input, fragment_error) = browser_open(std::env::consts::OS, url)?;
+        let args: Vec<String> = args.into_iter().map(String::from).collect();
+        let out = match &input {
+            Some(input) => self.runner.run_input(program, &args, input)?,
+            None => self.runner.run(program, &args)?,
+        };
+        if !out.success {
+            // Its message could quote the link; the caller keeps the key out of what it shows.
+            return Err(failure(Exit::Error, format!("`{program}` could not open the browser: {}", out.stderr.trim())));
+        }
+        Ok(Shown { place: "browser", fragment_error })
     }
+}
+
+/// How to open `url` in the default browser on `os`: the program, its arguments, its stdin, and
+/// why the `#` part (which carries the page's key, and never goes on a command line) was left off.
+/// macOS: `osascript` reads `open location "<url>"` from stdin. Elsewhere: `xdg-open` with the
+/// link before its `#`.
+type BrowserOpen<'a> = (&'static str, Vec<&'a str>, Option<String>, Option<String>);
+fn browser_open<'a>(os: &str, url: &'a str) -> Result<BrowserOpen<'a>> {
+    // The server builds the link from a port and a hex key; nothing here may end the string.
+    if url.chars().any(|c| c == '"' || c == '\\' || c.is_control()) {
+        return Err(failure(Exit::Error, "not opening a link with quotes, backslashes or control characters"));
+    }
+    if os == "macos" {
+        return Ok(("osascript", vec!["-"], Some(format!("open location \"{url}\"")), None));
+    }
+    let bare = url.split('#').next().unwrap_or(url);
+    let why = (bare.len() < url.len()).then(|| "xdg-open takes the link only on its command line".to_string());
+    Ok(("xdg-open", vec![bare], None, why))
 }
 
 /// A `list-panes` line; None for one that doesn't parse.
@@ -396,6 +425,41 @@ mod tests {
         assert!(t.add_tab("$1", &tab).is_err());
         assert!(t.create_workspace("w", "/w", &[tab]).is_err());
         assert!(t.runner.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn the_browser_gets_the_key_only_off_the_command_line() {
+        let url = "http://127.0.0.1:7777/#t=abc123";
+        let (program, args, input, why) = browser_open("macos", url).unwrap();
+        assert_eq!((program, args), ("osascript", vec!["-"]));
+        assert_eq!(input.as_deref(), Some("open location \"http://127.0.0.1:7777/#t=abc123\""));
+        assert_eq!(why, None);
+        let (program, args, input, why) = browser_open("linux", url).unwrap();
+        assert_eq!((program, args, input), ("xdg-open", vec!["http://127.0.0.1:7777/"], None));
+        assert!(why.is_some(), "the page gets no key; the server prints the keyed link");
+        assert!(browser_open("macos", "http://x/\" & do shell script \"rm\"").is_err());
+    }
+
+    #[test]
+    fn shows_the_page_in_the_browser() {
+        struct Osascript(RefCell<Option<String>>);
+        impl Runner for Osascript {
+            fn run(&self, _: &str, _: &[String]) -> Result<Output> {
+                unreachable!("macOS opens the link from stdin")
+            }
+            fn run_input(&self, program: &str, args: &[String], input: &str) -> Result<Output> {
+                assert_eq!((program, args), ("osascript", &["-".to_string()][..]));
+                *self.0.borrow_mut() = Some(input.into());
+                Ok(Output { success: true, ..Default::default() })
+            }
+        }
+        if std::env::consts::OS != "macos" {
+            return;
+        }
+        let t = Tmux { runner: Osascript(RefCell::default()), program: "tmux".into(), procs: FakeProcs::default() };
+        let shown = t.show_url("http://127.0.0.1:7777/#t=k").unwrap();
+        assert_eq!((shown.place, shown.fragment_error), ("browser", None));
+        assert_eq!(t.runner.0.borrow().as_deref(), Some("open location \"http://127.0.0.1:7777/#t=k\""));
     }
 
     #[test]

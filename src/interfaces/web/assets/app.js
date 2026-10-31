@@ -43,7 +43,11 @@ class CommandError extends Error {
   }
 }
 
-const START_HINT = "Start it with the palette command \"sessionsnap: Open UI\" or `sessionsnap ui`.";
+// The terminal the page's commands save from and restore into ("cmux" or "tmux"), for its wording;
+// the server says which at start (GET /api/hello).
+let TERMINAL = "cmux";
+
+const START_HINT = "Start it with `sessionsnap ui` (in cmux, also the palette command \"sessionsnap: Open UI\").";
 
 // Counts commands queued or running. Calls onChange("busy") when the first is queued, "slow"
 // once that has lasted `slowAfter` ms, and "idle" when the last one ends.
@@ -365,13 +369,15 @@ function reconnectView(message) {
       if (!r.ok) throw new Error(await r.text());
       const { shown, keyed } = await r.json();
       if (keyed === false) {
-        // The key never goes on a command line; when cmux's socket could not take it, the server
-        // printed the keyed link in its own terminal instead.
+        // The key never goes on a command line; when it could not be handed over another way, the
+        // server printed the keyed link in its own terminal instead.
         status.className = "error small";
-        status.textContent = "cmux showed the page but could not hand it its key. Open the link printed in the terminal running `sessionsnap ui`, or try again.";
+        status.textContent = `${shown === "browser" ? "The browser" : "cmux"} showed the page but could not hand it its key. Open the link printed in the terminal running \`sessionsnap ui\`, or try again.`;
         return;
       }
-      status.textContent = shown === "reused" ? "Reconnecting…" : `Opened the sessionsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
+      status.textContent = shown === "reused" ? "Reconnecting…"
+        : shown === "browser" ? "Opened the sessionsnap UI in a new browser tab."
+          : `Opened the sessionsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
     } catch (e) {
       status.className = "error small";
       status.textContent = `${e.message} ${START_HINT}`;
@@ -426,7 +432,7 @@ async function viewList() {
     toast(`Saving ${n} every ${r.result.schedule.interval}` +
       (first.reason ? ` (first save skipped: ${first.reason})` : ""));
     render();
-  }, { title: "Save what is open in cmux now and every interval, by launchd (macOS)" });
+  }, { title: `Save what is open in ${TERMINAL} now and every interval, by launchd (macOS)` });
   autoName.addEventListener("keydown", (e) => { if (e.key === "Enter") addAuto.click(); });
   const list = (items) => h("ul", { class: "list" }, items.map((s) => {
         const pend = opsOf(s.name).length;
@@ -453,7 +459,7 @@ async function viewList() {
     h("div", { class: "row" }, name, save),
     shown.length === 0
       ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
-        "Name one above to save the workspaces and tabs open in cmux now.")
+        `Name one above to save the workspaces and tabs open in ${TERMINAL} now.`)
       : null,
     auto.length && manual.length ? h("h2", { class: "section-title" }, "Manual") : null,
     manual.length ? list(manual) : null,
@@ -461,7 +467,7 @@ async function viewList() {
     auto.length ? list(auto) : null,
     h("div", { class: "row wrap" }, autoName, h("span", { class: "muted small" }, "every"), every, addAuto),
     auto.length ? null : h("p", { class: "muted small" },
-      "An automatic snapshot is saved from what is open in cmux every interval, even when this page is closed. Only changes make a new version."),
+      `An automatic snapshot is saved from what is open in ${TERMINAL} every interval, even when this page is closed. Only changes make a new version.`),
     hidden ? h("p", { class: "muted small" },
       `${plural(hidden, "snapshot")} with a name starting with "--" ${hidden === 1 ? "is" : "are"} not shown here. Use the CLI: sessionsnap list, then sessionsnap show -- <name>.`) : null);
 }
@@ -489,13 +495,13 @@ async function viewSnapshot() {
     toast(r.result.skipped ? `Skipped: ${r.result.reason}`
       : r.exit === 3 ? "Nothing changed since the last version." : `Saved v${r.result.version}: ${r.result.message}`);
     render();
-  }, { title: "Save what is open in cmux now, as the schedule does" });
+  }, { title: `Save what is open in ${TERMINAL} now, as the schedule does` });
   const update = sched ? runNow : actionButton("Update", async () => {
     if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
     const r = await sessionsnap(["save", name]);
     toast(r.exit === 3 ? "Nothing changed since the last version." : `Saved v${r.result.version}: ${r.result.message}`);
     render();
-  }, { title: "Save what is open in cmux now as a new version" });
+  }, { title: `Save what is open in ${TERMINAL} now as a new version` });
   const del = h("button", { class: "icon remove", title: "Delete snapshot", "aria-label": "Delete snapshot" }, icon("trash"));
   del.addEventListener("click", () => guard(async () => {
     if (!del.classList.contains("armed")) {
@@ -827,7 +833,7 @@ function addTabRow(w) {
       if (!r) return null;
       return r.result.sessions.slice(0, 30).map(({ session: s, open }) => ({
         label: s.title || s.firstPrompt || s.sessionId,
-        sub: `${agentName(s.agent)} · ${tilde(s.cwd)}${open ? " · open in cmux" : ""}`,
+        sub: `${agentName(s.agent)} · ${tilde(s.cwd)}${open ? ` · open in ${TERMINAL}` : ""}`,
         pick: () => pushOp(said({ op: "tab-add-session", ws: w.name, sessionId: s.sessionId, agent: s.agent },
           `Added ${s.title || `a ${agentName(s.agent)} session`} to ${w.name}`)),
       }));
@@ -840,21 +846,21 @@ function addTabRow(w) {
   return h("div", {}, h("div", { class: "add-row" }, sessions, shell), slot);
 }
 
-// "+ Add workspace": one open in cmux now, or one copied from another snapshot.
+// "+ Add workspace": one open in the terminal now, or one copied from another snapshot.
 function addWorkspace(name, have) {
   const wrap = h("div", {});
   const closed = () => h("button", { class: "add-ws", onclick: () => wrap.replaceChildren(panel()) }, icon("plus"), "Add workspace");
   const panel = () => {
     const slot = h("div", {});
     const fromOpen = () => {
-      const p = picker("Filter workspaces open in cmux", async (q, wanted) => {
+      const p = picker(`Filter workspaces open in ${TERMINAL}`, async (q, wanted) => {
         const r = await sessionsnap(["open"], undefined, wanted);
         if (!r) return null;
         return r.result.workspaces
           .filter((w) => !have.has(w.name))
           .filter((w) => !q || w.name.toLowerCase().includes(q.toLowerCase()))
-          .map((w) => ({ label: w.name, sub: plural(w.tabs.length, "tab"), pick: () => pushOp(said({ op: "ws-add-live", ws: w.name }, `Added workspace ${w.name} from cmux`)) }));
-      }, { immediate: true, emptyNote: "Every workspace open in cmux is already in this snapshot." });
+          .map((w) => ({ label: w.name, sub: plural(w.tabs.length, "tab"), pick: () => pushOp(said({ op: "ws-add-live", ws: w.name }, `Added workspace ${w.name} from ${TERMINAL}`)) }));
+      }, { immediate: true, emptyNote: `Every workspace open in ${TERMINAL} is already in this snapshot.` });
       slot.replaceChildren(p);
       p.focusInput();
     };
@@ -880,7 +886,7 @@ function addWorkspace(name, have) {
       p.focusInput();
     };
     const seg = h("div", { class: "seg" },
-      h("button", { onclick: (e) => { mark(e); fromOpen(); } }, "Open in cmux"),
+      h("button", { onclick: (e) => { mark(e); fromOpen(); } }, `Open in ${TERMINAL}`),
       h("button", { onclick: (e) => { mark(e); fromSnapshot(); } }, "From another snapshot"));
     function mark(e) {
       for (const b of seg.children) b.classList.toggle("active", b === e.currentTarget);
@@ -1105,7 +1111,7 @@ async function renderRestore(name) {
       ? h("div", { class: "banner" }, h("span", { class: "grow" }, `Restoring from v${state.version}, an older version.`),
         h("button", { class: "link", onclick: () => go("snapshot", { tab: "restore", version: null }) }, "Use latest"))
       : null,
-    h("p", { class: "hint" }, "Only tabs that are not already open in cmux will open. Nothing is closed. ",
+    h("p", { class: "hint" }, `Only tabs that are not already open in ${TERMINAL} will open. Nothing is closed. `,
       "Open a workspace to pick single tabs: a tab you pick is added to its workspace if that is open, shells included."),
     h("div", { class: "row tree" }, h("label", {}, all, count)),
     h("div", { class: "tree" }, tree),
@@ -1156,10 +1162,10 @@ async function viewRecent() {
     [24, 72, 168].map((n) => h("option", { value: n, selected: n === hours }, n === 24 ? "Last 24 hours" : `Last ${n / 24} days`)));
   const sessions = r.result.sessions;
   return h("section", { class: "stack" },
-    h("div", { class: "row" }, h("div", { class: "grow" }, h("h1", {}, "Not open in cmux"),
+    h("div", { class: "row" }, h("div", { class: "grow" }, h("h1", {}, `Not open in ${TERMINAL}`),
       h("p", { class: "muted small" }, "Agent sessions you used recently that have no tab now.")), pick),
     sessions.length === 0
-      ? h("div", { class: "empty" }, h("strong", {}, "Nothing missing"), "Every recent agent session has a tab in cmux.")
+      ? h("div", { class: "empty" }, h("strong", {}, "Nothing missing"), `Every recent agent session has a tab in ${TERMINAL}.`)
       : h("div", { class: "stack" },
         h("ul", { class: "list" }, sessions.map((s) => h("li", { class: "item" },
           kindIcon({ type: "agent", agent: s.agent }),
@@ -1190,4 +1196,9 @@ window.addEventListener("hashchange", () => {
   TOKEN = takeToken();
   render();
 });
-render();
+// Learn the terminal first (a quick local call); render either way.
+fetch("/api/hello")
+  .then((r) => r.json())
+  .then((hello) => { if (hello.terminal === "tmux" || hello.terminal === "cmux") TERMINAL = hello.terminal; })
+  .catch(() => {})
+  .finally(render);
