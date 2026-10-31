@@ -17,7 +17,8 @@ All notable changes to sessionsnap are listed here. The format follows
 
 - Diffs and version messages: a workspace cmux renamed showed as one removed and one added
   with every tab moved, and a new folder or branch showed as "no changes". They now show as
-  `workspace-renamed` and `workspace-changed`.
+  `workspace-renamed` and `workspace-changed`. A rename is found by the cmux workspace ID or,
+  without one (tmux, or after cmux gave new IDs), by the workspace keeping most of its tabs.
 - tmux older than 3.5 (as on Ubuntu 24.04): its sessions were read as none, so saves from it were
   skipped.
 - Scheduled cmux saves: cmux's default socket mode refuses programs it didn't start, so every
