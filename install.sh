@@ -157,6 +157,15 @@ main() {
       ;;
   esac
 
+  # Another sessionsnap earlier on PATH (an old `cargo install` in ~/.cargo/bin, say) would run
+  # instead of this one. Compare folders physically, so a symlinked or trailing-/ path still matches.
+  FOUND=$(command -v sessionsnap 2>/dev/null) || FOUND=""
+  if [ -n "$FOUND" ] &&
+    [ "$(cd "$(dirname "$FOUND")" 2>/dev/null && pwd -P)" != "$(cd "$INSTALL_DIR" && pwd -P)" ]; then
+    warn "$FOUND comes first on PATH, so \`sessionsnap\` runs that one, not $BIN.
+  Remove it (rm \"$FOUND\"), or put $INSTALL_DIR before $(dirname "$FOUND") in PATH."
+  fi
+
   # --- cmux palette (macOS) --------------------------------------------------
   # The palette commands are for cmux on macOS; cmux on Linux is a different app.
   # install-cmux asks before it changes cmux.json, so it needs the terminal even under curl | sh.

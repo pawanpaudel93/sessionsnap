@@ -82,6 +82,7 @@ run Darwin arm64 zsh || fail "macOS install"
 has_out "(universal-apple-darwin)" || fail "macOS picks the universal build"
 has_out "sessionsnap 9.9.9 is installed." || fail "macOS reports the version"
 has_out "install-cmux" || fail "macOS mentions the palette step"
+! has_out "comes first on PATH" || fail "no shadowing warning without another sessionsnap"
 [ -x "$T/home/.local/bin/sessionsnap" ] || fail "binary in ~/.local/bin"
 grep -qxF "export PATH=\"$T/home/.local/bin:\$PATH\"" "$T/home/.zshrc" || fail "zsh PATH line"
 # Re-running upgrades in place: one PATH line, no temp files left.
@@ -98,6 +99,18 @@ grep -qF "$T/home/.local/bin" "$T/home/.bashrc" || fail "bash PATH line in .bash
 run Linux aarch64 fish XDG_CONFIG_HOME="$T/home/xdg" || fail "Linux aarch64 install"
 has_out "(aarch64-unknown-linux-musl)" || fail "Linux aarch64 asset"
 grep -qxF "fish_add_path \"$T/home/.local/bin\"" "$T/home/xdg/fish/config.fish" || fail "fish PATH line"
+
+# An older sessionsnap earlier on PATH than the install dir: installed, with a warning naming it.
+mkdir -p "$T/shadow"
+printf '#!/bin/sh\necho "sessionsnap 0.0.1"\n' >"$T/shadow/sessionsnap"
+chmod 755 "$T/shadow/sessionsnap"
+run Linux x86_64 bash PATH="$T/shadow:$T/bin:/usr/bin:/bin:$T/home/.local/bin" || fail "install with a shadowing sessionsnap"
+has_out "$T/shadow/sessionsnap comes first on PATH" || fail "warns about the shadowing sessionsnap"
+has_out "put $T/home/.local/bin before $T/shadow in PATH" || fail "says how to fix the PATH order"
+# Already first on PATH (the dir as a symlink): no warning.
+ln -s "$T/home/.local/bin" "$T/linked"
+run Linux x86_64 bash PATH="$T/linked:$T/bin:/usr/bin:/bin:$T/shadow" || fail "install with the dir first on PATH"
+! has_out "comes first on PATH" || fail "no warning when the installed sessionsnap comes first"
 
 run Linux riscv64 bash && fail "riscv64 must be refused"
 has_out "no sessionsnap build for Linux on riscv64" || fail "riscv64 message"
