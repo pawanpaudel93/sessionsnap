@@ -11,6 +11,7 @@ All notable changes to sessionsnap are listed here. The format follows
 - Automatic snapshots on Linux, as systemd user timers.
 - `export` and `import`: move a snapshot version to another machine as one file, with `--map` for
   its folders. Only the snapshot travels, never an agent's history of a session.
+- Export and Import in the web UI.
 
 ### Fixed
 
@@ -22,6 +23,8 @@ All notable changes to sessionsnap are listed here. The format follows
 ### Changed
 
 - A restore plan shows the command each terminal tab will run.
+- What sessionsnap prints never carries a control character from a snapshot (an escape sequence in
+  a hand-edited title): it is shown escaped.
 - A save reads only what was appended to each Claude Code transcript since the last one.
 - The terminal is picked only when a command needs one; `list`, `show` and `update` never wait on it.
 - `restore` with no name restores the most recently saved snapshot; `list` names each snapshot's

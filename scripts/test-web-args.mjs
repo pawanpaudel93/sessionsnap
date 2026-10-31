@@ -23,6 +23,8 @@ const cases = [
   [["restore", "-x", "--plan", "--tab", "-w#1"], ["restore", "--plan", "--tab=-w#1", "--", "-x"]],
   [["apply", "p1"], ["apply", "p1"]],
   [["rename", "-x", "y"], ["rename", "--", "-x", "y"]],
+  [["export", "-x"], ["export", "--", "-x"]],
+  [["import", "-"], ["import", "--", "-"]],
   [["schedule", "list"], ["schedule", "list"]],
   [["schedule", "add", "work", "--interval", "30m"], ["schedule", "add", "--interval=30m", "work"]],
   [["schedule", "edit", "-x", "--interval", "2h"], ["schedule", "edit", "--interval=2h", "--", "-x"]],

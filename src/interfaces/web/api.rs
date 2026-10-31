@@ -19,7 +19,7 @@ const APP_CSS: &str = include_str!("assets/app.css");
 /// Commands the page may run (not `ui` nor the installers).
 pub const ALLOWED: &[&str] = &[
     "list", "open", "show", "history", "diff", "save", "ws", "tab", "edit", "restore", "apply", "sessions", "recent",
-    "delete", "prune", "agents", "rename", "schedule",
+    "delete", "prune", "agents", "rename", "schedule", "export", "import",
 ];
 
 /// Builds the context for one API call; the `Option<String>` is the call's `input`.
@@ -266,6 +266,17 @@ impl<'a> Server<'a> {
         if file_batch {
             return Response::text(403, "send batches as input");
         }
+        // Files are the page's to read and write: `export` returns its JSON (the page downloads it)
+        // and `import` reads its input, so neither takes an option before `--` or a file path.
+        let before_dashes = || body.args[1..].iter().take_while(|a| *a != "--");
+        let local_file = match body.args[0].as_str() {
+            "export" => before_dashes().any(|a| a.starts_with('-')),
+            "import" => body.args[1..].iter().any(|a| a != "--" && a != "-"),
+            _ => false,
+        };
+        if local_file {
+            return Response::text(403, "export and import use the page's files, not the server's");
+        }
         let input = body.input.unwrap_or_default();
         // Waiting holds a worker, so it is short: the page's own files must still load.
         let deadline = Instant::now() + RUN_WAIT;
@@ -384,6 +395,30 @@ mod tests {
             assert_eq!(run(r#"["schedule","start","work"]"#)["result"]["schedule"]["running"], true);
             assert_eq!(run(r#"["schedule","list"]"#)["result"]["schedules"][0]["name"], "work");
             assert_eq!(run(r#"["schedule","remove","work"]"#)["result"]["removed"], true);
+        });
+    }
+
+    #[test]
+    fn export_and_import_never_touch_the_servers_files() {
+        with_store(|mk| {
+            let s = server();
+            s.handle(&api(r#"{"args":["save","work"]}"#), mk);
+            let exported = body(&s.handle(&api(r#"{"args":["export","work"]}"#), mk));
+            assert_eq!(exported["result"]["snapshot"], "work");
+            for args in [
+                r#"["export","work","-o","/tmp/x.json"]"#,
+                r#"["export","--output=/tmp/x.json","work"]"#,
+                r#"["import","/etc/passwd"]"#,
+                r#"["import","-","--as","x"]"#,
+                r#"["import","--","/tmp/x.json"]"#,
+            ] {
+                let r = s.handle(&api(&format!(r#"{{"args":{args}}}"#)), mk);
+                assert_eq!(r.status, 403, "{args}");
+            }
+            let input = serde_json::to_string(&exported["result"]).unwrap();
+            let call = serde_json::json!({"args": ["import", "--", "-"], "input": input}).to_string();
+            let r = body(&s.handle(&api(&call), mk));
+            assert_eq!((r["exit"].as_u64(), r["code"].as_str()), (Some(3), Some("nothing-to-do")), "{r}");
         });
     }
 
