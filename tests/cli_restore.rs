@@ -141,3 +141,29 @@ fn a_plan_applies_once() {
     let again = env.run(&["apply", &id]).unwrap_err();
     assert!(matches!(exit_of(&again), Exit::NotFound | Exit::NothingToDo), "{again:#}");
 }
+
+#[test]
+fn restore_with_no_name_takes_the_most_recently_saved_snapshot() {
+    let env = setup();
+    env.run(&["save", "older"]).unwrap();
+    env.run(&["save", "newer"]).unwrap();
+    // Saved a day earlier: times are to the second, so make the order plain.
+    let dir = env.dir.path().join("store/snapshots/older");
+    let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap().path();
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    v["createdAt"] = "2000-01-01T00:00:00+00:00".into();
+    std::fs::write(&file, v.to_string()).unwrap();
+    env.fake.state.borrow_mut().workspaces.clear();
+    let o = env.run(&["restore", "--plan"]).unwrap();
+    assert_eq!(o.json["snapshot"], "newer", "{}", o.json);
+    assert_eq!(o.json["plan"]["source"]["snapshot"], "newer");
+    assert!(o.text.starts_with("The most recently saved snapshot: newer"), "{}", o.text);
+}
+
+#[test]
+fn restore_with_no_name_and_no_snapshots_says_how_to_save_one() {
+    let env = setup();
+    let e = env.run(&["restore", "--plan"]).unwrap_err();
+    assert_eq!(exit_of(&e), Exit::NotFound);
+    assert!(e.to_string().contains("sessionsnap save"), "{e}");
+}

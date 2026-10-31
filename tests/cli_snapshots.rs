@@ -183,3 +183,19 @@ fn sessions_can_be_limited_and_say_how_many_there_are() {
     assert_eq!(o.json["sessions"].as_array().unwrap().len(), 1);
     assert_eq!(o.json["total"], 2);
 }
+
+#[test]
+fn list_says_what_each_snapshot_holds_and_filters_by_folder() {
+    let env = common::setup();
+    env.run(&["save", "work"]).unwrap();
+    let row = env.run(&["list", "--json"]).unwrap().json["snapshots"][0].clone();
+    assert_eq!(row["workspaceNames"], serde_json::json!(["Alpha", "Beta"]));
+    assert_eq!(row["folders"], serde_json::json!(["/w/a", "/w/b"]));
+    assert_eq!(row["agents"], serde_json::json!(["claude"]));
+    let only =
+        |dir: &str| env.run(&["list", "--cwd", dir, "--json"]).unwrap().json["snapshots"].as_array().unwrap().len();
+    assert_eq!(only("/w/b"), 1);
+    assert_eq!(only("/w"), 1, "a folder above the snapshot's");
+    assert_eq!(only("/w/c"), 0);
+    assert_eq!(only("/w/a/b"), 0, "not a folder below it");
+}

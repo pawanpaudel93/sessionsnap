@@ -55,7 +55,11 @@ pub enum Command {
         pick: bool,
     },
     /// List snapshots
-    List,
+    List {
+        /// Only snapshots with a workspace or tab in this folder (or below), e.g. `--cwd .`
+        #[arg(long)]
+        cwd: Option<String>,
+    },
     /// List the workspaces and tabs open in the terminal now
     Open,
     /// Show a snapshot's workspaces and tabs: <name>[@v]
@@ -97,7 +101,7 @@ pub enum Command {
     },
     /// Reopen what a snapshot has that is not open now (plan, then apply)
     Restore {
-        /// <name>[@v]
+        /// <name>[@v]; the most recently saved snapshot when left out
         snapshot: Option<String>,
         /// Only these workspaces
         #[arg(long = "workspace", short = 'w')]
