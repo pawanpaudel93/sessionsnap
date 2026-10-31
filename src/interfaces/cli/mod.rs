@@ -16,7 +16,7 @@ use crate::error::{Exit, exit_of};
 #[command(
     name = "sessionsnap",
     version,
-    about = "Named, versioned snapshots of cmux workspaces and agent sessions (Claude Code, Codex and more)"
+    about = "Named, versioned snapshots of cmux workspaces or tmux sessions and their agent sessions (Claude Code, Codex and more)"
 )]
 pub struct Cli {
     /// Print machine-readable JSON (never prompts)
@@ -36,7 +36,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)] // parsed once per process
 pub enum Command {
-    /// Save what is open in cmux as a new version of a snapshot
+    /// Save what is open in the terminal (cmux or tmux) as a new version of a snapshot
     Save {
         /// Snapshot name (letters, digits, '.', '_', '-'; a new one can't start with '--')
         name: Option<String>,
@@ -55,7 +55,7 @@ pub enum Command {
     },
     /// List snapshots
     List,
-    /// List the workspaces and tabs open in cmux now
+    /// List the workspaces and tabs open in the terminal now
     Open,
     /// Show a snapshot's workspaces and tabs: <name>[@v]
     Show { snapshot: String },
@@ -127,7 +127,7 @@ pub enum Command {
         #[arg(long)]
         agent: Option<String>,
     },
-    /// Interactive agent sessions active recently that are not open in cmux
+    /// Interactive agent sessions active recently that are not open in the terminal
     Recent {
         #[arg(long, default_value_t = 24)]
         hours: u64,
@@ -146,14 +146,14 @@ pub enum Command {
     },
     /// List the agents sessionsnap can resume, how well, and whether their program is on PATH
     Agents,
-    /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock
+    /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock, or the default browser from tmux
     Ui {
         #[arg(long, default_value_t = crate::interfaces::web::DEFAULT_PORT)]
         port: u16,
         /// Stop after this many minutes without requests
         #[arg(long, default_value_t = 30)]
         idle_minutes: u64,
-        /// Do not show the page in cmux
+        /// Do not show the page
         #[arg(long)]
         no_open: bool,
     },
@@ -165,7 +165,7 @@ pub enum Command {
     },
     /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
     InstallSkill,
-    /// Remove sessionsnap: palette commands, skill, snapshots and this binary (asks first)
+    /// Remove sessionsnap: palette commands, skill, schedules (launchd agents), snapshots and this binary (asks first)
     Uninstall {
         /// Keep your snapshots (~/.sessionsnap)
         #[arg(long)]
@@ -181,7 +181,7 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum ScheduleCommand {
-    /// Start an automatic snapshot: save what is open in cmux now and every --interval
+    /// Start an automatic snapshot: save what is open in the terminal now and every --interval
     Add {
         /// A new snapshot name (automatic snapshots are kept apart from the ones you save)
         name: String,

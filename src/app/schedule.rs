@@ -1,5 +1,6 @@
-//! Automatic snapshots: a snapshot the OS saves from what is open in cmux every interval
-//! (`schedule add`), listed apart from snapshots saved by hand. Only scheduled saves write to it.
+//! Automatic snapshots: a snapshot the OS saves from what is open in its terminal (cmux or tmux)
+//! every interval (`schedule add`), listed apart from snapshots saved by hand. Only scheduled saves
+//! write to it.
 
 use anyhow::Result;
 
@@ -151,8 +152,19 @@ pub fn list(ctx: &Ctx) -> Result<Vec<Listed>> {
 /// becomes the latest version.
 pub fn run(ctx: &Ctx, name: &str) -> Result<Commit> {
     validate_name(name)?;
-    let key = find(&ctx.store.read_schedules()?, name).ok_or_else(|| not_scheduled(name))?;
-    let result = super::snapshots::save_scheduled(ctx, &key);
+    let all = ctx.store.read_schedules()?;
+    let key = find(&all, name).ok_or_else(|| not_scheduled(name))?;
+    // It saves only from the terminal it was added in: a run picking another one (an older
+    // launchd agent with no --terminal, or a run by hand inside the other) is skipped.
+    let wanted = all[&key].terminal.as_deref().unwrap_or("cmux");
+    let result = if ctx.terminal.name() == wanted {
+        super::snapshots::save_scheduled(ctx, &key)
+    } else {
+        Err(failure(
+            Exit::NothingToDo,
+            format!("'{key}' saves from {wanted}; run it with: sessionsnap --terminal {wanted} schedule run {key}"),
+        ))
+    };
     let last = match &result {
         Ok(Commit::Saved { version, .. }) => last_run("saved", Some(version.version), None),
         Ok(Commit::Unchanged { version, .. }) => last_run("unchanged", Some(*version), None),

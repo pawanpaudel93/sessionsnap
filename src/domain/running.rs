@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, SystemTime};
 
-use crate::ports::{AgentCatalog, AgentRef, OpenState, TabProcess};
+use crate::ports::{AgentCatalog, AgentRef, OpenState, OpenWarning, TabProcess};
 
 /// Launchers whose first argument is the agent's script (`node …/codex`).
 const LAUNCHERS: &[&str] = &["node", "bun", "deno", "python", "python3"];
@@ -43,11 +43,11 @@ pub fn identify(open: &mut OpenState, agents: &dyn AgentCatalog, now: SystemTime
     for ((kind, cwd), tabs) in groups {
         let session = match tabs[..] {
             [at] => recent_session(agents, kind, &cwd, found[&at].started, now, &taken),
-            _ => None,
+            _ => Err(""),
         };
         match session {
-            Some(id) => found.get_mut(&tabs[0]).expect("grouped above").session = Some(id),
-            None => {
+            Ok(id) => found.get_mut(&tabs[0]).expect("grouped above").session = Some(id),
+            Err(reason) => {
                 let why = if tabs.len() > 1 {
                     format!(
                         "{} tabs run {} in {cwd} with no session ID in their command",
@@ -55,13 +55,19 @@ pub fn identify(open: &mut OpenState, agents: &dyn AgentCatalog, now: SystemTime
                         agents.display_name(kind)
                     )
                 } else {
-                    format!("{} runs in {cwd}, but its session was not found", agents.display_name(kind))
+                    format!("{} runs in {cwd}, but {reason}", agents.display_name(kind))
                 };
-                let names: Vec<String> = tabs
-                    .iter()
-                    .map(|&(wi, ti)| format!("{} › {}", open.workspaces[wi].name, open.workspaces[wi].tabs[ti].title))
-                    .collect();
-                open.warnings.push(format!("{why}; saved as plain tabs: {}", names.join(", ")));
+                // One note per workspace, so a save of some workspaces notes only its own.
+                let mut by_workspace: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+                for &(wi, ti) in &tabs {
+                    let w = &open.workspaces[wi];
+                    by_workspace.entry(wi).or_default().push(format!("{} › {}", w.name, w.tabs[ti].title));
+                }
+                for (wi, names) in by_workspace {
+                    let workspace = Some(open.workspaces[wi].name.clone());
+                    let message = format!("{why}; saved as plain tabs: {}", names.join(", "));
+                    open.warnings.push(OpenWarning { workspace, message });
+                }
             }
         }
     }
@@ -90,8 +96,8 @@ fn agent_of(p: &TabProcess, agents: &dyn AgentCatalog) -> Option<Found> {
     Some(Found { kind, args: args.to_vec(), started: p.started, session })
 }
 
-/// The session of agent `kind` in `cwd` changed most recently since `started` (less `SLACK`), unless
-/// another tab has it.
+/// The one session of agent `kind` in `cwd` changed since `started` (less `SLACK`) that no other tab
+/// has; else why there is none to take. Two or more is not guessed: one may be another terminal's.
 fn recent_session(
     agents: &dyn AgentCatalog,
     kind: &str,
@@ -99,14 +105,19 @@ fn recent_session(
     started: SystemTime,
     now: SystemTime,
     taken: &HashSet<String>,
-) -> Option<String> {
-    let since = started.checked_sub(SLACK)?;
-    let sessions = agents.history(kind)?.scan(Some(now.duration_since(since).ok()?)).ok()?;
-    sessions
+) -> Result<String, &'static str> {
+    const NOT_FOUND: &str = "its session was not found";
+    let since = started.checked_sub(SLACK).ok_or(NOT_FOUND)?;
+    let within = now.duration_since(since).map_err(|_| NOT_FOUND)?;
+    let sessions = agents.history(kind).ok_or(NOT_FOUND)?.scan(Some(within)).map_err(|_| NOT_FOUND)?;
+    let mut candidates = sessions
         .into_iter()
-        .filter(|s| s.cwd.as_deref() == Some(cwd) && s.modified_at >= since && !taken.contains(&s.session_id))
-        .max_by_key(|s| s.modified_at)
-        .map(|s| s.session_id)
+        .filter(|s| s.cwd.as_deref() == Some(cwd) && s.modified_at >= since && !taken.contains(&s.session_id));
+    match (candidates.next(), candidates.next()) {
+        (Some(s), None) => Ok(s.session_id),
+        (Some(_), Some(_)) => Err("several of its sessions there changed since it started, so none is guessed"),
+        _ => Err(NOT_FOUND),
+    }
 }
 
 #[cfg(test)]
@@ -165,6 +176,10 @@ mod tests {
         h
     }
 
+    fn messages(open: &OpenState) -> Vec<&str> {
+        open.warnings.iter().map(|w| w.message.as_str()).collect()
+    }
+
     fn agent(open: &OpenState, i: usize) -> Option<(String, String, Vec<String>)> {
         open.workspaces[0].tabs[i].agent.clone().map(|a| (a.kind, a.session_id, a.args))
     }
@@ -198,12 +213,21 @@ mod tests {
     }
 
     #[test]
+    fn two_sessions_changed_since_the_start_are_not_guessed_between() {
+        // Another Claude Code in the same folder (in another terminal) also wrote since.
+        let mut open = state(vec![tab("a", "/w", &[(20, &["claude"])])]);
+        identify(&mut open, &agents(vec![history(&[(A, "/w", 2), (B, "/w", 5)])]), now());
+        assert_eq!(agent(&open, 0), None);
+        assert!(open.warnings[0].message.contains("several of its sessions there changed"), "{:?}", open.warnings);
+    }
+
+    #[test]
     fn a_session_another_tab_names_is_not_taken_twice() {
         let mut open = state(vec![tab("a", "/w", &[(20, &["claude", "-r", A])]), tab("b", "/x", &[(20, &["claude"])])]);
         identify(&mut open, &agents(vec![history(&[(A, "/x", 1)])]), now());
         assert_eq!(agent(&open, 1), None);
         assert_eq!(
-            open.warnings,
+            messages(&open),
             ["Claude Code runs in /x, but its session was not found; saved as plain tabs: w › b"]
         );
     }
@@ -214,7 +238,7 @@ mod tests {
         identify(&mut open, &agents(vec![history(&[(A, "/w", 2), (B, "/w", 3)])]), now());
         assert_eq!((agent(&open, 0), agent(&open, 1)), (None, None));
         assert_eq!(
-            open.warnings,
+            messages(&open),
             ["2 tabs run Claude Code in /w with no session ID in their command; saved as plain tabs: w › a, w › b"]
         );
     }

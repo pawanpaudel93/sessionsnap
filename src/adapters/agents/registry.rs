@@ -431,6 +431,10 @@ impl AgentSpec {
     /// template's words and the ID after them, a resume flag and its value, and Claude Code's
     /// `--session-id`. None when the launch names none, or names an invalid ID.
     pub fn session_in_args(&self, args: &[String]) -> Option<String> {
+        // A fork runs under a new ID; the one in its args is the session it forked from.
+        if args.iter().any(|a| a == "--fork-session") {
+            return None;
+        }
         let words: Vec<&str> = self.resume.iter().copied().take_while(|w| !w.starts_with('-')).collect();
         let has_flag = self.resume.last().is_some_and(|w| w.starts_with('-'));
         let id_flags: Vec<&str> =
@@ -549,6 +553,7 @@ mod tests {
         assert_eq!(claude.session_in_args(&s(&["--resume"])), None);
         assert_eq!(codex.session_in_args(&s(&["resume", "--last"])), None);
         assert_eq!(claude.session_in_args(&s(&["--resume", "x; rm -rf ~"])), None);
+        assert_eq!(claude.session_in_args(&s(&["--resume", A, "--fork-session"])), None);
     }
     use crate::testing::{A, B};
 

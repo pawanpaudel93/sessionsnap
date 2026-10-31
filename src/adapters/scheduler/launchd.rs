@@ -1,5 +1,5 @@
 //! Scheduled saves as launchd agents: one `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`
-//! per automatic snapshot, running `sessionsnap schedule run -- <name>` every interval.
+//! per automatic snapshot, running `sessionsnap --terminal <t> schedule run -- <name>` every interval.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

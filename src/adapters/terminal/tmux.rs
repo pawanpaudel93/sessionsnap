@@ -13,6 +13,8 @@ use crate::ports::{LaunchTab, OpenState, OpenTab, OpenWorkspace, Shown, TabProce
 
 /// The session option that keeps a workspace's name when tmux can't (it turns `.` and `:` into `_`).
 const NAME_OPTION: &str = "@sessionsnap_name";
+/// The tmux name the session got with it: once the session is renamed, the kept name is stale.
+const AS_OPTION: &str = "@sessionsnap_as";
 /// Separates the fields of `list-panes` lines: a control character no name or path holds.
 const SEP: char = '\u{1f}';
 /// At most this many processes are read under one pane's shell.
@@ -36,6 +38,9 @@ impl Tmux<ProcessRunner, System<ProcessRunner>> {
 
 /// One `list-panes` line.
 struct Pane {
+    /// The session's ID with the server's start time: tmux numbers sessions from `$0` again after
+    /// a restart, and a saved ID must not match an unrelated session then.
+    workspace_id: String,
     session_id: String,
     name: String,
     window_name: String,
@@ -50,8 +55,10 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
         self.tmux(&["list-sessions"]).is_ok_and(|o| o.success)
     }
 
+    /// Runs tmux with `-u`: without a UTF-8 locale (launchd gives none) tmux turns control
+    /// characters, `SEP` included, and non-ASCII names into `_`.
     fn tmux(&self, args: &[&str]) -> Result<Output> {
-        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        let args: Vec<String> = std::iter::once("-u").chain(args.iter().copied()).map(String::from).collect();
         self.runner.run(&self.program, &args).map_err(|_| self.not_installed())
     }
 
@@ -72,11 +79,13 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
 
     /// Every pane; none when no tmux server runs.
     fn panes(&self) -> Result<Vec<Pane>> {
-        let name_option = format!("#{{{NAME_OPTION}}}");
+        let (name_option, as_option) = (format!("#{{{NAME_OPTION}}}"), format!("#{{{AS_OPTION}}}"));
         let fields = [
+            "#{start_time}",
             "#{session_id}",
             "#{session_name}",
             name_option.as_str(),
+            as_option.as_str(),
             "#{window_name}",
             "#{pane_id}",
             "#{pane_pid}",
@@ -119,6 +128,15 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
             .collect())
     }
 
+    /// `name`, or `name-2`, `name-3`… when a session already has it (tmux refuses duplicates).
+    fn free_name(&self, name: &str) -> String {
+        let taken = |n: &str| self.tmux(&["has-session", "-t", &format!("={n}")]).is_ok_and(|o| o.success);
+        (1..100)
+            .map(|i| if i == 1 { name.to_string() } else { format!("{name}-{i}") })
+            .find(|n| !taken(n))
+            .unwrap_or_else(|| name.to_string())
+    }
+
     /// Types `command` into the pane `target` and presses Enter, so the shell stays when it exits.
     fn type_command(&self, target: &str, tab: &LaunchTab) -> Result<()> {
         if let Some(command) = &tab.command {
@@ -150,7 +168,8 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
             HashMap::new()
         } else {
             self.processes(&panes).unwrap_or_else(|e| {
-                warnings.push(format!("could not read the processes in tmux, so no agent tabs were found: {e:#}"));
+                let message = format!("could not read the processes in tmux, so no agent tabs were found: {e:#}");
+                warnings.push(crate::ports::OpenWarning { workspace: None, message });
                 HashMap::new()
             })
         };
@@ -163,10 +182,10 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
                 agent: None,
                 processes: processes.remove(&pane.pid).unwrap_or_default(),
             };
-            match workspaces.iter_mut().find(|w| w.id == pane.session_id) {
+            match workspaces.iter_mut().find(|w| w.id == pane.workspace_id) {
                 Some(w) => w.tabs.push(tab),
                 None => workspaces.push(OpenWorkspace {
-                    id: pane.session_id.clone(),
+                    id: pane.workspace_id.clone(),
                     reference: Some(pane.session_id.clone()),
                     name: pane.name.clone(),
                     cwd: pane.cwd.clone(),
@@ -183,17 +202,21 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {
         tabs.iter().try_for_each(check_command)?;
         let first = tabs.first();
-        let session_name = session_name(name);
-        let mut args = vec!["new-session", "-d", "-P", "-F", "#{session_id} #{window_id}", "-s", session_name.as_str()];
-        args.extend(["-c", first.map_or(cwd, |t| t.cwd.as_str())]);
-        if let Some(t) = first.filter(|t| !t.title.is_empty()) {
-            args.extend(["-n", t.title.as_str()]);
+        let tmux_name = self.free_name(&session_name(name));
+        let (session_arg, cwd_arg) = (literal(&tmux_name), literal(first.map_or(cwd, |t| t.cwd.as_str())));
+        let title_arg = first.map(|t| literal(&t.title)).filter(|t| !t.is_empty());
+        let mut args = vec!["new-session", "-d", "-P", "-F", "#{session_id} #{window_id}", "-s", &session_arg];
+        args.extend(["-c", &cwd_arg]);
+        if let Some(title) = &title_arg {
+            args.extend(["-n", title]);
         }
         let out = self.tmux_ok(&args)?;
         let Some((session, window)) = out.split_once(' ') else {
             return Err(failure(Exit::Error, format!("tmux new-session printed no session: {out}")));
         };
+        // Option values are not formats, so these go as they are.
         self.tmux_ok(&["set-option", "-t", session, NAME_OPTION, name])?;
+        self.tmux_ok(&["set-option", "-t", session, AS_OPTION, &tmux_name])?;
         if let Some(t) = first {
             self.type_command(window, t)?;
         }
@@ -205,11 +228,10 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
 
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()> {
         check_command(tab)?;
-        let target = format!("{workspace_ref}:");
-        let mut args =
-            vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", target.as_str(), "-c", tab.cwd.as_str()];
-        if !tab.title.is_empty() {
-            args.extend(["-n", tab.title.as_str()]);
+        let (target, cwd, title) = (format!("{workspace_ref}:"), literal(&tab.cwd), literal(&tab.title));
+        let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", &cwd];
+        if !title.is_empty() {
+            args.extend(["-n", &title]);
         }
         let window = self.tmux_ok(&args)?;
         self.type_command(&window, tab)
@@ -252,15 +274,26 @@ fn browser_open<'a>(os: &str, url: &'a str) -> Result<BrowserOpen<'a>> {
 /// A `list-panes` line; None for one that doesn't parse.
 fn parse_pane(line: &str) -> Option<Pane> {
     let f: Vec<&str> = line.split(SEP).collect();
-    let [session_id, session_name, kept_name, window_name, pane_id, pid, cwd] = f[..] else { return None };
+    let [started, session_id, session_name, kept_name, kept_as, window_name, pane_id, pid, cwd] = f[..] else {
+        return None;
+    };
+    // The kept name holds only while the session still has the tmux name it was made with.
+    let kept = !kept_name.is_empty() && kept_as == session_name;
     Some(Pane {
+        workspace_id: format!("{session_id}@{started}"),
         session_id: session_id.into(),
-        name: if kept_name.is_empty() { session_name } else { kept_name }.into(),
+        name: if kept { kept_name } else { session_name }.into(),
         window_name: window_name.into(),
         pane_id: pane_id.into(),
         pid: pid.parse().ok()?,
         cwd: cwd.into(),
     })
+}
+
+/// `value` for a tmux argument that tmux expands as a format (`-s`, `-c`, `-n`): `#` doubled, so
+/// `#(…)` in a saved name or folder is never run as a command.
+fn literal(value: &str) -> String {
+    value.replace('#', "##")
 }
 
 /// tmux turns `.` and `:` in session names into `_`; the real name goes in `NAME_OPTION`.
@@ -287,15 +320,23 @@ mod tests {
     use super::*;
     use crate::testing::A;
 
-    /// tmux answering `list-panes` with `panes` (or "no server running" when None), logging calls.
+    /// tmux answering `list-panes` with `panes` (or "no server running" when None), with sessions
+    /// named `taken` open, logging calls (each must start with `-u`, which the log leaves out).
     struct FakeTmux {
         panes: Option<String>,
+        taken: Vec<String>,
         calls: RefCell<Vec<Vec<String>>>,
     }
 
     impl Runner for FakeTmux {
         fn run(&self, _program: &str, args: &[String]) -> Result<Output> {
+            assert_eq!(args[0], "-u", "every tmux call writes UTF-8 whatever the locale");
+            let args = &args[1..];
             self.calls.borrow_mut().push(args.to_vec());
+            if args[0] == "has-session" {
+                let open = self.taken.iter().any(|n| args[2] == format!("={n}"));
+                return Ok(Output { success: open, ..Default::default() });
+            }
             let ok = |s: &str| Ok(Output { success: true, stdout: s.into(), stderr: String::new() });
             match args[0].as_str() {
                 "list-panes" => match &self.panes {
@@ -328,8 +369,10 @@ mod tests {
         }
     }
 
+    /// A `list-panes` line of a server started at 1700; a kept name is kept for tmux name `name`.
     fn line(session: &str, name: &str, kept: &str, window: &str, pane: &str, pid: u32, cwd: &str) -> String {
-        [session, name, kept, window, pane, &pid.to_string(), cwd].join(&SEP.to_string())
+        let kept_as = if kept.is_empty() { "" } else { name };
+        ["1700", session, name, kept, kept_as, window, pane, &pid.to_string(), cwd].join(&SEP.to_string())
     }
 
     /// Processes (pid, ppid, argv), all started at the epoch.
@@ -341,7 +384,7 @@ mod tests {
     }
 
     fn tmux(panes: &[String], procs: FakeProcs) -> Tmux<FakeTmux, FakeProcs> {
-        let runner = FakeTmux { panes: Some(panes.join("\n")), calls: RefCell::default() };
+        let runner = FakeTmux { panes: Some(panes.join("\n")), taken: vec![], calls: RefCell::default() };
         Tmux { runner, program: "tmux".into(), procs }
     }
 
@@ -409,13 +452,56 @@ mod tests {
         let calls = t.runner.calls.borrow();
         let new_session =
             ["new-session", "-d", "-P", "-F", "#{session_id} #{window_id}", "-s", "my_app", "-c", "/w/a", "-n", "fix"];
-        assert_eq!(calls[0], strings(&new_session));
-        assert_eq!(calls[1], strings(&["set-option", "-t", "$7", NAME_OPTION, "my.app"]));
-        assert_eq!(calls[2], strings(&["send-keys", "-t", "@20", "-l", "--", &format!("claude --resume {A}")]));
-        assert_eq!(calls[3], strings(&["send-keys", "-t", "@20", "Enter"]));
+        assert_eq!(calls[0], strings(&["has-session", "-t", "=my_app"]));
+        assert_eq!(calls[1], strings(&new_session));
+        assert_eq!(calls[2], strings(&["set-option", "-t", "$7", NAME_OPTION, "my.app"]));
+        assert_eq!(calls[3], strings(&["set-option", "-t", "$7", AS_OPTION, "my_app"]));
+        assert_eq!(calls[4], strings(&["send-keys", "-t", "@20", "-l", "--", &format!("claude --resume {A}")]));
+        assert_eq!(calls[5], strings(&["send-keys", "-t", "@20", "Enter"]));
         let new_window = ["new-window", "-d", "-P", "-F", "#{window_id}", "-t", "$7:", "-c", "/w/b", "-n", "shell"];
-        assert_eq!(calls[4], strings(&new_window));
-        assert_eq!(calls.len(), 5);
+        assert_eq!(calls[6], strings(&new_window));
+        assert_eq!(calls.len(), 7);
+    }
+
+    #[test]
+    fn a_hash_in_a_name_folder_or_title_reaches_tmux_escaped() {
+        let t = tmux(&[], FakeProcs::default());
+        let tab = LaunchTab { title: "#(touch /tmp/t)".into(), cwd: "/w/#(id)".into(), command: None };
+        t.create_workspace("ws#(id)", "/w", std::slice::from_ref(&tab)).unwrap();
+        t.add_tab("$7", &tab).unwrap();
+        let calls = t.runner.calls.borrow();
+        let new_session = &calls[1];
+        assert!(new_session.windows(2).any(|w| w == ["-s", "ws##(id)"]), "{new_session:?}");
+        assert!(new_session.windows(2).any(|w| w == ["-c", "/w/##(id)"]), "{new_session:?}");
+        assert!(new_session.windows(2).any(|w| w == ["-n", "##(touch /tmp/t)"]), "{new_session:?}");
+        let new_window = calls.iter().find(|c| c[0] == "new-window").unwrap();
+        assert!(
+            new_window.windows(2).any(|w| w == ["-c", "/w/##(id)"])
+                && new_window.windows(2).any(|w| w[0] == "-n" && w[1].starts_with("##("))
+        );
+        // The kept name is the real one, unescaped (options are not formats).
+        assert!(calls.iter().any(|c| c == &strings(&["set-option", "-t", "$7", NAME_OPTION, "ws#(id)"])));
+    }
+
+    #[test]
+    fn a_taken_session_name_gets_a_number() {
+        let mut t = tmux(&[], FakeProcs::default());
+        t.runner.taken = vec!["my_app".into(), "my_app-2".into()];
+        t.create_workspace("my.app", "/w", &[]).unwrap();
+        let calls = t.runner.calls.borrow();
+        let new_session = calls.iter().find(|c| c[0] == "new-session").unwrap();
+        assert!(new_session.windows(2).any(|w| w == ["-s", "my_app-3"]), "{new_session:?}");
+        assert!(calls.iter().any(|c| c == &strings(&["set-option", "-t", "$7", AS_OPTION, "my_app-3"])));
+    }
+
+    #[test]
+    fn a_renamed_session_drops_its_stale_kept_name_and_ids_carry_the_server_start() {
+        let renamed = ["1700", "$2", "work", "my.app", "my_app", "edit", "%3", "102", "/w"].join(&SEP.to_string());
+        let t = tmux(&[renamed, line("$3", "my_app", "my.app", "x", "%4", 103, "/w")], FakeProcs::default());
+        let open = t.read_open_state().unwrap();
+        let names: Vec<_> = open.workspaces.iter().map(|w| (w.name.as_str(), w.id.as_str())).collect();
+        assert_eq!(names, [("work", "$2@1700"), ("my.app", "$3@1700")]);
+        assert_eq!(open.workspaces[0].reference.as_deref(), Some("$2"));
     }
 
     #[test]

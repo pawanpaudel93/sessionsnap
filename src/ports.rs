@@ -21,7 +21,14 @@ pub struct OpenState {
     pub state_version: Option<u64>,
     pub workspaces: Vec<OpenWorkspace>,
     /// What could not be read as it should, for the save to note.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<OpenWarning>,
+}
+
+/// A note about what is open: about one workspace (`save -w` shows only its own), or all.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenWarning {
+    pub workspace: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,15 +119,16 @@ pub trait Terminal {
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()>;
     /// Shows `url` in the terminal: points a browser already on its address (ignoring the `#` part)
     /// at it ("reused"), else adds a Dock browser tab ("dock"), else, with the Dock off, opens a
-    /// browser tab ("tab"). The `#` part may carry a key, so it never goes on a command line; when
-    /// it cannot be handed over another way, the page is shown without it.
+    /// browser tab ("tab"); tmux opens the default browser ("browser"). The `#` part may carry a
+    /// key, so it never goes on a command line; when it cannot be handed over another way, the page
+    /// is shown without it.
     fn show_url(&self, url: &str) -> Result<Shown>;
 }
 
 /// Where `Terminal::show_url` showed a page, and whether the link's `#` part reached it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shown {
-    /// "reused", "dock" or "tab".
+    /// "reused", "dock", "tab" or "browser" (tmux: the default browser).
     pub place: &'static str,
     /// Why the page was shown without its `#` part; None when the whole link reached it.
     pub fragment_error: Option<String>,

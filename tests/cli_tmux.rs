@@ -75,3 +75,36 @@ fn a_save_with_nothing_running_writes_nothing() {
     assert_eq!(e.to_string(), "tmux is not running");
     assert_eq!(env.run(&["list", "--json"]).unwrap().json["snapshots"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn a_schedule_never_saves_from_another_terminal() {
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap(); // added in cmux
+    env.fake.name.set("tmux");
+    let o = env.run(&["schedule", "run", "work"]).unwrap();
+    assert_eq!(o.exit, Exit::NothingToDo);
+    assert!(o.json["reason"].as_str().unwrap().contains("--terminal cmux schedule run work"), "{}", o.json);
+    let listed = env.run(&["schedule", "list"]).unwrap().json;
+    assert_eq!(listed["schedules"][0]["lastRun"]["result"], "skipped");
+    assert_eq!(listed["schedules"][0]["latestVersion"], 1, "nothing saved from tmux");
+}
+
+#[test]
+fn saving_some_workspaces_notes_only_their_own_tabs() {
+    use sessionsnap::ports::TabProcess;
+    use sessionsnap::testing::open_ws;
+    let env = setup();
+    env.fake.name.set("tmux");
+    let claude = || vec![TabProcess { argv: vec!["claude".into()], started: std::time::SystemTime::now() }];
+    let mut a = open_ws("$1", "one", "/w/x", &[("a", "/w/x", None)]);
+    let mut b = open_ws("$2", "two", "/w/x", &[("b", "/w/x", None)]);
+    a.tabs[0].processes = claude();
+    b.tabs[0].processes = claude();
+    env.fake.state.borrow_mut().workspaces = vec![a, b];
+    let all = env.run(&["save", "all", "--json"]).unwrap().json;
+    let notes = all["warnings"].to_string();
+    assert!(notes.contains("one › a") && notes.contains("two › b"), "{notes}");
+    let one = env.run(&["save", "only", "-w", "one", "--json"]).unwrap().json;
+    let notes = one["warnings"].to_string();
+    assert!(notes.contains("one › a") && !notes.contains("two › b"), "{notes}");
+}

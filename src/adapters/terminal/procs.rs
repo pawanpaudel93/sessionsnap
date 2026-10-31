@@ -72,9 +72,11 @@ pub fn parse_etime(text: &str) -> Option<u64> {
     Some(days * 86_400 + secs)
 }
 
-/// NUL-separated words, as `/proc/<pid>/cmdline` holds them.
+/// NUL-terminated words, as `/proc/<pid>/cmdline` holds them. An empty argument stays: dropping
+/// it would shift the values after it onto other flags.
 pub fn split_nul(bytes: &[u8]) -> Vec<String> {
-    bytes.split(|&b| b == 0).filter(|w| !w.is_empty()).map(|w| String::from_utf8_lossy(w).into_owned()).collect()
+    let Some(words) = bytes.strip_suffix(&[0]) else { return vec![] };
+    words.split(|&b| b == 0).map(|w| String::from_utf8_lossy(w).into_owned()).collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -165,6 +167,10 @@ mod tests {
     #[test]
     fn reads_exact_arguments() {
         assert_eq!(split_nul(b"claude\0--add-dir\0/a b\0"), ["claude", "--add-dir", "/a b"]);
+        // `--model "$UNSET" --permission-mode plan`: the empty value keeps its place.
+        let empty = split_nul(b"claude\0--model\0\0--permission-mode\0plan\0");
+        assert_eq!(empty, ["claude", "--model", "", "--permission-mode", "plan"]);
+        assert!(split_nul(b"").is_empty());
         let mut buf = 3i32.to_ne_bytes().to_vec();
         buf.extend_from_slice(b"/usr/bin/claude\0\0\0claude\0--add-dir\0/a b\0HOME=/x\0");
         assert_eq!(procargs2(&buf).unwrap(), ["claude", "--add-dir", "/a b"]);

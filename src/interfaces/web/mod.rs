@@ -270,7 +270,8 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
     }
 }
 
-/// `sessionsnap ui`: serves the page on 127.0.0.1 and shows it in cmux; returns once idle.
+/// `sessionsnap ui`: serves the page on 127.0.0.1 and shows it in cmux's Dock, or the default
+/// browser from tmux; returns once idle.
 pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
     let url = format!("http://127.0.0.1:{port}/");
     let idle = idle_minutes
@@ -298,7 +299,9 @@ pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome
         eprintln!("Run `sessionsnap ui` again to show it.");
     }
     let make_ctx = |cli: &crate::interfaces::cli::Cli, input: Option<String>| -> Result<Ctx> {
-        Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes, cli.terminal.as_deref())? })
+        // The page's commands use the terminal the server reports (`/api/hello`), not one picked anew.
+        let terminal = cli.terminal.as_deref().or(Some(terminal));
+        Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes, terminal)? })
     };
     serve(listener, &server, &make_ctx, idle, open)?;
     Ok(Outcome::ok(

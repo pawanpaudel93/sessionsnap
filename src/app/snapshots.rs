@@ -80,7 +80,10 @@ fn save_as(
                 return Err(failure(Exit::NothingToDo, format!("{terminal} shows no workspaces")));
             }
             let (captured, mut notes) = capture(&open, &ctx.agents, only)?;
-            notes.splice(0..0, open.warnings.iter().cloned());
+            // Notes about what is open, minus those about workspaces this save leaves alone.
+            let saved = |ws: &str| only.is_empty() || captured.iter().any(|w| w.name.eq_ignore_ascii_case(ws));
+            let open_notes = open.warnings.iter().filter(|w| w.workspace.as_deref().is_none_or(saved));
+            notes.splice(0..0, open_notes.map(|w| w.message.clone()));
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
