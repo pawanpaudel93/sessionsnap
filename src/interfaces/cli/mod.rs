@@ -23,7 +23,8 @@ pub struct Cli {
     /// Print machine-readable JSON (never prompts)
     #[arg(long, global = true)]
     pub json: bool,
-    /// Answer yes to the confirmations of delete, prune, restore, install-cmux and uninstall
+    /// Answer yes to the confirmations of delete, prune, restore, recent --restore, install-cmux and
+    /// uninstall
     /// (agents: only when the user asked for that action)
     #[arg(long, short = 'y', global = true)]
     pub yes: bool,
@@ -64,23 +65,45 @@ pub enum Command {
     /// List the workspaces and tabs open in the terminal now
     Open,
     /// Show a snapshot's workspaces and tabs: <name>[@v]
-    Show { snapshot: String },
+    Show {
+        /// <name>[@v]; the latest version when @v is left out
+        snapshot: String,
+    },
     /// List a snapshot's versions
-    History { name: String },
+    History {
+        /// Snapshot name
+        name: String,
+    },
     /// Compare two versions: <name>@a <name>@b
-    Diff { a: String, b: String },
+    Diff {
+        /// <name>@a
+        a: String,
+        /// <name>@b
+        b: String,
+    },
     /// Delete all but the newest versions of a snapshot
     Prune {
+        /// Snapshot name
         name: String,
+        /// How many of the newest versions to keep (at least 1)
         #[arg(long)]
         keep: usize,
     },
     /// Delete a snapshot and all its versions (and its schedule)
-    Delete { name: String },
+    Delete {
+        /// Snapshot name
+        name: String,
+    },
     /// Rename a snapshot (and its schedule)
-    Rename { old: String, new: String },
+    Rename {
+        /// Current name
+        old: String,
+        /// New name
+        new: String,
+    },
     /// Write a version of a snapshot as one JSON file, for another machine: <name>[@v]
     Export {
+        /// <name>[@v]
         snapshot: String,
         /// The file to write (refused if it exists); without it, the JSON goes to stdout
         #[arg(long, short)]
@@ -88,6 +111,7 @@ pub enum Command {
     },
     /// Save an exported version as the next version of a snapshot ('-' reads stdin)
     Import {
+        /// The exported file ('-' reads stdin)
         file: String,
         /// The snapshot to save it to (default: the name in the file)
         #[arg(long = "as", value_name = "NAME")]
@@ -95,6 +119,7 @@ pub enum Command {
         /// Move folders under OLD to NEW, e.g. --map /Users/me=/home/me (repeatable)
         #[arg(long, value_name = "OLD=NEW")]
         map: Vec<String>,
+        /// Version message (default: a summary of changes)
         #[arg(long, short)]
         message: Option<String>,
     },
@@ -107,9 +132,12 @@ pub enum Command {
     Tab(TabArgs),
     /// Apply a JSON array of edit operations as one version ('-' reads stdin)
     Edit {
+        /// Snapshot to edit
         name: String,
+        /// The file with the JSON array ('-' reads stdin)
         #[arg(long)]
         batch: String,
+        /// Version message (default: a summary of changes)
         #[arg(long, short = 'm')]
         message: Option<String>,
         /// Show the result without saving a version
@@ -137,7 +165,10 @@ pub enum Command {
         pick: bool,
     },
     /// Apply a plan made by restore or recent
-    Apply { plan_id: String },
+    Apply {
+        /// The planId a plan printed
+        plan_id: String,
+    },
     /// List agent sessions on disk (agents with a readable history: Claude Code, Codex)
     Sessions {
         /// Text to find in titles, prompts, folders or IDs
@@ -146,6 +177,7 @@ pub enum Command {
         /// Only sessions started in this folder (or below)
         #[arg(long)]
         cwd: Option<String>,
+        /// Only sessions active in the last this many days
         #[arg(long, default_value_t = 30)]
         days: u64,
         /// Only this agent's sessions (e.g. claude, codex)
@@ -157,6 +189,7 @@ pub enum Command {
     },
     /// Interactive agent sessions active recently that are not open in the terminal
     Recent {
+        /// How many hours back to look
         #[arg(long, default_value_t = 24)]
         hours: u64,
         /// Only this agent's sessions (e.g. claude, codex)
@@ -179,6 +212,7 @@ pub enum Command {
     Agents,
     /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock, or the default browser from tmux
     Ui {
+        /// Port to serve on
         #[arg(long, default_value_t = crate::interfaces::web::DEFAULT_PORT)]
         port: u16,
         /// Stop after this many minutes without requests
@@ -232,19 +266,33 @@ pub enum ScheduleCommand {
     List,
     /// Change how often an automatic snapshot is saved
     Edit {
+        /// Automatic snapshot name
         name: String,
+        /// How often: a number and a unit, e.g. 30m, 2h, 1d (at least 1m)
         #[arg(long)]
         interval: String,
     },
     /// Pause an automatic snapshot: no saves until it is started again
-    Stop { name: String },
+    Stop {
+        /// Automatic snapshot name
+        name: String,
+    },
     /// Resume a stopped automatic snapshot
-    Start { name: String },
+    Start {
+        /// Automatic snapshot name
+        name: String,
+    },
     /// Make an automatic snapshot a normal one: no more saves, its versions are kept
     #[command(visible_alias = "rm")]
-    Remove { name: String },
+    Remove {
+        /// Automatic snapshot name
+        name: String,
+    },
     /// Save an automatic snapshot now, as its schedule does
-    Run { name: String },
+    Run {
+        /// Automatic snapshot name
+        name: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -253,21 +301,25 @@ pub struct WsArgs {
     pub name: String,
     /// Workspace in the snapshot (name or a unique part of it)
     pub ws: Option<String>,
+    /// New name
     #[arg(long)]
     pub rename: Option<String>,
+    /// New color
     #[arg(long)]
     pub color: Option<String>,
     /// New position, 1-based
     #[arg(long)]
     pub index: Option<usize>,
+    /// Remove the workspace
     #[arg(long)]
     pub remove: bool,
-    /// Add a workspace from what is open in cmux now
+    /// Add a workspace from what is open in the terminal now
     #[arg(long)]
     pub add_live: Option<String>,
     /// Copy a workspace from another snapshot: <name>[@v]:<workspace>
     #[arg(long)]
     pub from: Option<String>,
+    /// Version message (default: a summary of changes)
     #[arg(long, short = 'm')]
     pub message: Option<String>,
 }
@@ -278,8 +330,10 @@ pub struct TabArgs {
     pub name: String,
     /// A tab (<ws>#<n> or <ws>:"title"); a workspace with --add-session / --add-terminal
     pub target: String,
+    /// Remove the tab
     #[arg(long)]
     pub remove: bool,
+    /// New title
     #[arg(long)]
     pub rename: Option<String>,
     /// New position within the workspace, 1-based
@@ -309,6 +363,7 @@ pub struct TabArgs {
     /// Title for a new tab
     #[arg(long)]
     pub title: Option<String>,
+    /// Version message (default: a summary of changes)
     #[arg(long, short = 'm')]
     pub message: Option<String>,
 }
@@ -352,8 +407,9 @@ pub fn run_json(args: &[String], make_ctx: impl FnOnce(&Cli) -> anyhow::Result<C
     let cli = match Cli::try_parse_from(argv) {
         Ok(cli) => cli,
         Err(e) => {
+            // The same code the binary prints for a usage error under --json.
             let exit = Exit::Error;
-            return (exit, json!({"error": {"code": exit.name(), "exit": exit.code(), "message": e.to_string()}}));
+            return (exit, json!({"error": {"code": "usage", "exit": exit.code(), "message": e.to_string()}}));
         }
     };
     match make_ctx(&cli).and_then(|ctx| run::dispatch(&ctx, cli.command)) {

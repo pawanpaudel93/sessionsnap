@@ -193,7 +193,10 @@ fn import(ctx: &Ctx, file: &str, name: Option<String>, map: &[String], message: 
     let text = match (file, &ctx.input) {
         ("-", Some(text)) => text.clone(),
         ("-", None) => std::io::read_to_string(std::io::stdin())?,
-        _ => std::fs::read_to_string(file).map_err(|e| failure(Exit::NotFound, format!("can't read {file}: {e}")))?,
+        _ => std::fs::read_to_string(file).map_err(|e| {
+            let exit = if e.kind() == std::io::ErrorKind::NotFound { Exit::NotFound } else { Exit::Error };
+            failure(exit, format!("can't read {file}: {e}"))
+        })?,
     };
     // A file from elsewhere is printed (show, list, plans) as well as restored: a control character
     // anywhere in it (an escape sequence in a title) is refused, not just kept out of commands.
@@ -353,6 +356,10 @@ fn diff_cmd(ctx: &Ctx, a: &str, b: &str) -> Result<Outcome> {
 }
 
 fn prune(ctx: &Ctx, name: &str, keep: usize) -> Result<Outcome> {
+    // Before asking: the store refuses it anyway, after the user said yes.
+    if keep == 0 {
+        return Err(failure(Exit::Error, "--keep must be at least 1"));
+    }
     let count = app::snapshots::version_count(ctx, name)?;
     if count <= keep {
         return Ok(Outcome::ok(
@@ -702,11 +709,14 @@ fn recent(
     }
     let (list, open) = app::sessions::recent(ctx, hours, agent)?;
     if list.is_empty() {
-        return Ok(Outcome::ok(
-            json!({"sessions": []}),
-            format!("No agent sessions from the last {hours}h are missing from {}.", ctx.terminal.name()),
-        )
-        .with_exit(Exit::NothingToDo));
+        let text = format!("No agent sessions from the last {hours}h are missing from {}.", ctx.terminal.name());
+        // A plan was asked for: the same empty plan as `restore --plan` gives.
+        if wants_plan {
+            let mut out = plan_then_apply(ctx, app::restore::sessions_source(&list), plan_only)?;
+            out.text = text;
+            return Ok(out);
+        }
+        return Ok(Outcome::ok(json!({"sessions": []}), text).with_exit(Exit::NothingToDo));
     }
     if !wants_plan {
         let total = list.len();

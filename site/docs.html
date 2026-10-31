@@ -88,9 +88,9 @@
             <a href="#quick-start">Quick start</a>
             <a href="#snapshots">Snapshots</a>
             <a href="#automatic">Automatic snapshots</a>
+            <a href="#tmux">tmux</a>
             <a href="#editing">Editing</a>
             <a href="#restoring">Restoring</a>
-            <a href="#tmux">tmux</a>
             <a href="#sessions">Sessions and agents</a>
             <a href="#json">JSON and exit codes</a>
             <a href="#web-ui">Web UI</a>
@@ -125,7 +125,7 @@
             <ol>
               <li>Picks the build for your system: one universal binary for macOS (Apple Silicon and Intel), or a static binary for Linux x86_64 or arm64. It needs <code translate="no">curl</code>, <code translate="no">tar</code>, and <code translate="no">shasum</code> or <code translate="no">sha256sum</code>.</li>
               <li>Finds the latest release on GitHub, or uses <code translate="no">SESSIONSNAP_VERSION</code>.</li>
-              <li>Downloads the archive and its <code translate="no">.sha256</code> file, and stops if the checksum does not match.</li>
+              <li>Downloads the archive and its <code translate="no">.sha256</code> file, and stops if the checksum does not match. Both come from the same release, so this catches a corrupted download, not a replaced release.</li>
               <li>Installs <code translate="no">sessionsnap</code> into <code translate="no">~/.local/bin</code> (copy, then rename, so a running sessionsnap keeps its old file). Running it again upgrades in place.</li>
               <li>Adds that folder to <code translate="no">PATH</code> in your shell's startup file (<code translate="no">.zshrc</code>, <code translate="no">.bash_profile</code> on macOS or <code translate="no">.bashrc</code> on Linux, fish's <code translate="no">config.fish</code>, else <code translate="no">.profile</code>) if it is not there yet.</li>
               <li>On macOS, if <code translate="no">cmux</code> is on your <code translate="no">PATH</code> and a terminal is attached, runs <code translate="no">sessionsnap install-cmux</code>, which asks before adding the palette commands; otherwise it says how to run that later. The palette is macOS-only, so on Linux this step is skipped.</li>
@@ -190,10 +190,10 @@ Saved work v3: 9 workspaces, 29 tabs (+2 tabs, 1 tab moved)
 + create workspace Cascadia (3 tabs)
     + Fix login redirect
     + Review payments PR
-    + dev server
+    + dev server (runs: npm run dev)
 ~ add to api:
     + Migrate billing tables
-= 25 tab(s) already open or skipped
+= 25 tabs already open or skipped
 To apply: sessionsnap apply p20261012094107123</code></pre>
             </div>
           </section>
@@ -223,7 +223,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td><code translate="no">sessionsnap open</code></td><td>List the workspaces and tabs open in the terminal now.</td></tr>
                   <tr><td><code translate="no">sessionsnap show &lt;name&gt;[@v]</code></td><td>Show a snapshot's workspaces and tabs: each tab's position, kind (<code translate="no">shell</code> or the agent, such as <code translate="no">claude</code>) and title.</td></tr>
                   <tr><td><code translate="no">sessionsnap history &lt;name&gt;</code></td><td>List a snapshot's versions.</td></tr>
-                  <tr><td><code translate="no">sessionsnap diff &lt;name&gt;@a &lt;name&gt;@b</code></td><td>Compare two versions: workspaces and tabs added (<code translate="no">+</code>), removed (<code translate="no">-</code>), moved (<code translate="no">→</code>) and renamed (<code translate="no">~</code>).</td></tr>
+                  <tr><td><code translate="no">sessionsnap diff &lt;name&gt;@a &lt;name&gt;@b</code></td><td>Compare two versions: workspaces and tabs added (<code translate="no">+</code>), removed (<code translate="no">-</code>), moved (<code translate="no">→</code>) and renamed (<code translate="no">~</code>); a renamed workspace prints <code translate="no">~ workspace A → B</code>, and one whose folder, branch, color or pinning changed <code translate="no">~ workspace X: folder, branch</code>. With <code translate="no">--json</code>, each change has a <code translate="no">change</code> kind: <code translate="no">workspace-added</code>, <code translate="no">workspace-removed</code>, <code translate="no">workspace-renamed</code>, <code translate="no">workspace-changed</code> (its <code translate="no">what</code> lists <code translate="no">folder</code>, <code translate="no">branch</code>, <code translate="no">color</code>, <code translate="no">pinned</code>), <code translate="no">tab-added</code>, <code translate="no">tab-removed</code>, <code translate="no">tab-moved</code>, <code translate="no">tab-renamed</code>.</td></tr>
                   <tr><td><code translate="no">sessionsnap prune &lt;name&gt; --keep &lt;n&gt;</code></td><td>Delete all but the newest <code translate="no">n</code> versions. Asks first.</td></tr>
                   <tr><td><code translate="no">sessionsnap delete &lt;name&gt;</code></td><td>Delete a snapshot and all its versions, and its schedule if it has one. Asks first.</td></tr>
                   <tr><td><code translate="no">sessionsnap rename &lt;old&gt; &lt;new&gt;</code></td><td>Rename a snapshot; an automatic one keeps its schedule.</td></tr>
@@ -250,6 +250,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               good, copy it out with <code translate="no">sessionsnap save &lt;name&gt; --from &lt;auto&gt;@&lt;v&gt;</code>.
               Intervals are a number and a unit: <code translate="no">30m</code>, <code translate="no">2h</code>,
               <code translate="no">1d</code> (at least <code translate="no">1m</code>).
+              A schedule runs with the <code translate="no">PATH</code>, <code translate="no">TMUX_TMPDIR</code>
+              and <code translate="no">SESSIONSNAP_*</code> variables of the shell that last added, edited
+              or started it: after moving tools off that <code translate="no">PATH</code>, run
+              <code translate="no">schedule edit</code> from a shell with the new one, or remove the
+              schedule and add it again.
             </p>
             <div class="table-wrap">
               <table class="data-table stack">
@@ -318,7 +323,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                       <code translate="no">--color &lt;color&gt;</code>, <code translate="no">--index &lt;n&gt;</code>
                       (new position, 1-based), <code translate="no">--remove</code>,
                       <code translate="no">--add-live &lt;ws&gt;</code> (add a workspace from what is open in
-                      cmux now), <code translate="no">--from &lt;name&gt;[@v]:&lt;workspace&gt;</code> (copy a
+                      the terminal now), <code translate="no">--from &lt;name&gt;[@v]:&lt;workspace&gt;</code> (copy a
                       workspace from another snapshot), <code translate="no">-m, --message</code>.
                     </td>
                   </tr>
@@ -543,8 +548,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               When some restore steps fail, <code translate="no">restore</code> and
               <code translate="no">apply</code> exit 1 with the normal result (<code translate="no">failed</code>
               and <code translate="no">steps[].error</code>), not the error object; so does
-              <code translate="no">uninstall</code> (a step with <code translate="no">status: "failed"</code>). Argument errors print
-              plain text and exit 1.
+              <code translate="no">uninstall</code> (a step with <code translate="no">status: "failed"</code>). A mistyped command
+              exits 1: with <code translate="no">--json</code> it prints the error object with code
+              <code translate="no">usage</code>, without it clap's plain-text message.
             </p>
             <div class="table-wrap">
               <table class="data-table">
@@ -577,16 +583,18 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">sessionsnap ui</code>. The page runs the same commands as the CLI.
             </p>
             <ul>
-              <li><strong>Snapshots:</strong> save what is open, update a snapshot from what is open, delete one.</li>
+              <li><strong>Snapshots:</strong> save what is open, update a snapshot from what is open, rename (the pencil or a double-click on its name) or delete one. The list has Manual and Automatic sections.</li>
               <li><strong>Export and import:</strong> Export downloads a snapshot's latest version as a file; Import… saves one exported on another machine. The page reads and writes the files itself; the server never opens a file the page names. (Moving folders with <code translate="no">--map</code> is in the CLI.)</li>
-              <li><strong>Workspaces:</strong> rename (double-click), reorder, remove, drag tabs to reorder or move them, add an agent session or a shell tab, add a workspace from cmux or from another snapshot. Edits are previewed and saved together as one version.</li>
+              <li><strong>Automatic snapshots:</strong> start one with a name and any interval (“Save automatically”); on its page, see whether it runs and how its last run went, run it now, stop or start it, change its interval, or make it a normal snapshot.</li>
+              <li><strong>Workspaces:</strong> rename (double-click), reorder, remove, drag tabs to reorder or move them (or use each tab's Move up, Move down and “Move to…” buttons), add an agent session or a shell tab, add a workspace from what is open in the terminal or from another snapshot. Edits are previewed and saved together as one version. Hover an agent tab's icon for the flags it resumes with.</li>
               <li><strong>History:</strong> compare two versions; restore an older one.</li>
-              <li><strong>Restore:</strong> tick workspaces and tabs, see what would open, then restore.</li>
+              <li><strong>Restore:</strong> tick workspaces and tabs, see what would open (with the command each terminal tab runs), then restore. Each tab in the Workspaces view also has a <strong>Restore this tab</strong> button.</li>
               <li><strong>Recent:</strong> agent sessions (Claude Code, Codex) from the last days that are not open in the terminal.</li>
             </ul>
             <p>
               It runs while its terminal is open and stops after 30 minutes without use; nothing starts
-              at login. Stop it with Ctrl-C, or close the “sessionsnap UI” workspace. Flags:
+              at login. Stop it with Ctrl-C, or, when it was started from the cmux palette, close the
+              “sessionsnap UI” workspace. Flags:
               <code translate="no">--port &lt;n&gt;</code> (default 47317),
               <code translate="no">--idle-minutes &lt;n&gt;</code> (default 30),
               <code translate="no">--no-open</code> (serve without showing the page).

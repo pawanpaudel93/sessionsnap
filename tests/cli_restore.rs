@@ -82,6 +82,20 @@ fn recent_lists_and_plans_sessions_not_open() {
     assert_eq!(p.json["plan"]["actions"][0]["name"], "Recovered sessions");
 }
 
+/// Nothing recent to reopen: the same empty plan as `restore --plan`, exit 3.
+#[test]
+fn an_empty_recent_plan_has_the_shape_of_an_empty_restore_plan() {
+    let env = setup();
+    for args in [&["recent", "--plan"][..], &["recent", "--restore"][..]] {
+        let o = env.run(args).unwrap();
+        assert_eq!(o.exit, Exit::NothingToDo);
+        assert_eq!(o.json["applied"], false);
+        assert_eq!(o.json["plan"]["actions"], serde_json::json!([]), "{}", o.json);
+    }
+    assert_eq!(env.run(&["recent"]).unwrap().json["sessions"], serde_json::json!([]));
+    assert!(env.fake.log.borrow().is_empty());
+}
+
 #[test]
 fn sessions_search_marks_open_ones() {
     let env = setup();

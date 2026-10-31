@@ -50,6 +50,16 @@ fn delete_and_prune_need_yes() {
     assert_eq!(exit_of(&env.run(&["show", "work"]).unwrap_err()), Exit::NotFound);
 }
 
+/// `--keep 0` is refused before asking, not after the user said yes.
+#[test]
+fn prune_keep_zero_fails_without_asking() {
+    let env = setup();
+    env.run(&["save", "work"]).unwrap();
+    let e = env.run(&["prune", "work", "--keep", "0"]).unwrap_err();
+    assert_eq!(exit_of(&e), Exit::Error);
+    assert!(format!("{e:#}").contains("--keep must be at least 1"), "{e:#}");
+}
+
 #[test]
 fn copy_from_another_snapshot() {
     let env = setup();

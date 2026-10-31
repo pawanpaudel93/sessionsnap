@@ -76,7 +76,8 @@ The installer:
 1. Picks the build for your system: one universal binary for macOS (Apple Silicon and Intel), a
    static binary for Linux x86_64 or arm64.
 2. Downloads the latest release from GitHub, checks its SHA-256, and checks that the new binary
-   runs and reports that version before it replaces an installed one.
+   runs and reports that version before it replaces an installed one. The checksum comes from the
+   same release as the archive, so it catches a corrupted download, not a replaced release.
 3. Installs `sessionsnap` into `~/.local/bin` and adds that folder to `PATH` in your shell's
    startup file (zsh, bash or fish) if it is not there yet.
 4. On macOS, if `cmux` is on your `PATH`, offers to add the sessionsnap commands to the cmux
@@ -143,6 +144,27 @@ too. An import is checked like any version file when restored, and
 `restore --plan` shows the command each terminal tab will run: read it before restoring a file
 from someone else.
 
+```sh
+sessionsnap update --check            # is there a newer release?
+sessionsnap update                    # install it over this binary
+```
+
+Every command takes `--json` (for scripts and agents: one compact line when piped, indented at a
+terminal) and `--yes` (skip the confirmations of `delete`, `prune`, `restore`, `recent --restore`,
+`install-cmux` and `uninstall`). A tab whose folder is gone (a removed git worktree) is restored as
+a plain shell in your home folder, with a warning.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
+| 2 | terminal unreachable (cmux not running, or tmux not installed) |
+| 3 | nothing to do |
+| 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
+| 5 | unknown cmux state or snapshot format |
+| 6 | plan stale |
+| 7 | not found |
+
 ### Automatic snapshots
 
 An automatic snapshot is saved every interval (by launchd on macOS, a systemd user timer on Linux) from the terminal it was added
@@ -168,7 +190,9 @@ Intervals are a number and a unit (`30m`, `2h`, `1d`; at least `1m`). On macOS e
 launchd agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; on Linux a systemd user
 timer and service, `~/.config/systemd/user/sessionsnap-schedule-<name>.{timer,service}` (on a machine
 nobody stays logged in to, run `loginctl enable-linger` once so they keep running). `uninstall` removes
-them.
+them. A schedule runs with the `PATH`, `TMUX_TMPDIR` and `SESSIONSNAP_*` variables of the shell that
+last added, edited or started it: after moving tools off that `PATH`, run `schedule edit` from a
+shell with the new one, or remove the schedule and add it again.
 
 ### tmux
 
@@ -189,27 +213,6 @@ same agent in one folder with no ID in their command, those panes are saved as p
 `save` says so. Each version records the terminal it came from, and an automatic
 snapshot keeps saving from the terminal it was added in. The palette is cmux's; the web UI works
 with both (see [Web UI](#web-ui)).
-
-```sh
-sessionsnap update --check            # is there a newer release?
-sessionsnap update                    # install it over this binary
-```
-
-Every command takes `--json` (for scripts and agents: one compact line when piped, indented at a
-terminal) and `--yes` (skip the confirmations of `delete`, `prune`, `restore`, `install-cmux` and
-`uninstall`). A tab whose folder is gone (a removed git worktree) is restored as a plain shell in
-your home folder, with a warning.
-
-| Exit code | Meaning |
-|---|---|
-| 0 | ok |
-| 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
-| 2 | terminal unreachable (cmux not running, or tmux not installed) |
-| 3 | nothing to do |
-| 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
-| 5 | unknown cmux state or snapshot format |
-| 6 | plan stale |
-| 7 | not found |
 
 ## Supported agents
 
@@ -291,18 +294,18 @@ printed in the terminal running `sessionsnap ui`.
   page, see whether it runs and how its last run went, run it now, stop or start it, change its
   interval, or make it a normal snapshot.
 - **Workspaces:** rename (double-click), reorder, remove, drag tabs to reorder or move them, add an
-  agent session or a shell tab, add a workspace from cmux or from another snapshot. Edits are
-  previewed and saved together as one version. Hover an agent tab's icon for the flags it resumes
-  with.
+  agent session or a shell tab, add a workspace from what is open in the terminal or from another
+  snapshot. Each tab also has Move up, Move down and "Move to…" buttons. Edits are previewed and saved together as one version.
+  Hover an agent tab's icon for the flags it resumes with.
 - **History:** compare two versions; restore an older one.
-- **Restore:** tick workspaces and tabs, see what would open, then restore. Each tab in the
-  Workspaces view also has a **Restore this tab** button.
+- **Restore:** tick workspaces and tabs, see what would open (with the command each terminal tab
+  runs), then restore. Each tab in the Workspaces view also has a **Restore this tab** button.
+- **Recent:** agent sessions (Claude Code, Codex) from the last days that are not open in the
+  terminal.
 
 A full restore adds only missing agent tabs to a workspace that is already open (a shell might be
 a duplicate). A tab you pick (`--tab`, or a subset ticked in the UI) is added to its open workspace
 even when it is a shell, or as a plain shell, with the reason, when its session can't be resumed.
-- **Recent:** agent sessions (Claude Code, Codex) from the last days that are not open in the
-  terminal.
 
 Details:
 
@@ -339,6 +342,7 @@ Details:
 | tmux binary | `tmux` on `PATH` | `SESSIONSNAP_TMUX_BIN` |
 | cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
 | cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
+| Claude Code skill (`install-skill`) | `~/.claude/skills/sessionsnap/SKILL.md` | `SESSIONSNAP_SKILLS_DIR` (instead of `~/.claude/skills`) |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
 sessionsnap also reads cmux's state file and `cmux --json --id-format both tree --all`, and matches open tabs to the state file by surface ID (by tty, with a warning, on a cmux that reports no IDs).

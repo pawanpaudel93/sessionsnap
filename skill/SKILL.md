@@ -85,9 +85,12 @@ Without `agent`, a session ID is looked up in the Claude Code and Codex historie
 (a kind from `sessionsnap agents`) when it is in both, or for other agents.
 
 Saved tabs are `{"type":"terminal",title,cwd,command?}` or
-`{"type":"agent",title,cwd,agent,sessionId,args?}`. Session JSON (`sessions`, `recent`) is
-`{agent,sessionId,title,firstPrompt,cwd,modified}`; `sessions` and `recent` take `--limit <n>` and
-report `total`. A restore plan warns when an agent's program is not on PATH, and when a tab will open
+`{"type":"agent",title,cwd,agent,sessionId,args?}`. A session is
+`{agent,sessionId,title,firstPrompt,cwd,modified}`: `recent` rows are that object, `sessions` rows
+are `{session:{…}, open}` (`open`: it is open in the terminal now). Both take `--limit <n>` and
+report `total`. With nothing to reopen, `recent` exits 3 with `{"sessions":[]}`, and
+`recent --plan`/`--restore` exit 3 with an empty plan, `{"plan":{…,"actions":[]},"applied":false}`,
+as `restore --plan` does. A restore plan warns when an agent's program is not on PATH, and when a tab will open
 as a plain shell (unknown agent, invalid ID, session gone, its folder gone); an applied restore
 repeats those warnings. A `save` that warns "is not running" was read from what the terminal last
 wrote to disk and may be out of date. Output is one compact JSON line when stdout is not a terminal.
