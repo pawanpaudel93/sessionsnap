@@ -539,12 +539,17 @@ async function viewSnapshot() {
       del.classList.add("armed");
       del.classList.remove("icon");
       del.classList.add("danger");
-      del.replaceChildren(`Delete ${name}?`);
+      // A long name is cut short, so the full question is its name and tooltip.
+      del.replaceChildren(h("span", { class: "ellipsis" }, `Delete ${name}?`));
+      del.title = `Delete ${name}?`;
+      del.setAttribute("aria-label", `Delete ${name}?`);
       clearTimeout(del.timer);
       del.timer = setTimeout(() => {
         del.classList.remove("armed", "danger");
         del.classList.add("icon");
         del.replaceChildren(icon("trash"));
+        del.title = "Delete snapshot";
+        del.setAttribute("aria-label", "Delete snapshot");
       }, 4000);
       return;
     }

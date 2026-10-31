@@ -134,6 +134,7 @@ input[type="checkbox"] { height: auto; width: 14px; margin: 0; accent-color: var
 .crumb button:hover { color: var(--accent); text-decoration: none; }
 .page-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .page-title h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-title button.armed { flex: 0 1 auto; min-width: 0; max-width: 45%; }
 .toolbar { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .hint { color: var(--faint); font-size: 11.5px; margin: 2px 0 8px; }
 .stack > .hint { margin-bottom: 0; }
