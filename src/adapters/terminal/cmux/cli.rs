@@ -45,6 +45,19 @@ impl CmuxCli<ProcessRunner> {
 }
 
 impl<R: Runner> CmuxCli<R> {
+    /// cmux answers on its socket.
+    fn answers(&self) -> bool {
+        self.cmux_within(&["ping"]).map(|o| o.success).unwrap_or(false)
+    }
+
+    /// The cmux app runs. In its default socket mode (`cmuxOnly`) cmux answers only processes
+    /// started inside it, so a launchd job (an automatic snapshot) sees it running but can't
+    /// connect, and saves from the state file instead.
+    fn app_running(&self) -> bool {
+        let args = ["-f".to_string(), "cmux.app/Contents/MacOS/".to_string()];
+        self.runner.run_timeout("pgrep", &args, self.call_timeout).is_ok_and(|o| o.success)
+    }
+
     /// Brings up the Dock in the right sidebar: cmux pauses pages in a hidden Dock.
     fn show_dock(&self) -> Result<()> {
         self.cmux_ok_within(&["right-sidebar", "set", "dock", "--no-focus"]).map(drop)
@@ -74,8 +87,9 @@ impl<R: Runner> CmuxCli<R> {
 }
 
 impl<R: Runner> Terminal for CmuxCli<R> {
+    /// The cmux app runs, whether or not it lets this process connect (see `app_running`).
     fn is_running(&self) -> bool {
-        self.cmux_within(&["ping"]).map(|o| o.success).unwrap_or(false)
+        self.answers() || self.app_running()
     }
 
     fn ensure_running(&self) -> Result<()> {
@@ -88,7 +102,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         self.runner.run(program, args)?;
         let deadline = Instant::now() + self.launch_timeout;
         loop {
-            if self.is_running() {
+            if self.answers() {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -103,7 +117,8 @@ impl<R: Runner> Terminal for CmuxCli<R> {
 
     fn read_open_state(&self) -> Result<OpenState> {
         let state = state_file::read(&self.state_path);
-        if !self.is_running() {
+        // Not answering: read what cmux last wrote (it rewrites it every few seconds while it runs).
+        if !self.answers() {
             // Not running and nothing saved to read: the terminal is unreachable (exit 2).
             let (version, file) = state.map_err(|e| {
                 failure(
@@ -284,6 +299,8 @@ mod tests {
     struct FakeRunner {
         calls: RefCell<Vec<Vec<String>>>,
         ping_ok: bool,
+        /// The app runs even when `ping` fails (a socket that refuses this process).
+        app_running: bool,
         dock_ok: bool,
         tree: &'static str,
         /// A cmux that doesn't know `--id-format` (and so prints no surface IDs).
@@ -292,6 +309,9 @@ mod tests {
 
     impl Runner for FakeRunner {
         fn run(&self, program: &str, args: &[String]) -> Result<Output> {
+            if program == "pgrep" {
+                return Ok(Output { success: self.app_running, ..Default::default() });
+            }
             let mut call = vec![program.to_string()];
             call.extend(args.iter().cloned());
             self.calls.borrow_mut().push(call);
@@ -326,6 +346,7 @@ mod tests {
             runner: FakeRunner {
                 calls: RefCell::new(vec![]),
                 ping_ok,
+                app_running: ping_ok,
                 dock_ok: true,
                 tree: TEST_TREE,
                 old_cmux: false,

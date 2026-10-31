@@ -239,7 +239,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               it was added in (cmux or tmux), even when sessionsnap is not running. Like any save, a
               run with no changes writes nothing, so its history holds one version per change. Runs
               are skipped while that terminal is not running or shows no workspaces, and so is a run from the other
-              terminal (<code translate="no">schedule run</code> by hand inside it). Automatic snapshots are listed apart
+              terminal (<code translate="no">schedule run</code> by hand inside it). cmux, in its default
+              socket mode, only answers programs started inside it, so a scheduled run (started by launchd)
+              saves from the state cmux writes every few seconds, and says so. Automatic snapshots are listed apart
               from the ones you save, and only their schedule saves to them; to keep a version for
               good, copy it out with <code translate="no">sessionsnap save &lt;name&gt; --from &lt;auto&gt;@&lt;v&gt;</code>.
               Intervals are a number and a unit: <code translate="no">30m</code>, <code translate="no">2h</code>,
