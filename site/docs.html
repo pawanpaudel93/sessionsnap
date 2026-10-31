@@ -21,7 +21,7 @@
     <meta name="twitter:title" content="sessionsnap Docs: Install, Commands and JSON Reference" />
     <meta name="twitter:description" content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux and tmux snapshots, JSON output and exit codes, the web UI, files, security and updating." />
     <meta name="twitter:image" content="https://sessionsnap.pawanpaudel.com.np/og.png" />
-    <meta property="og:image:alt" content="sessionsnap — save cmux workspaces and agent sessions, bring them back resumed" />
+    <meta property="og:image:alt" content="sessionsnap — save and resume your coding-agent sessions in cmux and tmux" />
     <meta name="theme-color" content="#0d1520" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#f6f7fa" media="(prefers-color-scheme: light)" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
@@ -609,6 +609,15 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">~/.claude/skills/sessionsnap</code>. It tells Claude to use
               <code translate="no">--json</code>, to show you a restore plan before applying it, and never
               to start an automatic snapshot on its own.
+            </p>
+            <div class="code-panel">
+              <pre><code translate="no"><span class="prompt">$ </span>sessionsnap completions zsh > "${fpath[1]}/_sessionsnap"   <span class="comment"># or bash, fish, elvish, powershell</span>
+<span class="prompt">$ </span>sessionsnap man > ~/.local/share/man/man1/sessionsnap.1</code></pre>
+            </div>
+            <p>
+              <code translate="no">completions</code> prints shell completions and
+              <code translate="no">man</code> prints the man page; neither looks for a terminal, so a shell's
+              startup file can run them.
             </p>
           </section>
 

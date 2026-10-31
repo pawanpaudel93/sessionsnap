@@ -7,13 +7,28 @@ use crate::domain::diff::Change;
 use crate::domain::model::{SessionRef, Tab, Version, tab_count};
 use crate::ports::SessionInfo;
 
+/// `path` with the home folder shown as `~`, as the web page shows it.
+fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && (path == home || path.starts_with(&format!("{home}/"))) => {
+            format!("~{}", &path[home.len()..])
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// "1 tab", "3 tabs".
+pub fn count(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
 pub fn saved(v: &Version, warnings: &[String]) -> String {
     let mut s = format!(
-        "Saved {} v{}: {} workspaces, {} tabs ({})",
+        "Saved {} v{}: {}, {} ({})",
         v.snapshot,
         v.version,
-        v.workspaces.len(),
-        tab_count(&v.workspaces),
+        count(v.workspaces.len(), "workspace"),
+        count(tab_count(&v.workspaces), "tab"),
         v.message
     );
     for w in warnings {
@@ -104,7 +119,7 @@ pub fn show(v: &Version, warnings: &[String]) -> String {
         v.workspaces.iter().flat_map(|w| &w.tabs).map(|t| tab_kind(t).chars().count()).max().unwrap_or(0).max(6);
     let mut s = format!("{} v{} · {} · {}\n", v.snapshot, v.version, v.created_at, v.message);
     for w in &v.workspaces {
-        s.push_str(&format!("\n{} ({} tabs)  {}\n", w.name, w.tabs.len(), w.cwd));
+        s.push_str(&format!("\n{} ({})  {}\n", w.name, count(w.tabs.len(), "tab"), tilde(&w.cwd)));
         for (i, t) in w.tabs.iter().enumerate() {
             s.push_str(&format!("  #{:<3} {:<width$}  {}\n", i + 1, tab_kind(t), t.title()));
         }
@@ -158,7 +173,7 @@ pub fn plan(p: &crate::domain::plan::Plan) -> String {
     for action in &p.actions {
         match action {
             Action::CreateWorkspace { name, tabs, .. } => {
-                s.push_str(&format!("+ create workspace {name} ({} tabs)\n", tabs.len()));
+                s.push_str(&format!("+ create workspace {name} ({})\n", count(tabs.len(), "tab")));
                 for t in tabs {
                     s.push_str(&format!("    + {}\n", t.title()));
                 }
@@ -172,7 +187,7 @@ pub fn plan(p: &crate::domain::plan::Plan) -> String {
         }
     }
     if !p.skipped.is_empty() {
-        s.push_str(&format!("= {} tab(s) already open or skipped\n", p.skipped.len()));
+        s.push_str(&format!("= {} already open or skipped\n", count(p.skipped.len(), "tab")));
     }
     for w in &p.warnings {
         s.push_str(&format!("! {w}\n"));

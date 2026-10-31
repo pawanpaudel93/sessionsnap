@@ -141,7 +141,7 @@ pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Te
     for action in &plan.actions {
         match action {
             Action::CreateWorkspace { name, cwd, tabs } => steps.push(step(
-                format!("create workspace {name} with {} tab(s)", tabs.len()),
+                format!("create workspace {name} with {} tab{}", tabs.len(), if tabs.len() == 1 { "" } else { "s" }),
                 terminal
                     .create_workspace(name, &safe_cwd(cwd), &tabs.iter().map(launch).collect::<Vec<_>>())
                     .map(|_| ()),
