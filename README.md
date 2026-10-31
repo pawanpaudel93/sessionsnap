@@ -119,6 +119,8 @@ sessionsnap show work                 # workspaces and tabs
 sessionsnap history work              # versions
 sessionsnap diff work@3 work@4
 sessionsnap restore work --plan       # what would be reopened
+sessionsnap restore                   # after a reboot: the most recently saved snapshot (plan first)
+sessionsnap list --cwd .              # snapshots with something in this folder (or below)
 sessionsnap restore work              # plan, confirm, reopen what is missing
 sessionsnap restore work --tab 'Cascadia#3'   # just that tab, into Cascadia if it is open
 sessionsnap recent                    # agent sessions from the last 24h not open in the terminal
