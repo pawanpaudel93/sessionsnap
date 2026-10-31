@@ -318,6 +318,11 @@ function agentLabel(t) {
   return t.type === "agent" && agentIcon(t.agent) === "agent" ? h("span", { class: "faint small ellipsis" }, agentName(t.agent)) : null;
 }
 
+// A shell tab's command, shown as text: it runs on restore, and the snapshot may come from elsewhere.
+function runsLabel(t) {
+  return t.type !== "agent" && t.command ? h("span", { class: "mono muted ellipsis", title: t.command }, `runs: ${t.command}`) : null;
+}
+
 function go(view, extra = {}) {
   Object.assign(state, { view }, extra);
   render();
@@ -411,8 +416,10 @@ async function viewList() {
       return toast("Give the snapshot a name.", "error");
     }
     const r = await sessionsnap(["save", n]);
-    toast(r.exit === 3 ? `${n}: nothing changed since the last version` : `Saved ${n} v${r.result.version}`);
-    go("snapshot", { snapshot: n, tab: "edit", version: null });
+    // The CLI may store it under an existing name that differs only in case.
+    const saved = r.result.snapshot;
+    toast(r.exit === 3 ? `${saved}: nothing changed since the last version` : `Saved ${saved} v${r.result.version}`);
+    go("snapshot", { snapshot: saved, tab: "edit", version: null });
   }, { class: "primary" });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
   // The file is read here and sent as input: the server never opens a file the page names.
@@ -440,7 +447,7 @@ async function viewList() {
       autoName.focus();
       return toast("Give the automatic snapshot a name.", "error");
     }
-    const r = await sessionsnap(["schedule", "add", n, "--interval", every.value.trim()]);
+    const r = await sessionsnap(["schedule", "add", n, "--interval", intervalOf(every)]);
     const first = r.result.firstSave;
     toast(`Saving ${n} every ${r.result.schedule.interval}` +
       (first.reason ? ` (first save skipped: ${first.reason})` : ""));
@@ -498,8 +505,8 @@ async function viewSnapshot() {
     }
     const r = await sessionsnap(["rename", name, to]);
     pending.delete(name);
-    toast(`Renamed ${r.result.from} to ${to}`);
-    go("snapshot", { snapshot: to });
+    toast(`Renamed ${r.result.from} to ${r.result.to}`);
+    go("snapshot", { snapshot: r.result.to });
   }));
   const rename = iconButton("pencil", "Rename snapshot", () => title.startEdit());
   const runNow = actionButton("Run now", async () => {
@@ -532,12 +539,17 @@ async function viewSnapshot() {
       del.classList.add("armed");
       del.classList.remove("icon");
       del.classList.add("danger");
-      del.replaceChildren(`Delete ${name}?`);
+      // A long name is cut short, so the full question is its name and tooltip.
+      del.replaceChildren(h("span", { class: "ellipsis" }, `Delete ${name}?`));
+      del.title = `Delete ${name}?`;
+      del.setAttribute("aria-label", `Delete ${name}?`);
       clearTimeout(del.timer);
       del.timer = setTimeout(() => {
         del.classList.remove("armed", "danger");
         del.classList.add("icon");
         del.replaceChildren(icon("trash"));
+        del.title = "Delete snapshot";
+        del.setAttribute("aria-label", "Delete snapshot");
       }, 4000);
       return;
     }
@@ -651,8 +663,8 @@ async function renderEdit(name) {
         for (const k of keys) allOpen ? expanded.delete(k) : expanded.add(k);
         render();
       } }, allOpen ? "Collapse all" : "Expand all")),
-    h("div", { class: "hint" }, "Double-click a name to rename · drag tabs to reorder or move"),
-    h("div", { class: "ws-list" }, workspaces.map((w, wi) => editWorkspace(name, w, wi, workspaces.length))),
+    h("div", { class: "hint" }, "Double-click a name to rename · drag tabs, or use their buttons, to reorder or move"),
+    h("div", { class: "ws-list" }, workspaces.map((w, wi) => editWorkspace(name, w, wi, workspaces.map((x) => x.name)))),
     addWorkspace(name, new Set(workspaces.map((w) => w.name))),
     saveBar(name));
 }
@@ -704,7 +716,8 @@ function editable(text, onsave, cls = "") {
   return span;
 }
 
-function editWorkspace(name, w, wi, count) {
+function editWorkspace(name, w, wi, names) {
+  const count = names.length;
   const key = `${name}/${w.name}`;
   const open = expanded.has(key);
   const toggle = () => {
@@ -735,7 +748,7 @@ function editWorkspace(name, w, wi, count) {
   });
   const card = h("div", { class: "ws" }, head,
     open ? h("div", { class: "ws-body" },
-      h("ol", {}, w.tabs.map((t, ti) => editTab(w, t, ti + 1))),
+      h("ol", {}, w.tabs.map((t, ti) => editTab(w, t, ti + 1, names))),
       addTabRow(w)) : null);
   card.addEventListener("dragover", (e) => {
     if (!dragged) return;
@@ -755,7 +768,8 @@ function editWorkspace(name, w, wi, count) {
   return card;
 }
 
-function editTab(w, t, pos) {
+// `names`: every workspace's, for "Move to…". The buttons do what dragging does, by keyboard or touch.
+function editTab(w, t, pos, names) {
   const ref = `${w.name}#${pos}`;
   const title = editable(t.title, (to) => pushOp(said({ op: "tab-rename", tab: ref, to }, `Renamed tab ${t.title} to ${to}`)));
   const where = relPath(t.cwd, w.cwd);
@@ -764,6 +778,7 @@ function editTab(w, t, pos) {
     kindIcon(t),
     h("div", { class: "title" }, title,
       agentLabel(t),
+      runsLabel(t),
       where ? h("span", { class: "mono faint ellipsis", title: t.cwd }, where) : null),
     h("div", { class: "actions" },
       iconButton("open", "Restore this tab", () => {
@@ -772,6 +787,15 @@ function editTab(w, t, pos) {
         go("snapshot", { tab: "restore", version: null, pick: ref });
       }),
       iconButton("pencil", "Rename tab", () => title.startEdit()),
+      h("button", { class: "icon", title: `Move ${t.title} up`, "aria-label": `Move ${t.title} up`, disabled: pos === 1,
+        onclick: () => pushOp(said({ op: "tab-index", tab: ref, index: pos - 1 }, `Moved ${t.title} to position ${pos - 1}`)) }, icon("up")),
+      h("button", { class: "icon", title: `Move ${t.title} down`, "aria-label": `Move ${t.title} down`, disabled: pos === w.tabs.length,
+        onclick: () => pushOp(said({ op: "tab-index", tab: ref, index: pos + 1 }, `Moved ${t.title} to position ${pos + 1}`)) }, icon("down")),
+      names.length > 1 ? h("select", { class: "move-to", title: `Move ${t.title} to another workspace`,
+        "aria-label": `Move ${t.title} to another workspace`,
+        onchange: (e) => pushOp(said({ op: "tab-move", tab: ref, to: e.target.value }, `Moved ${t.title} to ${e.target.value}`)) },
+      h("option", { value: "", selected: true, disabled: true }, "Move to…"),
+      names.filter((n) => n !== w.name).map((n) => h("option", { value: n }, n))) : null,
       iconButton("close", "Remove tab from the snapshot", () => pushOp(said({ op: "tab-remove", tab: ref }, `Removed tab ${t.title}`)), "remove")));
   li.addEventListener("dragstart", (e) => {
     dragged = { ws: w.name, pos, title: t.title };
@@ -817,10 +841,9 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
   const input = h("input", { placeholder, "aria-label": placeholder });
   const show = (items) => {
     results.replaceChildren(...(items.length
-      ? items.map((it) => h("li", { tabindex: "0", onclick: it.pick,
-        onkeydown: (e) => { if (e.key === "Enter") it.pick(); } },
-      h("span", { class: "ellipsis" }, it.label),
-      it.sub ? h("span", { class: "muted small ellipsis" }, it.sub) : null))
+      ? items.map((it) => h("li", {}, h("button", { class: "pick", onclick: it.pick },
+        h("span", { class: "ellipsis" }, it.label),
+        it.sub ? h("span", { class: "muted small ellipsis" }, it.sub) : null)))
       : [h("li", { class: "note" }, input.value.trim() ? "No matches." : emptyNote)]));
   };
   // `load` returns null for "nothing typed yet": the list then stays empty.
@@ -838,7 +861,7 @@ function picker(placeholder, load, { immediate = false, emptyNote = "Nothing to 
     input.timer = setTimeout(run, 250);
   });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") results.querySelector("li[tabindex]")?.focus();
+    if (e.key === "ArrowDown") results.querySelector("button")?.focus();
   });
   const el = h("div", { class: "picker" }, input, results);
   el.focusInput = () => input.focus();
@@ -940,7 +963,18 @@ function saveBar(name) {
     render();
   }, { class: "primary" });
   message.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+  // Two clicks, like Delete: the edits are not kept anywhere else.
   const discard = h("button", { class: "ghost", onclick: () => {
+    if (!discard.classList.contains("armed")) {
+      discard.classList.add("armed", "danger");
+      discard.textContent = `Discard ${plural(ops.length, "change")}?`;
+      discard.timer = setTimeout(() => {
+        discard.classList.remove("armed", "danger");
+        discard.textContent = "Discard";
+      }, 4000);
+      return;
+    }
+    clearTimeout(discard.timer);
     pending.delete(name);
     render();
   } }, "Discard");
@@ -1099,14 +1133,22 @@ async function renderRestore(name) {
       sync();
     });
     const bodyEl = h("ol", { class: expanded.has(key) ? "ws-body" : "ws-body hidden" }, w.tabs.map((t, i) =>
-      h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title), agentLabel(t)))));
-    const toggle = h("button", { class: `icon toggle ${expanded.has(key) ? "open" : ""}`, title: "Show tabs", "aria-label": "Show tabs",
-      onclick: () => {
-        const open = !expanded.has(key);
-        open ? expanded.add(key) : expanded.delete(key);
-        toggle.classList.toggle("open", open);
-        bodyEl.classList.toggle("hidden", !open);
-      } }, icon("chevron"));
+      h("li", { class: "tab" }, h("label", { class: "grow" }, tabBoxes[i], kindIcon(t), h("span", { class: "ellipsis" }, t.title), agentLabel(t), runsLabel(t)))));
+    // Says what a click does, like the editor's toggle.
+    const label = (open) => {
+      const text = open ? "Hide tabs" : "Show tabs";
+      toggle.title = text;
+      toggle.setAttribute("aria-label", text);
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.classList.toggle("open", open);
+    };
+    const toggle = h("button", { class: "icon toggle", onclick: () => {
+      const open = !expanded.has(key);
+      open ? expanded.add(key) : expanded.delete(key);
+      label(open);
+      bodyEl.classList.toggle("hidden", !open);
+    } }, icon("chevron"));
+    label(expanded.has(key));
     return h("div", { class: "ws" },
       h("div", { class: "ws-head" }, toggle,
         h("label", { class: "grow" }, wsBox, h("span", { class: "name ellipsis" }, w.name)),
@@ -1160,7 +1202,7 @@ function renderPlan(r) {
     h("div", {}, plan.actions.map((a) => h("div", { class: "group" },
       h("div", { class: "row" }, icon(a.action === "create-workspace" ? "plus" : "chevron"),
         a.action === "create-workspace" ? h("span", {}, "New workspace ", h("strong", {}, a.name)) : h("span", {}, "Add to ", h("strong", {}, a.workspaceName))),
-      h("ul", {}, a.tabs.map((t) => h("li", { class: "ellipsis" }, t.title)))))),
+      h("ul", {}, a.tabs.map((t) => h("li", { class: "ellipsis" }, t.title, t.type !== "agent" && t.command ? h("span", { class: "mono" }, `  runs: ${t.command}`) : null)))))),
     plan.skipped.length
       ? h("details", {}, h("summary", {}, `${plan.skipped.length} already open or skipped`),
         h("ul", { class: "muted small" }, plan.skipped.map((s) => h("li", {}, s))))
@@ -1216,6 +1258,12 @@ document.addEventListener("visibilitychange", () => {
   // Restore keeps the user's ticks, so it is left alone.
   const restoring = state.view === "snapshot" && state.tab === "restore";
   if (document.visibilityState === "visible" && !restoring && !document.activeElement?.matches("input, select")) render();
+});
+// Unsaved edits live only in this page.
+window.addEventListener("beforeunload", (e) => {
+  if (![...pending.values()].some((ops) => ops.length)) return;
+  e.preventDefault();
+  e.returnValue = ""; // older WebKit asks only when this is set
 });
 // `sessionsnap ui` and Reconnect point an open tab at the key by changing only the fragment.
 window.addEventListener("hashchange", () => {
