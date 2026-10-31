@@ -461,7 +461,12 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               and edits that read cmux), never copies or restores. Every restore, <code translate="no">recent</code>
               and edit that puts a session in a tab reads it: once left out, a session stays left
               out, and otherwise it resumes with its newest flags (with a warning when the tab's own
-              differ). A session seen nowhere resumes with no flags and a warning.
+              differ). A session seen nowhere resumes with no flags and a warning. A record that can't
+              be read is kept as <code translate="no">sessions.json.bad-&lt;time&gt;</code> and built again
+              from the snapshots; a save marks it as about to change first
+              (<code translate="no">sessions.pending/</code>), so an update that fails is completed the
+              next time it is read. Short flags may be grouped (<code translate="no">-vs read-only</code>)
+              as the agents allow.
               Versions written before the
               allow-list may still hold their flags on disk until you prune or delete them; they are
               never shown or replayed. The tokens that pick another session are taken out first: the agent's

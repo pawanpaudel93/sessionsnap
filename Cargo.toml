@@ -11,6 +11,20 @@ documentation = "https://sessionsnap.pawanpaudel.com.np/docs.html"
 readme = "README.md"
 keywords = ["tmux", "cmux", "claude-code", "codex", "session"]
 categories = ["command-line-utilities", "development-tools"]
+# The crate is the program: the website, demo, release scripts and CI stay in the repository.
+exclude = ["/site", "/assets", "/scripts", "/.github", "/install.sh", "/CLAUDE.md"]
+
+# `cargo binstall sessionsnap` downloads the release tarball (the same one install.sh uses).
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/sessionsnap-{ version }-{ target }.tar.gz"
+bin-dir = "sessionsnap{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.aarch64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/sessionsnap-{ version }-universal-apple-darwin.tar.gz"
+
+[package.metadata.binstall.overrides.x86_64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/sessionsnap-{ version }-universal-apple-darwin.tar.gz"
 
 [dependencies]
 anyhow = "1"
