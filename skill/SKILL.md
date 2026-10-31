@@ -1,6 +1,6 @@
 ---
 name: sessionsnap
-description: Save, edit and restore named, versioned snapshots of cmux workspaces and their agent sessions (Claude Code, Codex and other coding agents) with the sessionsnap CLI. Use when the user wants to snapshot what is open in cmux, bring back lost cmux tabs or agent sessions, see what a snapshot contains or how it changed, or edit a saved snapshot.
+description: Save, edit and restore named, versioned snapshots of cmux workspaces (or tmux sessions) and their agent sessions (Claude Code, Codex and other coding agents) with the sessionsnap CLI. Use when the user wants to snapshot what is open in cmux, bring back lost cmux tabs or agent sessions, see what a snapshot contains or how it changed, or edit a saved snapshot.
 ---
 
 # sessionsnap
@@ -9,7 +9,9 @@ description: Save, edit and restore named, versioned snapshots of cmux workspace
 the flags the agent was started with that are on its allow-list) as named snapshots with versions,
 and reopens only what is missing. Claude Code and Codex are fully supported (their session
 histories are read); 15 more agents are resumed with cmux's documented commands, only when started
-without flags (`sessionsnap agents --json` lists them).
+without flags (`sessionsnap agents --json` lists them). Inside tmux it saves and restores tmux
+sessions instead (`--terminal cmux|tmux` picks one); there, a pane whose agent session can't be told
+is saved as a plain tab, and `save` says so.
 
 ## Rules
 
@@ -82,7 +84,7 @@ not on PATH, and when a tab will open as a plain shell (unknown agent, invalid I
 
 ## Exit codes
 
-`0` ok · `1` error · `2` cmux not running/reachable · `3` nothing to do · `4` refused (needs
+`0` ok · `1` error · `2` terminal not reachable (cmux not running, tmux not installed) · `3` nothing to do · `4` refused (needs
 confirmation with `--yes`, workspace name already exists, session has no recorded folder, or
 cmux.json is not plain JSON) · `5` unknown cmux state or snapshot format (snapshots must be format 2) · `6` plan
 stale (make a new one) · `7` not found. With `--json`, errors print `{"error": {code, exit, message}}`.

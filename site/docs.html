@@ -89,6 +89,7 @@
             <a href="#snapshots">Snapshots</a>
             <a href="#editing">Editing</a>
             <a href="#restoring">Restoring</a>
+            <a href="#tmux">tmux</a>
             <a href="#sessions">Sessions and agents</a>
             <a href="#json">JSON and exit codes</a>
             <a href="#web-ui">Web UI</a>
@@ -104,14 +105,15 @@
           <section class="doc-section" id="install">
             <h2>Install</h2>
             <p>
-              You need macOS with <a href="https://cmux.com">cmux</a> 0.64 or newer, and the agents
-              you want to restore on your <code translate="no">PATH</code>.
+              You need macOS with <a href="https://cmux.com">cmux</a> 0.64 or newer, or tmux on macOS
+              or Linux (see <a href="#tmux">tmux</a>), and the agents you want to restore on your
+              <code translate="no">PATH</code>.
             </p>
             <div class="callout">
               <p>
-                <strong>On Linux</strong>, sessionsnap installs, updates and uninstalls, but saving
-                and restoring don't work yet: cmux on Linux is a different app with a different
-                command line. On macOS, sessionsnap is verified with cmux 0.64.22.
+                <strong>On Linux</strong>, sessionsnap saves and restores tmux sessions. cmux on Linux
+                is a different app with a different command line, not supported yet. On macOS,
+                sessionsnap is verified with cmux 0.64.22.
               </p>
             </div>
             <p>One command installs the latest release:</p>
@@ -257,6 +259,29 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 </tbody>
               </table>
             </div>
+          </section>
+
+          <section class="doc-section" id="tmux">
+            <h2>tmux</h2>
+            <p>
+              Run inside tmux, sessionsnap saves from and restores into tmux; elsewhere it uses cmux.
+              <code translate="no">--terminal tmux</code> or <code translate="no">--terminal cmux</code>
+              picks one. Each tmux session is a workspace and each pane a tab. A restore opens each tab
+              in its own window (splits are not saved) and types the agent's resume command into its
+              shell; a name tmux can't hold (<code translate="no">.</code> or <code translate="no">:</code>)
+              is kept in the session option <code translate="no">@sessionsnap_name</code>.
+            </p>
+            <p>
+              tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell
+              for an agent's process and reads its arguments exactly. The session is the one they name
+              (<code translate="no">--resume &lt;id&gt;</code>, <code translate="no">codex resume &lt;id&gt;</code>);
+              else, for Claude Code and Codex, the session in that folder changed most recently since
+              the agent started. When several panes run the same agent in one folder with no ID in
+              their command, none is guessed: they are saved as plain tabs, and
+              <code translate="no">save</code> says so. Each version records the terminal it came from,
+              and an automatic snapshot keeps saving from the terminal it was added in. The web UI and
+              palette stay in cmux.
+            </p>
           </section>
 
           <section class="doc-section" id="editing">
@@ -503,7 +528,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 <tbody>
                   <tr><td>0</td><td><code translate="no">ok</code></td><td>Done.</td></tr>
                   <tr><td>1</td><td><code translate="no">error</code></td><td>Error, or some restore steps failed.</td></tr>
-                  <tr><td>2</td><td><code translate="no">cmux-unreachable</code></td><td>cmux is not running or not reachable.</td></tr>
+                  <tr><td>2</td><td><code translate="no">cmux-unreachable</code></td><td>The terminal is not reachable: cmux is not running, or tmux is not installed.</td></tr>
                   <tr><td>3</td><td><code translate="no">nothing-to-do</code></td><td>No changes to save, or nothing to restore.</td></tr>
                   <tr><td>4</td><td><code translate="no">refused</code></td><td>A confirmation was declined or needs <code translate="no">--yes</code>.</td></tr>
                   <tr><td>5</td><td><code translate="no">unknown-format</code></td><td>Unknown cmux state or snapshot format.</td></tr>
@@ -589,6 +614,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>Claude Code transcripts (read)</td><td><code translate="no">~/.claude/projects</code>; <code translate="no">SESSIONSNAP_CLAUDE_DIR</code> (another <code translate="no">~/.claude</code>)</td></tr>
                   <tr><td>Codex sessions (read)</td><td><code translate="no">~/.codex/sessions</code>; <code translate="no">SESSIONSNAP_CODEX_DIR</code> (another <code translate="no">~/.codex</code>)</td></tr>
                   <tr><td>cmux binary</td><td><code translate="no">cmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_CMUX_BIN</code></td></tr>
+                  <tr><td>tmux binary</td><td><code translate="no">tmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_TMUX_BIN</code></td></tr>
                   <tr><td>cmux state file (read)</td><td><code translate="no">~/Library/Application Support/cmux/session-com.cmuxterm.app.json</code>; <code translate="no">SESSIONSNAP_CMUX_STATE</code></td></tr>
                   <tr><td>cmux socket (web UI)</td><td><code translate="no">$CMUX_SOCKET_PATH</code> (or its older name <code translate="no">$CMUX_SOCKET</code>), else the path in <code translate="no">~/Library/Application Support/cmux/last-socket-path</code>; <code translate="no">SESSIONSNAP_CMUX_SOCKET</code></td></tr>
                   <tr><td>cmux palette config</td><td><code translate="no">~/.config/cmux/cmux.json</code> (on Linux, <code translate="no">$XDG_CONFIG_HOME/cmux/cmux.json</code> when that is set); <code translate="no">SESSIONSNAP_CMUX_CONFIG</code></td></tr>

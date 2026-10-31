@@ -3,18 +3,19 @@
 [![CI](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml/badge.svg)](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
-![Terminal: cmux](https://img.shields.io/badge/terminal-cmux-8A2BE2)
+![Terminal: cmux | tmux](https://img.shields.io/badge/terminal-cmux%20%7C%20tmux-8A2BE2)
 
-**Save your cmux workspaces and the coding-agent sessions in them; bring them back resumed.**
+**Save your cmux or tmux workspaces and the coding-agent sessions in them; bring them back resumed.**
 
 Website: <https://sessionsnap.pawanpaudel.com.np>
 
-sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces and the agent
-sessions in their tabs (Claude Code, Codex and more). Save what is open, edit it, and later reopen
+sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces (or tmux
+sessions) and the agent sessions in their tabs (Claude Code, Codex and more). Save what is open, edit it, and later reopen
 only what is missing, with each agent tab resumed in its own folder with the flags it was started
 with that sessionsnap knows to be safe to pass again. It is a single Rust binary with a CLI, a web UI in the cmux Dock, and cmux palette commands.
 
-Nothing runs in the background: every snapshot is one you ask for.
+Nothing runs in the background unless you add an automatic snapshot: every other snapshot is one
+you ask for.
 
 ## Contents
 
@@ -46,13 +47,14 @@ Nothing runs in the background: every snapshot is one you ask for.
 - **Find lost sessions:** `recent` lists agent sessions from the last day that are not open in cmux.
 - **Scriptable:** every command takes `--json` and `--yes`, with stable exit codes.
 - **Web UI and palette:** a page in the cmux Dock, and commands in the cmux command palette.
+- **tmux too:** inside tmux, sessionsnap saves and restores tmux sessions, on macOS and Linux.
 
 ## Requirements
 
 | Requirement | Details |
 | --- | --- |
-| OS | macOS (tested on macOS 15). On Linux (x86_64, arm64), sessionsnap installs, updates and uninstalls, but saving and restoring don't work yet: cmux on Linux is a different app with a different command line |
-| Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22) |
+| OS | macOS (tested on macOS 15), or Linux (x86_64, arm64) with tmux. cmux on Linux is a different app with a different command line, not supported yet |
+| Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22), or tmux |
 | Agents | The agents you want to restore, on your `PATH` (`sessionsnap agents` checks) |
 | Build (from source only) | Rust 1.96 or newer |
 
@@ -138,6 +140,22 @@ sessionsnap schedule remove work               # make it a normal snapshot (vers
 Intervals are a number and a unit (`30m`, `2h`, `1d`; at least `1m`). Each schedule is a launchd
 agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; `uninstall` removes them.
 
+### tmux
+
+Run inside tmux, sessionsnap saves from and restores into tmux; elsewhere it uses cmux.
+`--terminal tmux` or `--terminal cmux` picks one. Each tmux session is a workspace and each pane a
+tab; a restore opens each tab in its own window (splits are not saved), types the agent's resume
+command into its shell, and keeps a name tmux can't hold (`.` or `:`) in the session option
+`@sessionsnap_name`.
+
+tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell for an
+agent's process and reads its arguments exactly (`/proc` on Linux, the kernel on macOS). Its session
+is the one the arguments name (`--resume <id>`, `codex resume <id>`); else, for Claude Code and
+Codex, the session in that folder changed most recently since the agent started. When several panes
+run the same agent in one folder with no ID in their command, none is guessed: they are saved as
+plain tabs, and `save` says so. Each version records the terminal it came from, and an automatic
+snapshot keeps saving from the terminal it was added in. The web UI and palette stay in cmux.
+
 ```sh
 sessionsnap update --check            # is there a newer release?
 sessionsnap update                    # install it over this binary
@@ -149,7 +167,7 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 |---|---|
 | 0 | ok |
 | 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
-| 2 | cmux unreachable |
+| 2 | terminal unreachable (cmux not running, or tmux not installed) |
 | 3 | nothing to do |
 | 4 | refused |
 | 5 | unknown cmux state or snapshot format |
@@ -346,6 +364,7 @@ Details:
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
+| tmux binary | `tmux` on `PATH` | `SESSIONSNAP_TMUX_BIN` |
 | cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
 | cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
@@ -391,10 +410,10 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
 
 ## Status
 
-Early, macOS and cmux only for now; the code is organised so other terminals can be added (see
-[ARCHITECTURE.md](ARCHITECTURE.md)). On Linux, sessionsnap installs, updates and uninstalls, but
-saving and restoring don't work yet: cmux on Linux is a different app (cmux Browser, backed by
-cmux-tui) with a different command line and state files, and needs its own terminal adapter.
+Early: cmux on macOS, and tmux on macOS and Linux; the code is organised so other terminals can be
+added (see [ARCHITECTURE.md](ARCHITECTURE.md)). cmux on Linux is a different app (cmux Browser,
+backed by cmux-tui) with a different command line and state files, and needs its own terminal
+adapter. Automatic snapshots need launchd, so macOS only.
 
 Verified with cmux 0.64.22 on macOS:
 
