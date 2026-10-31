@@ -175,6 +175,8 @@ pub fn changes(changes: &[Change]) -> String {
         .map(|c| match c {
             Change::WorkspaceAdded { workspace } => format!("+ workspace {workspace}"),
             Change::WorkspaceRemoved { workspace } => format!("- workspace {workspace}"),
+            Change::WorkspaceRenamed { from, to } => format!("~ workspace {from} → {to}"),
+            Change::WorkspaceChanged { workspace, what } => format!("~ workspace {workspace}: {}", what.join(", ")),
             Change::TabAdded { workspace, title } => format!("+ {workspace} › {title}"),
             Change::TabRemoved { workspace, title } => format!("- {workspace} › {title}"),
             Change::TabMoved { title, from, to } => format!("→ {title}: {from} → {to}"),
