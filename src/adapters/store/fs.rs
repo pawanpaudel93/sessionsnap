@@ -335,7 +335,7 @@ impl Store {
         make_private_dir(&self.root)?;
         let dir = self.snapshot_dir(name);
         in_new_dir(&dir, || {
-            remove_leftovers(&dir);
+            remove_leftovers(&dir, STALE);
             let now = chrono::Local::now();
             let mut version = Version {
                 sessionsnap: FORMAT,
@@ -398,7 +398,9 @@ impl Store {
         }
         let to = self.snapshots_dir().join(new);
         if !same && to.is_dir() {
-            // An empty folder left behind by a failed save is not a snapshot.
+            // An empty folder left behind by a failed save is not a snapshot. Its lock is held, so
+            // what a crashed save left in it is gone for good, however recent.
+            remove_leftovers(&to, Duration::ZERO);
             fs::remove_dir(&to).with_context(|| format!("removing {}", to.display()))?;
         }
         fs::rename(self.snapshot_dir(&from), &to).with_context(|| format!("renaming snapshot '{from}' to '{new}'"))?;
@@ -540,13 +542,13 @@ fn publish(
 }
 
 /// Removes what a save that crashed may have left in `dir`: temporary files and number claims,
-/// older than a stale lock (a live save holds the lock, so it has none that old).
-fn remove_leftovers(dir: &Path) {
+/// at least `age` old (a stale lock's age while a live save may hold the lock: it has none that old).
+fn remove_leftovers(dir: &Path, age: Duration) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let leftover = (name.starts_with('.') && name.ends_with(".tmp")) || name.ends_with(".claim");
-        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|m| m.elapsed().unwrap_or_default() > STALE);
+        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|m| m.elapsed().unwrap_or_default() >= age);
         if leftover && old {
             let _ = fs::remove_file(e.path());
         }
@@ -975,6 +977,14 @@ mod tests {
         fs::create_dir_all(s.snapshots_dir().join("c")).unwrap();
         s.rename("a", "c").unwrap();
         assert_eq!(s.list().unwrap(), vec!["b".to_string(), "c".to_string()]);
+        // Nor is one holding only what a crashed save left (a claim, a temporary file).
+        let d = s.snapshots_dir().join("d");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("0001.claim"), "").unwrap();
+        fs::write(d.join(".0001-20260101T000000.1-0.tmp"), "{").unwrap();
+        s.rename("c", "d").unwrap();
+        assert_eq!(s.list().unwrap(), vec!["b".to_string(), "d".to_string()]);
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "only c's version moved in");
     }
 
     #[test]
