@@ -959,7 +959,18 @@ function saveBar(name) {
     render();
   }, { class: "primary" });
   message.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+  // Two clicks, like Delete: the edits are not kept anywhere else.
   const discard = h("button", { class: "ghost", onclick: () => {
+    if (!discard.classList.contains("armed")) {
+      discard.classList.add("armed", "danger");
+      discard.textContent = `Discard ${plural(ops.length, "change")}?`;
+      discard.timer = setTimeout(() => {
+        discard.classList.remove("armed", "danger");
+        discard.textContent = "Discard";
+      }, 4000);
+      return;
+    }
+    clearTimeout(discard.timer);
     pending.delete(name);
     render();
   } }, "Discard");
@@ -1235,6 +1246,12 @@ document.addEventListener("visibilitychange", () => {
   // Restore keeps the user's ticks, so it is left alone.
   const restoring = state.view === "snapshot" && state.tab === "restore";
   if (document.visibilityState === "visible" && !restoring && !document.activeElement?.matches("input, select")) render();
+});
+// Unsaved edits live only in this page.
+window.addEventListener("beforeunload", (e) => {
+  if (![...pending.values()].some((ops) => ops.length)) return;
+  e.preventDefault();
+  e.returnValue = ""; // older WebKit asks only when this is set
 });
 // `sessionsnap ui` and Reconnect point an open tab at the key by changing only the fragment.
 window.addEventListener("hashchange", () => {
