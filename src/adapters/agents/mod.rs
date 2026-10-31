@@ -34,10 +34,12 @@ impl Agents {
     }
 
     /// Claude Code's and Codex's histories at their default places (see `Claude::open_default`,
-    /// `Codex::open_default`), and `$PATH`.
-    pub fn open_default() -> Result<Self> {
+    /// `Codex::open_default`), and `$PATH`. `cache` is a private folder for what was read of each
+    /// Claude Code transcript, so later runs read only what was appended.
+    pub fn open_default(cache: &Path) -> Result<Self> {
         let path = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-        Ok(Agents::new(vec![Box::new(Claude::open_default()?), Box::new(Codex::open_default()?)], path))
+        let claude = Claude::open_default()?.cached(cache.join("claude-transcripts.json"));
+        Ok(Agents::new(vec![Box::new(claude), Box::new(Codex::open_default()?)], path))
     }
 
     /// The registry entry for an agent name, alias or program.

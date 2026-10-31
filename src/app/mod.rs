@@ -60,9 +60,11 @@ impl Ctx {
             tmux: Tmux::open_default(),
             tmux_chosen: std::cell::OnceCell::new(),
         });
+        let store = Store::open_default()?;
+        let agents = Agents::open_default(&store.root().join("cache"))?;
         Ok(Ctx {
-            store: Store::open_default()?,
-            agents: Agents::open_default()?,
+            store,
+            agents,
             terminal,
             scheduler: crate::adapters::scheduler::open_default()?,
             json,
