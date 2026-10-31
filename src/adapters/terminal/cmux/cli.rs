@@ -394,6 +394,7 @@ mod tests {
     #[cfg(unix)]
     fn assert_stopped(dir: &std::path::Path) {
         let pids = std::fs::read_to_string(dir.join("pids")).unwrap_or_default();
+        assert!(!pids.trim().is_empty(), "no fake cmux ran, so nothing was checked");
         for pid in pids.split_whitespace() {
             let alive =
                 std::process::Command::new("kill").args(["-0", pid]).stderr(std::process::Stdio::null()).status();
@@ -408,7 +409,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let cmux = dir.path().join("cmux");
-        std::fs::write(&cmux, "#!/bin/sh\necho $$ >> \"$(dirname \"$0\")/pids\"\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::write(&cmux, "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\necho $$ >> \"$(dirname \"$0\")/pids\"\nwhile :; do sleep 1; done\n")
+            .unwrap();
         std::fs::set_permissions(&cmux, std::fs::Permissions::from_mode(0o755)).unwrap();
         let b = CmuxCli {
             runner: ProcessRunner,
@@ -417,8 +419,11 @@ mod tests {
             launch_timeout: Duration::from_millis(10),
             launcher: None,
             socket: None,
-            call_timeout: Duration::from_millis(300),
+            // Long enough for the script to note its PID before it is killed.
+            call_timeout: Duration::from_secs(1),
         };
+        // macOS checks a new script the first time it runs, which can take seconds under load.
+        std::process::Command::new(&cmux).arg("warm").status().unwrap();
         let started = Instant::now();
         let err = b.show_url("http://127.0.0.1:1/#t=secret-key").unwrap_err().to_string();
         assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
