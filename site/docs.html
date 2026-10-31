@@ -646,6 +646,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 <tbody>
                   <tr><td>Snapshots</td><td><code translate="no">~/.sessionsnap/snapshots/&lt;name&gt;/&lt;NNNN&gt;-&lt;time&gt;.json</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Saved sessions' flags</td><td><code translate="no">~/.sessionsnap/sessions.json</code> (locks in <code translate="no">~/.sessionsnap/locks</code>); <code translate="no">SESSIONSNAP_HOME</code></td></tr>
+                  <tr><td>Transcript cache (private: what was read of each Claude Code transcript, so a save reads only what was appended)</td><td><code translate="no">~/.sessionsnap/cache/</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Automatic snapshots' schedules</td><td><code translate="no">~/.sessionsnap/schedules.json</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Schedules' launchd agents (macOS)</td><td><code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.&lt;name&gt;.plist</code></td></tr>
                   <tr><td>Claude Code transcripts (read)</td><td><code translate="no">~/.claude/projects</code>; <code translate="no">SESSIONSNAP_CLAUDE_DIR</code> (another <code translate="no">~/.claude</code>)</td></tr>

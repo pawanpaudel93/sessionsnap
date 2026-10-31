@@ -312,6 +312,7 @@ Details:
 |---|---|---|
 | Snapshots | `~/.sessionsnap/snapshots/<name>/<NNNN>-<time>.json` | `SESSIONSNAP_HOME` |
 | Saved sessions' flags | `~/.sessionsnap/sessions.json` (lock files in `~/.sessionsnap/locks`) | `SESSIONSNAP_HOME` |
+| Transcript cache (private; what was read of each Claude Code transcript, so a save reads only what was appended) | `~/.sessionsnap/cache/` | `SESSIONSNAP_HOME` |
 | Automatic snapshots' schedules | `~/.sessionsnap/schedules.json` | `SESSIONSNAP_HOME` |
 | Schedules' launchd agents (macOS) | `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist` | none |
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |

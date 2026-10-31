@@ -175,7 +175,7 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
 /// Names a sessionsnap data folder holds. Anything else there means the folder is not only ours
 /// (say SESSIONSNAP_HOME points at a shared folder), so it is left alone.
 const DATA_ENTRIES: &[&str] =
-    &["snapshots", "plans", "locks", "sessions.json", "sessions.pending", "sessions.dirty", "schedules.json"];
+    &["snapshots", "plans", "locks", "sessions.json", "sessions.pending", "sessions.dirty", "schedules.json", "cache"];
 
 fn remove_data(data: &Path) -> Result<Step> {
     let what = data.display().to_string();
