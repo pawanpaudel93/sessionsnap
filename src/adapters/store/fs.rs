@@ -227,7 +227,8 @@ impl Store {
 
     /// Replaces the record of every session seen, while holding its lock; readable by the owner
     /// only, synced to disk.
-    pub fn write_sessions(&self, _lock: &Lock, known: &KnownSessions) -> Result<()> {
+    pub fn write_sessions(&self, lock: &Lock, known: &KnownSessions) -> Result<()> {
+        still_held(lock, "sessions.json")?;
         make_private_dir(&self.root)?;
         write_private_json_atomic(&self.root.join("sessions.json"), known)
     }
@@ -374,7 +375,8 @@ impl Store {
     }
 
     /// Replaces every schedule, while holding their lock.
-    pub fn write_schedules(&self, _lock: &Lock, schedules: &Schedules) -> Result<()> {
+    pub fn write_schedules(&self, lock: &Lock, schedules: &Schedules) -> Result<()> {
+        still_held(lock, "schedules.json")?;
         make_private_dir(&self.root)?;
         write_private_json_atomic(&self.root.join("schedules.json"), schedules)
     }
@@ -456,6 +458,15 @@ fn resolve_name<'a>(stored: &'a [(String, bool)], name: &'a str) -> &'a str {
         .filter(|(s, _)| s.eq_ignore_ascii_case(name))
         .min_by_key(|(s, has_versions)| (!has_versions, s != name, s.as_str()))
         .map_or(name, |(s, _)| s.as_str())
+}
+
+/// Refuses (exit 6) to write `what` under a lock broken while its holder took too long: another
+/// may hold it now, and would lose what it writes.
+fn still_held(lock: &Lock, what: &str) -> Result<()> {
+    if lock.still_held() {
+        return Ok(());
+    }
+    Err(failure(Exit::PlanStale, format!("{what} was locked by another sessionsnap meanwhile; try again")))
 }
 
 /// Runs `f` with `dir` created; removes `dir` again when this made it and `f` failed, so a failed
@@ -979,5 +990,27 @@ mod tests {
         );
         s.write_schedules(&lock, &all).unwrap();
         assert_eq!(s.read_schedules().unwrap(), all);
+    }
+
+    /// A write under a lock broken meanwhile (its holder took too long) is refused.
+    #[test]
+    fn writes_under_a_broken_lock_are_refused() {
+        let (_d, s) = store();
+        let break_lock = |file: &str| {
+            let f = fs::OpenOptions::new().write(true).open(s.root().join("locks").join(file)).unwrap();
+            f.set_modified(std::time::SystemTime::now() - Duration::from_secs(120)).unwrap();
+        };
+        let slow = s.lock_schedules().unwrap();
+        break_lock("schedules.lock");
+        let _other = s.lock_schedules().unwrap();
+        let err = s.write_schedules(&slow, &Schedules::new()).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::PlanStale, "{err}");
+        assert!(!s.root().join("schedules.json").exists());
+        let slow = s.lock_sessions().unwrap();
+        break_lock("sessions.lock");
+        let _other = s.lock_sessions().unwrap();
+        let err = s.write_sessions(&slow, &KnownSessions::default()).unwrap_err();
+        assert_eq!(exit_of(&err), Exit::PlanStale, "{err}");
+        assert!(!s.root().join("sessions.json").exists());
     }
 }
