@@ -376,7 +376,8 @@ Snapshots are user-editable files whose contents end up as commands in a shell, 
   --keep 1`, or `sessionsnap delete <name>`. They are never shown or replayed, but the files keep
   them.
 - Snapshot files are readable only by you (folder 0700, files 0600), and so are exported files.
-- An imported snapshot goes through the same checks when restored; `restore --plan` shows the
+- `import` refuses a file with a control character anywhere in it (an escape sequence in a title
+  would reach your screen); the rest goes through the same checks when restored; `restore --plan` shows the
   command each terminal tab runs (escaped), so check a file from someone else before applying it.
 
 ## Status

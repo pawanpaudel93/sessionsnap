@@ -60,37 +60,40 @@ fn import_refuses_what_it_cannot_take() {
     assert_eq!(exit_of(&env.run(&["import", "/nope/x.json"]).unwrap_err()), Exit::NotFound);
 }
 
-/// An imported file is as untrusted as a hand-edited one: restoring it never sends a control
-/// character, an unknown flag or a bad session ID to the terminal.
+/// An imported file is as untrusted as a hand-edited one. One with a control character anywhere
+/// (an escape sequence in a title would reach the screen) is refused; restoring the rest never
+/// sends an unknown flag or a bad session ID to the terminal, and the plan shows every command.
 #[test]
 fn a_hostile_import_never_reaches_the_terminal() {
     let env = setup();
     env.run(&["save", "work"]).unwrap();
     let mut v = exported(&env, "work");
+    let other = Env::new();
+    for evil in [
+        serde_json::json!({"name": "E\u{1b}]0;x\u{7}", "cwd": "/w/e", "tabs": []}),
+        serde_json::json!({"name": "E", "cwd": "/w/e", "tabs": [{"type": "terminal", "title": "\u{1b}[2J", "cwd": "/w/e"}]}),
+        serde_json::json!({"name": "E", "cwd": "/w/e", "tabs": [{"type": "terminal", "title": "d", "cwd": "/w/e", "command": "make\rrm -rf ~"}]}),
+    ] {
+        v["workspaces"] = serde_json::json!([evil]);
+        let e = other.run_with_input(&["import", "-", "--as", "evil"], &v.to_string()).unwrap_err();
+        assert!(format!("{e:#}").contains("control character"), "{e:#}");
+    }
+    assert_eq!(exit_of(&other.run(&["show", "evil"]).unwrap_err()), Exit::NotFound);
     v["workspaces"] = serde_json::json!([{"name": "Evil", "cwd": "/w/e", "cmuxWorkspaceId": "WA", "tabs": [
-        {"type": "agent", "title": "a", "cwd": "/w/e", "agent": "claude", "sessionId": A, "args": ["--dangerously-skip-permissions", "\u{3}touch /tmp/pwned\r"]},
-        {"type": "agent", "title": "b", "cwd": "/w/e", "agent": "opencode", "sessionId": "s1\nrm -rf ~"},
-        {"type": "agent", "title": "c", "cwd": "/w/e\u{1b}[2J", "agent": "opencode", "sessionId": "s2"},
-        {"type": "terminal", "title": "d", "cwd": "/w/e", "command": "make\rrm -rf ~"},
+        {"type": "agent", "title": "a", "cwd": "/w/e", "agent": "claude", "sessionId": A, "args": ["--api-key", "k"]},
+        {"type": "agent", "title": "b", "cwd": "/w/e", "agent": "opencode", "sessionId": "s1; rm -rf ~"},
         {"type": "terminal", "title": "e", "cwd": "/w/e", "command": "echo $(id) `id` \\ ; rm -rf ~"}
     ]}]);
-    let other = Env::new();
     other.run_with_input(&["import", "-", "--as", "evil", "--map", "/w=/x"], &v.to_string()).unwrap();
     // A terminal tab's command runs again, as saved: the plan people read shows it first.
     let plan = other.run(&["restore", "evil", "--plan"]).unwrap().text;
     assert!(plan.contains("+ e (runs: echo $(id) `id` \\\\ ; rm -rf ~)"), "{plan}");
-    assert!(plan.contains("+ d\n") && plan.contains("d: its command has control characters"), "{plan}");
     let o = other.run(&["restore", "evil", "--yes"]).unwrap();
     assert_eq!(o.json["failed"], 0, "{}", o.json);
     let launched = other.fake.launched.borrow().clone();
-    assert_eq!(launched.len(), 5, "{launched:?}");
-    for t in &launched {
-        assert!(!t.cwd.chars().any(|c| c.is_control()), "{t:?}");
-        let command = t.command.as_deref().unwrap_or("");
-        assert!(!command.chars().any(|c| c.is_control()), "{t:?}");
-        assert!(!command.contains("pwned"), "{t:?}");
-    }
-    assert_eq!(launched[4].command.as_deref(), Some("echo $(id) `id` \\ ; rm -rf ~"));
-    // A flag with a control character leaves its session out (a shell), as does a bad ID or folder.
-    assert!(launched[..4].iter().all(|t| t.command.is_none()), "{launched:?}");
+    assert_eq!(launched.len(), 3, "{launched:?}");
+    // An unknown flag leaves its session out (a shell), as does a bad ID.
+    assert!(launched[..2].iter().all(|t| t.command.is_none()), "{launched:?}");
+    assert_eq!(launched[2].command.as_deref(), Some("echo $(id) `id` \\ ; rm -rf ~"));
+    assert!(launched.iter().all(|t| t.cwd == "/x/e"), "{launched:?}");
 }
