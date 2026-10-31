@@ -63,21 +63,23 @@ fn save_as(
             let src = super::load_version(ctx, &src_name, version)?;
             let source = Source {
                 kind: "copy".into(),
-                cmux_state_version: None,
                 from: Some(format!("{}@{}", src.snapshot, src.version)),
+                ..Default::default()
             };
             (src.workspaces, source, vec![])
         }
         None => {
             read_at = super::known::now();
-            let open = super::read_open(ctx.terminal.as_ref())?;
+            let open = super::read_open(ctx.terminal.as_ref(), &ctx.agents)?;
+            let terminal = ctx.terminal.name();
             if scheduled && !open.live {
-                return Err(failure(Exit::NothingToDo, "cmux is not running"));
+                return Err(failure(Exit::NothingToDo, format!("{terminal} is not running")));
             }
             if scheduled && open.workspaces.is_empty() {
-                return Err(failure(Exit::NothingToDo, "cmux shows no workspaces"));
+                return Err(failure(Exit::NothingToDo, format!("{terminal} shows no workspaces")));
             }
-            let (captured, notes) = capture(&open, &ctx.agents, only)?;
+            let (captured, mut notes) = capture(&open, &ctx.agents, only)?;
+            notes.splice(0..0, open.warnings.iter().cloned());
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
@@ -85,7 +87,13 @@ fn save_as(
                 None => captured,
             };
             let kind = if scheduled { super::schedule::SCHEDULED } else { "live" };
-            (workspaces, Source { kind: kind.into(), cmux_state_version: open.state_version, from: None }, notes)
+            let source = Source {
+                kind: kind.into(),
+                cmux_state_version: open.state_version,
+                from: None,
+                terminal: (terminal != "cmux").then(|| terminal.to_string()),
+            };
+            (workspaces, source, notes)
         }
     };
     // A broken latest version is never "unchanged": the save writes one that can be read.

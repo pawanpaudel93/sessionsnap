@@ -9,6 +9,7 @@ const X: &str = "01a12bb7-d379-7541-a81a-7895725dc6dd";
 
 fn codex_tab(title: &str, id: &str, args: &[&str]) -> OpenTab {
     OpenTab {
+        processes: vec![],
         reference: None,
         title: title.into(),
         cwd: "/w/a".into(),

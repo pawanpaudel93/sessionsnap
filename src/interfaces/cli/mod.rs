@@ -25,6 +25,9 @@ pub struct Cli {
     /// Answer yes to confirmations
     #[arg(long, short = 'y', global = true)]
     pub yes: bool,
+    /// Terminal to save from and restore into (default: tmux when run inside tmux, else cmux)
+    #[arg(long, global = true, value_parser = ["cmux", "tmux"])]
+    pub terminal: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -331,7 +334,8 @@ pub fn main_entry() -> ExitCode {
         }
     };
     let json = cli.json;
-    let result = Ctx::open_default(cli.json, cli.yes).and_then(|ctx| run::dispatch(&ctx, cli.command));
+    let result =
+        Ctx::open_default(cli.json, cli.yes, cli.terminal.as_deref()).and_then(|ctx| run::dispatch(&ctx, cli.command));
     match result {
         Ok(o) => {
             if json {

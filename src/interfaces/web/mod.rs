@@ -291,7 +291,7 @@ pub fn ui(_ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcom
         eprintln!("Run `sessionsnap ui` again to show it.");
     }
     let make_ctx = |cli: &crate::interfaces::cli::Cli, input: Option<String>| -> Result<Ctx> {
-        Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes)? })
+        Ok(Ctx { input, interactive: false, ..Ctx::open_default(true, cli.yes, cli.terminal.as_deref())? })
     };
     serve(listener, &server, &make_ctx, idle, open)?;
     Ok(Outcome::ok(

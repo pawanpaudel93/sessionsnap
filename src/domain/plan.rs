@@ -353,6 +353,7 @@ mod tests {
 
     fn alpha_with_one_open() -> OpenState {
         OpenState {
+            warnings: vec![],
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("WA", "Alpha", "/w/a", &[("one", "/w/a", Some(A))])],
@@ -569,7 +570,12 @@ mod tests {
             ]
         );
         // Into an open workspace they are skipped, with the reason.
-        let open = OpenState { live: true, state_version: None, workspaces: vec![open_ws("G", "Gamma", "/w/c", &[])] };
+        let open = OpenState {
+            warnings: vec![],
+            live: true,
+            state_version: None,
+            workspaces: vec![open_ws("G", "Gamma", "/w/c", &[])],
+        };
         let mut gamma = saved[0].clone();
         gamma.cmux_workspace_id = Some("G".into());
         let b = build_actions(&[gamma], &open, &history());
@@ -584,6 +590,7 @@ mod tests {
         ws[0].cmux_workspace_id = None;
         ws[0].name = "Old name".into();
         let open = OpenState {
+            warnings: vec![],
             live: true,
             state_version: None,
             workspaces: vec![open_ws("X9", "New name", "/w/a", &[("one", "/w/a", Some(A))])],

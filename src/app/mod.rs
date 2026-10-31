@@ -21,6 +21,7 @@ use std::io::IsTerminal;
 use crate::adapters::agents::Agents;
 use crate::adapters::store::Store;
 use crate::adapters::terminal::cmux::cli::CmuxCli;
+use crate::adapters::terminal::tmux::Tmux;
 use crate::ports::{OpenState, Scheduler, Terminal};
 
 /// Everything a command needs; tests build it with fakes.
@@ -31,7 +32,7 @@ pub struct Ctx {
     pub store: Store,
     /// The coding agents sessionsnap knows, with their session histories.
     pub agents: Agents,
-    /// The terminal (cmux).
+    /// The terminal: cmux, or tmux (`terminal_for`).
     pub terminal: Box<dyn Terminal>,
     /// Runs automatic snapshots' saves (launchd on macOS).
     pub scheduler: Box<dyn Scheduler>,
@@ -44,11 +45,17 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    pub fn open_default(json: bool, yes: bool) -> anyhow::Result<Ctx> {
+    /// `terminal`: "cmux" or "tmux" (`--terminal`); None picks one with `terminal_for`.
+    pub fn open_default(json: bool, yes: bool, terminal: Option<&str>) -> anyhow::Result<Ctx> {
+        let in_tmux = std::env::var_os("TMUX").is_some_and(|v| !v.is_empty());
+        let terminal: Box<dyn Terminal> = match terminal_for(terminal, in_tmux) {
+            "tmux" => Box::new(Tmux::open_default()),
+            _ => Box::new(CmuxCli::open_default()?),
+        };
         Ok(Ctx {
             store: Store::open_default()?,
             agents: Agents::open_default()?,
-            terminal: Box::new(CmuxCli::open_default()?),
+            terminal,
             scheduler: crate::adapters::scheduler::open_default()?,
             json,
             yes,
@@ -56,6 +63,11 @@ impl Ctx {
             input: None,
         })
     }
+}
+
+/// The terminal to use: the one asked for, else tmux when run inside it (`$TMUX`), else cmux.
+pub fn terminal_for(asked: Option<&str>, in_tmux: bool) -> &str {
+    asked.unwrap_or(if in_tmux { "tmux" } else { "cmux" })
 }
 
 /// Version `version` (latest when None) of snapshot `name`, with agent tabs named by registry kind.
@@ -90,9 +102,11 @@ pub fn load_normalized(
 
 /// What is open in the terminal, with each agent named by its registry kind (cmux may report an
 /// alias or program name), so tabs match saved sessions by (agent, ID); an invalid ID is replaced by
-/// the terminal's other record of it when that one is valid.
-pub fn read_open(terminal: &dyn Terminal) -> anyhow::Result<OpenState> {
+/// the terminal's other record of it when that one is valid. A terminal that only reports a tab's
+/// processes (tmux) has its agents found in them (`domain::running`).
+pub fn read_open(terminal: &dyn Terminal, agents: &Agents) -> anyhow::Result<OpenState> {
     let mut open = terminal.read_open_state()?;
+    crate::domain::running::identify(&mut open, agents, std::time::SystemTime::now());
     for tab in open.workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
         if let Some(a) = &mut tab.agent
             && let Some(spec) = Agents::spec(&a.kind)
@@ -118,6 +132,14 @@ mod tests {
     use crate::testing::{A, FakeTerminal, open_ws};
 
     #[test]
+    fn picks_the_terminal_asked_for_else_tmux_inside_tmux() {
+        assert_eq!(terminal_for(Some("cmux"), true), "cmux");
+        assert_eq!(terminal_for(Some("tmux"), false), "tmux");
+        assert_eq!(terminal_for(None, true), "tmux");
+        assert_eq!(terminal_for(None, false), "cmux");
+    }
+
+    #[test]
     fn open_tabs_get_registry_kinds_and_valid_ids() {
         let fake = FakeTerminal::default();
         let mut ws = open_ws("W", "W", "/w", &[("a", "/w", Some("agy:c1")), ("b", "/w", Some("claude:bad"))]);
@@ -128,7 +150,7 @@ mod tests {
             alt_session_id: Some(A.into()),
         });
         fake.state.borrow_mut().workspaces = vec![ws];
-        let open = read_open(&fake).unwrap();
+        let open = read_open(&fake, &crate::testing::agents(vec![])).unwrap();
         let agents: Vec<_> = open.workspaces[0].tabs.iter().map(|t| t.agent.clone().unwrap()).collect();
         assert_eq!((agents[0].kind.as_str(), agents[0].session_id.as_str()), ("antigravity", "c1"));
         assert_eq!((agents[1].kind.as_str(), agents[1].session_id.as_str()), ("claude", A));

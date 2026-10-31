@@ -13,7 +13,7 @@ use crate::ports::{AgentCatalog, OpenState, SessionHistory, SessionInfo};
 
 /// The workspaces and tabs open in the terminal now.
 pub fn open_now(ctx: &Ctx) -> Result<OpenState> {
-    read_open(ctx.terminal.as_ref())
+    read_open(ctx.terminal.as_ref(), &ctx.agents)
 }
 
 fn window(n: u64, unit: u64, flag: &str) -> Result<Duration> {
@@ -55,7 +55,7 @@ pub fn list(
     days: u64,
     agent: Option<&str>,
 ) -> Result<(Vec<SessionInfo>, HashSet<SessionRef>)> {
-    let open = read_open(ctx.terminal.as_ref()).map(|s| s.open_sessions()).unwrap_or_default();
+    let open = read_open(ctx.terminal.as_ref(), &ctx.agents).map(|s| s.open_sessions()).unwrap_or_default();
     let needle = search.map(str::to_lowercase);
     let list: Vec<SessionInfo> = scan(ctx, agent, window(days, 86_400, "--days")?)?
         .into_iter()
@@ -75,7 +75,7 @@ pub fn list(
 /// Sessions (of every agent, or only `agent`) active in the last `hours` hours that their history
 /// judges recoverable, that have a folder and are not open now; and the sessions open now.
 pub fn recent(ctx: &Ctx, hours: u64, agent: Option<&str>) -> Result<(Vec<SessionInfo>, HashSet<SessionRef>)> {
-    let open = read_open(ctx.terminal.as_ref())?.open_sessions();
+    let open = read_open(ctx.terminal.as_ref(), &ctx.agents)?.open_sessions();
     let list: Vec<SessionInfo> = scan(ctx, agent, window(hours, 3600, "--hours")?)?
         .into_iter()
         .filter(|s| s.recoverable && s.cwd.is_some() && !open.contains(&SessionRef::new(&s.agent, &s.session_id)))

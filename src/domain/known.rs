@@ -578,6 +578,7 @@ mod tests {
         let mut known = KnownSessions::default();
         known.record_live(&ws(vec![with(&["--model", "opus"], None)]), T1);
         let mut open = OpenState {
+            warnings: vec![],
             live: true,
             state_version: None,
             workspaces: vec![open_ws("W", "W", "/w", &[("t", "/w", Some(A))])],

@@ -984,7 +984,10 @@ mod tests {
         assert!(s.read_schedules().unwrap().is_empty());
         let lock = s.lock_schedules().unwrap();
         let mut all = Schedules::new();
-        all.insert("work".into(), Schedule { interval: 600, created_at: "t".into(), stopped: false, last_run: None });
+        all.insert(
+            "work".into(),
+            Schedule { interval: 600, created_at: "t".into(), stopped: false, last_run: None, terminal: None },
+        );
         s.write_schedules(&lock, &all).unwrap();
         assert_eq!(s.read_schedules().unwrap(), all);
     }

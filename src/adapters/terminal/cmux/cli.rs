@@ -113,7 +113,12 @@ impl<R: Runner> Terminal for CmuxCli<R> {
     fn read_open_state(&self) -> Result<OpenState> {
         let (version, file) = state_file::read(&self.state_path)?;
         if !self.is_running() {
-            return Ok(OpenState { live: false, state_version: Some(version), workspaces: tree::from_file(&file) });
+            return Ok(OpenState {
+                live: false,
+                state_version: Some(version),
+                workspaces: tree::from_file(&file),
+                warnings: vec![],
+            });
         }
         // `--id-format both` keeps surface IDs, which match panels in the state file.
         // Bounded: `save` holds its snapshot's lock meanwhile, and a lock is broken as stale after
@@ -131,7 +136,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
         if let Some(warning) = warning {
             eprintln!("sessionsnap: {warning}");
         }
-        Ok(OpenState { live: true, state_version: Some(version), workspaces })
+        Ok(OpenState { live: true, state_version: Some(version), workspaces, warnings: vec![] })
     }
 
     fn create_workspace(&self, name: &str, cwd: &str, tabs: &[LaunchTab]) -> Result<String> {

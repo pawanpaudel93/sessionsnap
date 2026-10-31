@@ -34,7 +34,7 @@ pub fn require_terminal(ctx: &Ctx, plan_only: bool) -> Result<()> {
         if !ctx.terminal.is_running() {
             return Err(failure(
                 Exit::CmuxUnreachable,
-                "cmux is not running; start it first (restore without --plan starts it)",
+                format!("{} is not running; start it first (restore without --plan starts it)", ctx.terminal.name()),
             ));
         }
     } else {
@@ -47,7 +47,7 @@ pub fn require_terminal(ctx: &Ctx, plan_only: bool) -> Result<()> {
 /// also warns about agents whose program is not on PATH.
 pub fn prepare(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Plan> {
     require_terminal(ctx, plan_only)?;
-    let open = read_open(ctx.terminal.as_ref())?;
+    let open = read_open(ctx.terminal.as_ref(), &ctx.agents)?;
     let mut plan = make_plan(source, &ctx.store, &ctx.agents, &open)?;
     plan.warnings.extend(missing_programs(&plan, &ctx.agents));
     if !plan.is_empty() {
@@ -130,7 +130,7 @@ pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &Open
 
 /// Applies a plan if it still matches what is open; continues past failed steps.
 pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Terminal) -> Result<Vec<ApplyStep>> {
-    let open = read_open(terminal)?;
+    let open = read_open(terminal, agents)?;
     let (saved, picked, _) = source_workspaces(&plan.source, store, agents)?;
     let rebuilt = build_actions_picked(&saved, &open, agents, &picked);
     if rebuilt.actions != plan.actions {
@@ -240,6 +240,7 @@ mod tests {
         store.save_new("work", "m", Default::default(), saved).unwrap();
         let fake = FakeTerminal::default();
         *fake.state.borrow_mut() = OpenState {
+            warnings: vec![],
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("WA", "Alpha", "/w/a", &[("one", "/w/a", Some(A))])],
