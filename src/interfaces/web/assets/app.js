@@ -411,8 +411,10 @@ async function viewList() {
       return toast("Give the snapshot a name.", "error");
     }
     const r = await sessionsnap(["save", n]);
-    toast(r.exit === 3 ? `${n}: nothing changed since the last version` : `Saved ${n} v${r.result.version}`);
-    go("snapshot", { snapshot: n, tab: "edit", version: null });
+    // The CLI may store it under an existing name that differs only in case.
+    const saved = r.result.snapshot;
+    toast(r.exit === 3 ? `${saved}: nothing changed since the last version` : `Saved ${saved} v${r.result.version}`);
+    go("snapshot", { snapshot: saved, tab: "edit", version: null });
   }, { class: "primary" });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
   // The file is read here and sent as input: the server never opens a file the page names.
@@ -498,8 +500,8 @@ async function viewSnapshot() {
     }
     const r = await sessionsnap(["rename", name, to]);
     pending.delete(name);
-    toast(`Renamed ${r.result.from} to ${to}`);
-    go("snapshot", { snapshot: to });
+    toast(`Renamed ${r.result.from} to ${r.result.to}`);
+    go("snapshot", { snapshot: r.result.to });
   }));
   const rename = iconButton("pencil", "Rename snapshot", () => title.startEdit());
   const runNow = actionButton("Run now", async () => {
