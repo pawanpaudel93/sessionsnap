@@ -16,7 +16,7 @@ use crate::error::{Exit, exit_of};
 #[command(
     name = "sessionsnap",
     version,
-    about = "Named, versioned snapshots of cmux workspaces or tmux sessions and their agent sessions (Claude Code, Codex and more)"
+    about = "Save and resume your coding-agent sessions in cmux and tmux (Claude Code, Codex and more), as named, versioned snapshots"
 )]
 pub struct Cli {
     /// Print machine-readable JSON (never prompts)

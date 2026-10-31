@@ -13,9 +13,9 @@
   </g>
   <text x="440" y="262" fill="#F3F5F9" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="88" font-weight="700" letter-spacing="-1.5">sessionsnap</text>
   <text font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="34" fill="#c3cad8">
-    <tspan x="440" y="338">Save your cmux workspaces and the</tspan>
-    <tspan x="440" y="384">coding-agent sessions in them;</tspan>
-    <tspan x="440" y="430">bring them back resumed.</tspan>
+    <tspan x="440" y="338">Save and resume your</tspan>
+    <tspan x="440" y="384">coding-agent sessions</tspan>
+    <tspan x="440" y="430">in cmux and tmux.</tspan>
   </text>
   <text x="440" y="506" fill="#F6B73C" font-family="Menlo, monospace" font-size="24">sessionsnap.pawanpaudel.com.np</text>
 </svg>

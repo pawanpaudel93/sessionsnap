@@ -5,7 +5,7 @@
 ![Platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 ![Terminal: cmux | tmux](https://img.shields.io/badge/terminal-cmux%20%7C%20tmux-8A2BE2)
 
-**Save your cmux or tmux workspaces and the coding-agent sessions in them; bring them back resumed.**
+**Save and resume your coding-agent sessions in cmux and tmux.**
 
 Website: <https://sessionsnap.pawanpaudel.com.np>
 

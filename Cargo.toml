@@ -3,7 +3,7 @@ name = "sessionsnap"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
-description = "Named, versioned snapshots of cmux workspaces or tmux sessions and their coding-agent sessions"
+description = "Save and resume your coding-agent sessions in cmux and tmux: named, versioned snapshots of workspaces and tabs"
 license = "MIT"
 repository = "https://github.com/pawanpaudel93/sessionsnap"
 
