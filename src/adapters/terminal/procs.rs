@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Result, bail};
 
-use super::cmux::runner::Runner;
+use crate::adapters::process::Runner;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Proc {

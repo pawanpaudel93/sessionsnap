@@ -10,6 +10,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use serde_json::{Value, json};
 
+use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, exit_of};
 
 #[derive(Parser, Debug)]
@@ -28,7 +29,7 @@ pub struct Cli {
     pub yes: bool,
     /// Terminal to save from and restore into (default: the one this runs in, tmux first; outside
     /// both, cmux if it runs, else tmux if it has sessions)
-    #[arg(long, global = true, value_parser = ["cmux", "tmux"])]
+    #[arg(long, global = true, value_parser = clap::builder::PossibleValuesParser::new(TerminalKind::ALL.map(TerminalKind::name)))]
     pub terminal: Option<String>,
     #[command(subcommand)]
     pub command: Command,

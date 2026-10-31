@@ -9,6 +9,9 @@ pub mod systemd;
 pub use launchd::Launchd;
 pub use systemd::Systemd;
 
+use std::time::Duration;
+
+use crate::adapters::process::{Output, ProcessRunner, Runner};
 use anyhow::Result;
 
 use crate::error::{Exit, failure};
@@ -21,6 +24,12 @@ pub fn open_default() -> Result<Box<dyn Scheduler>> {
         "linux" => Box::new(Systemd::open_default()?),
         _ => Box::new(Unsupported),
     })
+}
+
+/// Runs a scheduler's program (launchctl, systemctl), stopped if it hangs.
+fn run(program: &str, args: &[&str]) -> Result<Output> {
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    ProcessRunner.run_timeout(program, &args, Duration::from_secs(30))
 }
 
 /// What a scheduled run needs from this environment (launchd and systemd start it with almost

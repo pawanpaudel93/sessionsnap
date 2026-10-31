@@ -15,3 +15,4 @@ pub mod model;
 pub mod plan;
 pub mod running;
 pub mod schedule;
+pub mod terminal;

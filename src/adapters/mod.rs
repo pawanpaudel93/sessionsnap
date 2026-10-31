@@ -11,6 +11,7 @@ use anyhow::Result;
 use crate::error::{Exit, failure};
 
 pub mod agents;
+pub mod process;
 pub mod releases;
 pub mod scheduler;
 pub mod store;

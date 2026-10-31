@@ -2,11 +2,11 @@
 //! per automatic snapshot, running `sessionsnap --terminal <t> schedule run -- <name>` every interval.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result};
 
 use crate::adapters::home_dir;
+use crate::adapters::process::Output;
 use crate::domain::schedule::Schedule;
 use crate::error::{Exit, failure};
 use crate::ports::Scheduler;
@@ -44,14 +44,14 @@ impl Launchd {
         self.agents_dir.join(format!("{}.plist", Self::label(name)))
     }
 
-    fn launchctl(&self, args: &[&str]) -> Result<std::process::Output> {
-        Command::new(&self.launchctl).args(args).output().with_context(|| format!("running {}", self.launchctl))
+    fn launchctl(&self, args: &[&str]) -> Result<Output> {
+        super::run(&self.launchctl, args).with_context(|| format!("running {}", self.launchctl))
     }
 
     /// `gui/<uid>`: the logged-in user's launchd domain.
     fn domain() -> Result<String> {
-        let out = Command::new("id").arg("-u").output().context("running id -u")?;
-        Ok(format!("gui/{}", String::from_utf8_lossy(&out.stdout).trim()))
+        let out = super::run("id", &["-u"]).context("running id -u")?;
+        Ok(format!("gui/{}", out.stdout.trim()))
     }
 
     /// Unloads the agent `label` (fine when it isn't loaded).
@@ -85,12 +85,9 @@ impl Scheduler for Launchd {
             .with_context(|| format!("writing {}", path.display()))?;
         self.bootout(&label)?;
         let out = self.launchctl(&["bootstrap", &Self::domain()?, &path.to_string_lossy()])?;
-        if !out.status.success() {
+        if !out.success {
             let _ = std::fs::remove_file(&path);
-            return Err(failure(
-                Exit::Error,
-                format!("launchctl could not load {label}: {}", String::from_utf8_lossy(&out.stderr).trim()),
-            ));
+            return Err(failure(Exit::Error, format!("launchctl could not load {label}: {}", out.stderr.trim())));
         }
         Ok(())
     }
@@ -111,7 +108,7 @@ impl Scheduler for Launchd {
 pub fn plist(label: &str, program: &Path, name: &str, schedule: &Schedule, env: &[(String, String)]) -> String {
     let s = |v: &str| format!("<string>{}</string>", xml(v));
     let program = program.to_string_lossy();
-    let terminal = schedule.terminal.as_deref().unwrap_or("cmux");
+    let terminal = schedule.terminal.unwrap_or_default().name();
     let args: Vec<String> = std::iter::once(program.as_ref())
         .chain(["--terminal", terminal])
         .chain(["schedule", "run", "--", name])
@@ -194,14 +191,14 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let file = dir.path().join("a.plist");
             std::fs::write(&file, &p).unwrap();
-            let out = Command::new("/usr/bin/plutil").arg("-lint").arg(&file).output().unwrap();
+            let out = std::process::Command::new("/usr/bin/plutil").arg("-lint").arg(&file).output().unwrap();
             assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
         }
     }
 
     #[test]
     fn plist_names_a_tmux_schedules_terminal() {
-        let tmux = Schedule { terminal: Some("tmux".into()), ..every(60) };
+        let tmux = Schedule { terminal: Some(crate::domain::terminal::TerminalKind::Tmux), ..every(60) };
         let p = plist("l", Path::new("/bin/s"), "w", &tmux, &[]);
         assert!(
             p.contains(

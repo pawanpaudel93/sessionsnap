@@ -12,12 +12,12 @@ app/          use cases         save, restore, apply, edit, sessions, recent, ag
                                 install, update, uninstall
      │
 domain/       pure logic        model (snapshot format), capture, flags, diff, edit ops, restore plans,
-                                running (the agent in a tab's processes)
+                                running (the agent in a tab's processes), terminal (which terminal)
      │  depends only on
 ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases, Scheduler
      ▲  implemented by
 adapters/     the outside       terminal/{cmux,tmux,procs}, agents/{registry,claude,codex}, store/fs,
-                                releases, scheduler/{launchd,systemd}
+                                releases, scheduler/{launchd,systemd}, process (runs programs)
 ```
 
 ## Layers and their rules
@@ -27,7 +27,7 @@ adapters/     the outside       terminal/{cmux,tmux,procs}, agents/{registry,cla
 | Domain | `src/domain/` | `ports.rs`, `util/` | touch files, processes, env, cmux or agent folders |
 | Ports | `src/ports.rs` | domain types | contain logic |
 | Use cases | `src/app/` | domain, ports, adapters (wiring) | hold agent- or terminal-specific policy |
-| Adapters | `src/adapters/` | ports, domain types, `util/` | depend on each other (terminals never see agents) |
+| Adapters | `src/adapters/` | ports, domain types, `util/`, `adapters/process.rs` | depend on each other (terminals never see agents) |
 | Interfaces | `src/interfaces/` | app | contain logic beyond parsing and printing |
 
 The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an allowed
@@ -96,12 +96,15 @@ word is shell-quoted. Keep it that way.
 
 ### Add a terminal
 
-1. Create `src/adapters/terminal/<name>/` implementing `Terminal` (and `name`): report open
+1. Add a `TerminalKind` variant (`src/domain/terminal.rs`) and its name; `--terminal`, saved
+   versions and schedules take it from there.
+2. Create `src/adapters/terminal/<name>/` implementing `Terminal` (with `kind`): report open
    workspaces and tabs (and the agent running in each tab where the terminal can tell, else the
    tab's processes, as `tmux.rs` does), and create workspaces/tabs that run a `LaunchTab` command.
-2. Choose it in `Ctx::open_default` (`src/app/mod.rs`): add it to `--terminal` and, if it can be
-   detected, to `terminal_for`.
-3. Add a fake-driven test for anything terminal-specific; the use cases are already tested through
+   Run its programs through `adapters::process::Runner`, so tests can fake them.
+3. Choose it in `Detected::get` and `show_url` (`src/app/mod.rs`) and, if it can be detected, in
+   `terminal_for`.
+4. Add a fake-driven test for anything terminal-specific; the use cases are already tested through
    `testing::FakeTerminal`.
 
 ## Tests

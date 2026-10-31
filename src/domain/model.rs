@@ -31,7 +31,7 @@ pub struct Source {
     pub from: Option<String>,
     /// The terminal it was captured from, when not cmux.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal: Option<String>,
+    pub terminal: Option<crate::domain::terminal::TerminalKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

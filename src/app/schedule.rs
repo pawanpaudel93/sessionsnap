@@ -8,6 +8,7 @@ use super::Ctx;
 use super::snapshots::Commit;
 use crate::domain::model::{validate_name, validate_new_name};
 use crate::domain::schedule::{LastRun, Schedule, Schedules, parse_interval};
+use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, exit_of, failure};
 
 /// The `source.kind` of a version a schedule saved.
@@ -50,7 +51,7 @@ pub fn add(ctx: &Ctx, name: &str, interval: &str) -> Result<(Schedule, Result<Co
                 created_at: super::known::now(),
                 stopped: false,
                 last_run: None,
-                terminal: (ctx.terminal.name() != "cmux").then(|| ctx.terminal.name().to_string()),
+                terminal: Some(ctx.terminal.kind()).filter(|&t| t != TerminalKind::Cmux),
             },
         );
         ctx.scheduler.install(&name, &all[&name])?;
@@ -156,8 +157,8 @@ pub fn run(ctx: &Ctx, name: &str) -> Result<Commit> {
     let key = find(&all, name).ok_or_else(|| not_scheduled(name))?;
     // It saves only from the terminal it was added in: a run picking another one (an older
     // launchd agent with no --terminal, or a run by hand inside the other) is skipped.
-    let wanted = all[&key].terminal.as_deref().unwrap_or("cmux");
-    let result = if ctx.terminal.name() == wanted {
+    let wanted = all[&key].terminal.unwrap_or_default();
+    let result = if ctx.terminal.kind() == wanted {
         super::snapshots::save_scheduled(ctx, &key)
     } else {
         Err(failure(

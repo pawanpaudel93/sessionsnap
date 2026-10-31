@@ -27,7 +27,7 @@ pub struct Schedule {
     pub last_run: Option<LastRun>,
     /// The terminal it saves from, when not cmux (`--terminal`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal: Option<String>,
+    pub terminal: Option<crate::domain::terminal::TerminalKind>,
 }
 
 /// What the latest scheduled save did.

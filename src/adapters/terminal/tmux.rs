@@ -6,8 +6,9 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use super::cmux::runner::{Output, ProcessRunner, Runner};
 use super::procs::{Proc, Processes, System};
+use crate::adapters::process::{Output, ProcessRunner, Runner};
+use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, failure};
 use crate::ports::{LaunchTab, OpenState, OpenTab, OpenWorkspace, Shown, TabProcess, Terminal};
 
@@ -157,8 +158,8 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
 }
 
 impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
-    fn name(&self) -> &'static str {
-        "tmux"
+    fn kind(&self) -> TerminalKind {
+        TerminalKind::Tmux
     }
 
     /// tmux starts its server with its first session, so it "runs" whenever it can be run.
