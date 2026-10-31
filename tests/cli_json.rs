@@ -24,7 +24,7 @@ fn reports_bad_arguments_as_json() {
     let env = common::setup();
     let (exit, v) = run_json(&args(&["bogus"]), |cli| Ok(env.ctx(true, cli.yes, None)));
     assert_eq!(exit, Exit::Error);
-    assert_eq!(v["error"]["code"], "error");
+    assert_eq!(v["error"]["code"], "usage");
     assert!(v["error"]["message"].as_str().unwrap().contains("bogus"));
     // --json given by the caller is not added twice.
     let (exit, _) = run_json(&args(&["list", "--json"]), |cli| Ok(env.ctx(true, cli.yes, None)));

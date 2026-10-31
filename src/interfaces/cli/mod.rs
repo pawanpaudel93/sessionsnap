@@ -352,8 +352,9 @@ pub fn run_json(args: &[String], make_ctx: impl FnOnce(&Cli) -> anyhow::Result<C
     let cli = match Cli::try_parse_from(argv) {
         Ok(cli) => cli,
         Err(e) => {
+            // The same code the binary prints for a usage error under --json.
             let exit = Exit::Error;
-            return (exit, json!({"error": {"code": exit.name(), "exit": exit.code(), "message": e.to_string()}}));
+            return (exit, json!({"error": {"code": "usage", "exit": exit.code(), "message": e.to_string()}}));
         }
     };
     match make_ctx(&cli).and_then(|ctx| run::dispatch(&ctx, cli.command)) {
