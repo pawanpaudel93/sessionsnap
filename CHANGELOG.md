@@ -12,9 +12,28 @@ All notable changes to sessionsnap are listed here. The format follows
 - `export` and `import`: move a snapshot version to another machine as one file, with `--map` for
   its folders. Only the snapshot travels, never an agent's history of a session.
 - Export and Import in the web UI.
+- Web UI: tabs move by keyboard or touch too (Move up, Move down, Move to…); a restore plan shows
+  the command each shell tab will run.
 
 ### Fixed
 
+- Web UI: "Save automatically" on the list page always failed.
+- A partial save (`save <name> -w <workspace>`) dropped the saved commands of that workspace's
+  shell tabs.
+- A scheduled save running during a `delete` or `rename` could bring the old name back, and a save
+  by hand could land in a snapshot that had just become automatic. A failed `delete` no longer
+  leaves an automatic snapshot without its schedule.
+- A Claude Code session ID is checked before it names a transcript file.
+- Two restore plans made in the same millisecond no longer share an ID.
+- `prune --keep 0` is refused before asking; `import` exits 7 only for a missing file; a usage
+  error has code `usage` in the web UI too; an empty `recent --plan` has the shape of
+  `restore --plan`'s.
+- A failed write no longer leaves a temporary file, and `rename` onto a folder holding only a
+  crashed save's leftovers works.
+- install.sh warns when another sessionsnap comes first on PATH, and on Linux names what works
+  there (tmux).
+- `scripts/release.sh` publishes the release only once all its files are up, and prints how to
+  finish or undo a release that stopped halfway.
 - Diffs and version messages: a workspace cmux renamed showed as one removed and one added
   with every tab moved, and a new folder or branch showed as "no changes". They now show as
   `workspace-renamed` and `workspace-changed`. A rename is found by the cmux workspace ID or,
@@ -24,6 +43,8 @@ All notable changes to sessionsnap are listed here. The format follows
 
 ### Changed
 
+- Web UI: Discard asks before dropping unsaved edits, and leaving the page with unsaved edits asks
+  first.
 - A restore plan shows the command each terminal tab will run.
 - What sessionsnap prints never carries a control character from a snapshot (an escape sequence in
   a hand-edited title): it is shown escaped.

@@ -183,8 +183,10 @@ main() {
   sessionsnap ui             # the web UI in the cmux Dock
   sessionsnap install-skill  # teach Claude Code to use sessionsnap (optional)"
   else
-    NEXT="  Saving and restoring cmux sessions works on macOS only for now; on Linux, sessionsnap
-  installs, updates (sessionsnap update) and uninstalls."
+    NEXT="  Inside tmux:
+  sessionsnap save work      # save your tmux sessions and their agents
+  sessionsnap restore work   # reopen what is missing
+  (cmux on Linux is not supported yet.)"
   fi
 
   cat <<EOF
