@@ -195,6 +195,19 @@ fn import(ctx: &Ctx, file: &str, name: Option<String>, map: &[String], message: 
         ("-", None) => std::io::read_to_string(std::io::stdin())?,
         _ => std::fs::read_to_string(file).map_err(|e| failure(Exit::NotFound, format!("can't read {file}: {e}")))?,
     };
+    // A file from elsewhere is printed (show, list, plans) as well as restored: a control character
+    // anywhere in it (an escape sequence in a title) is refused, not just kept out of commands.
+    fn has_control(v: &Value) -> bool {
+        match v {
+            Value::String(s) => s.chars().any(char::is_control),
+            Value::Array(a) => a.iter().any(has_control),
+            Value::Object(o) => o.iter().any(|(k, v)| k.chars().any(char::is_control) || has_control(v)),
+            _ => false,
+        }
+    }
+    if serde_json::from_str::<Value>(&text).is_ok_and(|v| has_control(&v)) {
+        return Err(failure(Exit::Error, format!("{file} holds a control character; not importing it")));
+    }
     let imported = crate::domain::model::parse_version(&text).map_err(|why| {
         let exit = if why.starts_with("format") { Exit::UnknownFormat } else { Exit::Error };
         failure(exit, format!("{file} is not an exported snapshot: {why}"))
