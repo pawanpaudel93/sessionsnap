@@ -71,6 +71,10 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         }
         Command::Ui { port, idle_minutes, no_open } => crate::interfaces::web::ui(ctx, port, idle_minutes, !no_open),
         Command::InstallCmux { print } => install_cmux(ctx, print),
+        Command::Completions { .. } | Command::Man => {
+            let text = super::generated(&command).unwrap_or_default();
+            Ok(Outcome::ok(json!({"text": text}), text))
+        }
         Command::InstallSkill => {
             let path = app::install::install_skill()?;
             Ok(Outcome::ok(
@@ -297,10 +301,10 @@ fn schedule(ctx: &Ctx, command: ScheduleCommand) -> Result<Outcome> {
                 Ok(Commit::Saved { version, .. }) => (
                     json!({"saved": true, "version": version.version}),
                     format!(
-                        "saved v{} ({} workspaces, {} tabs)",
+                        "saved v{} ({}, {})",
                         version.version,
-                        version.workspaces.len(),
-                        tab_count(&version.workspaces)
+                        human::count(version.workspaces.len(), "workspace"),
+                        human::count(tab_count(&version.workspaces), "tab")
                     ),
                 ),
                 Ok(Commit::Unchanged { version, .. }) => {
@@ -527,7 +531,11 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
     let go = !plan_only
         && (ctx.yes
             || (ctx.interactive
-                && pick::confirm(&format!("{}\nRestore {} tab(s)?", human::plan(&plan), plan.tab_count()))?));
+                && pick::confirm(&format!(
+                    "{}\nRestore {}?",
+                    human::plan(&plan),
+                    human::count(plan.tab_count(), "tab")
+                ))?));
     if !go {
         let apply = format!("sessionsnap apply {}", plan.plan_id);
         return Ok(Outcome::ok(

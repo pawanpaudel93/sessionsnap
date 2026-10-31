@@ -165,6 +165,13 @@ pub enum Command {
     },
     /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
     InstallSkill,
+    /// Print shell completions, e.g. `sessionsnap completions zsh > ~/.zfunc/_sessionsnap`
+    Completions {
+        /// bash, zsh, fish, elvish or powershell
+        shell: clap_complete::Shell,
+    },
+    /// Print the man page (roff), e.g. `sessionsnap man > ~/.local/share/man/man1/sessionsnap.1`
+    Man,
     /// Remove sessionsnap: palette commands, skill, schedules (launchd agents), snapshots and this binary (asks first)
     Uninstall {
         /// Keep your snapshots (~/.sessionsnap)
@@ -324,6 +331,19 @@ pub fn run_json(args: &[String], make_ctx: impl FnOnce(&Cli) -> anyhow::Result<C
     }
 }
 
+/// What `completions` and `man` print; None for every other command. They need no context, so
+/// a shell's startup file can run them without sessionsnap looking for a terminal.
+pub fn generated(command: &Command) -> Option<String> {
+    use clap::CommandFactory;
+    let mut out = Vec::new();
+    match command {
+        Command::Completions { shell } => clap_complete::generate(*shell, &mut Cli::command(), "sessionsnap", &mut out),
+        Command::Man => clap_mangen::Man::new(Cli::command()).render(&mut out).ok()?,
+        _ => return None,
+    }
+    String::from_utf8(out).ok()
+}
+
 pub fn main_entry() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -334,6 +354,10 @@ pub fn main_entry() -> ExitCode {
             return ExitCode::from(code);
         }
     };
+    if let Some(text) = generated(&cli.command) {
+        print!("{text}");
+        return ExitCode::SUCCESS;
+    }
     let json = cli.json;
     let result =
         Ctx::open_default(cli.json, cli.yes, cli.terminal.as_deref()).and_then(|ctx| run::dispatch(&ctx, cli.command));

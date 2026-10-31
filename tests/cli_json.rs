@@ -68,3 +68,13 @@ fn uninstall_asks_first() {
     let message = v["error"]["message"].as_str().unwrap();
     assert!(message.contains("This removes:") && message.contains("pass --yes"), "{message}");
 }
+
+#[test]
+fn prints_shell_completions_and_the_man_page() {
+    let env = common::Env::new();
+    let zsh = env.run(&["completions", "zsh"]).unwrap().text;
+    assert!(zsh.contains("#compdef sessionsnap") && zsh.contains("schedule"), "{}", &zsh[..200.min(zsh.len())]);
+    assert!(env.run(&["completions", "fish"]).unwrap().text.contains("complete -c sessionsnap"));
+    let man = env.run(&["man"]).unwrap().text;
+    assert!(man.contains(".TH sessionsnap") && man.contains("cmux"), "{}", &man[..200.min(man.len())]);
+}
