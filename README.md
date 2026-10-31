@@ -177,7 +177,10 @@ sessionsnap update --check            # is there a newer release?
 sessionsnap update                    # install it over this binary
 ```
 
-Every command takes `--json` (for scripts and agents) and `--yes` (skip confirmations).
+Every command takes `--json` (for scripts and agents: one compact line when piped, indented at a
+terminal) and `--yes` (skip the confirmations of `delete`, `prune`, `restore`, `install-cmux` and
+`uninstall`). A tab whose folder is gone (a removed git worktree) is restored as a plain shell in
+your home folder, with a warning.
 
 | Exit code | Meaning |
 |---|---|
@@ -185,7 +188,7 @@ Every command takes `--json` (for scripts and agents) and `--yes` (skip confirma
 | 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
 | 2 | terminal unreachable (cmux not running, or tmux not installed) |
 | 3 | nothing to do |
-| 4 | refused |
+| 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
 | 5 | unknown cmux state or snapshot format |
 | 6 | plan stale |
 | 7 | not found |

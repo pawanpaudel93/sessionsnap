@@ -17,7 +17,8 @@ yet.
 - Restoring is two steps: `sessionsnap restore <name> --plan --json`, show the user what the plan
   opens, skips and warns about, then `sessionsnap apply <planId> --json` once they agree.
 - Pass `--yes` only for an action the user asked for by name (`delete`, `prune`, `install-cmux`,
-  `uninstall`). Without it, a command that would ask exits 4 instead of prompting.
+  `uninstall`). Without it, a command that would ask exits 4 with code `needs-confirmation`
+  instead of prompting: ask the user; never add `--yes` on your own.
 - `save` only reads the terminal; with no changes, or no tmux server running, it writes nothing
   and exits 3.
 - Never start an automatic snapshot (`schedule add`) or automate saving unless the user asks.
@@ -31,7 +32,7 @@ yet.
 | 1 | error (also: an `apply`, `restore` or `uninstall` where some steps failed; the result JSON lists them, not `{"error": …}`) |
 | 2 | the terminal is not reachable (cmux not running, or tmux not installed) |
 | 3 | nothing to do |
-| 4 | refused (needs `--yes`, or would overwrite something) |
+| 4 | refused (`needs-confirmation`: ask the user; `refused`: would overwrite something) |
 | 5 | unknown cmux state or snapshot format |
 | 6 | plan stale (make a new one) |
 | 7 | not found |

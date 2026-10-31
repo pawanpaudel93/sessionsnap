@@ -362,7 +362,10 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               A restore compares the snapshot with what is open in the terminal and makes a plan: workspaces to
               create, and tabs to add to workspaces that are already open. Tabs that are already open
-              are skipped. You see the plan before anything opens.
+              are skipped. You see the plan before anything opens. A tab whose folder is gone (a removed
+              git worktree, a moved project) opens as a plain shell in your home folder, with a warning,
+              rather than resuming its agent somewhere else. A plan applies once: a second
+              <code translate="no">apply</code> of it, even at the same moment, opens nothing.
             </p>
             <div class="table-wrap">
               <table class="data-table stack">
@@ -515,7 +518,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               With <code translate="no">--json</code> every command prints one JSON object and never
               prompts, so scripts and agents should always pass it and read the result rather than the
-              text output. A failure prints an error object:
+              text output. It is indented at a terminal and one compact line otherwise (a pipe, an agent),
+              and a mistyped command is JSON too (code <code translate="no">usage</code>).
+              <code translate="no">sessions</code> and <code translate="no">recent</code> take
+              <code translate="no">--limit &lt;n&gt;</code> and report <code translate="no">total</code>.
+              A failure prints an error object:
             </p>
             <div class="code-panel">
               <pre><code translate="no">{"error": {"code": "not-found", "exit": 7, "message": "…"}}</code></pre>
@@ -534,10 +541,10 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 </thead>
                 <tbody>
                   <tr><td>0</td><td><code translate="no">ok</code></td><td>Done.</td></tr>
-                  <tr><td>1</td><td><code translate="no">error</code></td><td>Error, or some restore steps failed.</td></tr>
-                  <tr><td>2</td><td><code translate="no">cmux-unreachable</code></td><td>The terminal is not reachable: cmux is not running, or tmux is not installed.</td></tr>
+                  <tr><td>1</td><td><code translate="no">error</code>, <code translate="no">usage</code></td><td>Error, or some restore steps failed; <code translate="no">usage</code>: a mistyped command.</td></tr>
+                  <tr><td>2</td><td><code translate="no">terminal-unreachable</code></td><td>The terminal is not reachable: cmux is not running and its saved state can't be read, or tmux is not installed.</td></tr>
                   <tr><td>3</td><td><code translate="no">nothing-to-do</code></td><td>No changes to save, or nothing to restore.</td></tr>
-                  <tr><td>4</td><td><code translate="no">refused</code></td><td>A confirmation was declined or needs <code translate="no">--yes</code>.</td></tr>
+                  <tr><td>4</td><td><code translate="no">needs-confirmation</code>, <code translate="no">refused</code></td><td>A confirmation is needed (ask the user; an agent never adds <code translate="no">--yes</code> on its own), or the command would overwrite something.</td></tr>
                   <tr><td>5</td><td><code translate="no">unknown-format</code></td><td>Unknown cmux state or snapshot format.</td></tr>
                   <tr><td>6</td><td><code translate="no">plan-stale</code></td><td>The terminal changed since the plan was made.</td></tr>
                   <tr><td>7</td><td><code translate="no">not-found</code></td><td>No such snapshot, version, workspace, tab or plan.</td></tr>

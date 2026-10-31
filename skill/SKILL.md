@@ -18,14 +18,19 @@ is saved as a plain tab, and `save` says so.
 - Always pass `--json` and read the result; never parse the human output.
 - Restoring is two steps. Run `sessionsnap restore <name> --plan --json`, show the user what the plan
   creates or adds, what it skips, and its warnings. Run `sessionsnap apply <planId> --json` only after
-  the user agrees, unless they already told you to restore without asking.
+  the user agrees, unless they already told you to restore without asking. Prefer this to
+  `restore --yes`, which applies without showing the plan. A plan expires after an hour and applies
+  once; a second `apply` of it exits 3 or 7.
 - If `restore … --plan` (or `recent --plan`) exits 2 because the terminal is not running, run
   `sessionsnap restore <name> --json` (or `sessionsnap recent --restore --json`) without `--yes`: it starts it
   (cmux; tmux only needs to be installed),
   saves the plan and does not apply it; show that plan, then `apply`.
 - When some steps fail, `apply`/`restore` exit 1 with the normal result JSON (`failed: n`,
-  `steps[].error`), not the `{"error": …}` shape; so does `uninstall` (a step with `status: "failed"`). Argument (usage) errors print plain text and exit 1.
-- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that exact action.
+  `steps[].error`), not the `{"error": …}` shape; so does `uninstall` (a step with `status: "failed"`).
+  A mistyped command exits 1 with `{"error": {"code": "usage", …}}`.
+- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that
+  exact action. An error with code `needs-confirmation` means: ask the user; never rerun with `--yes`
+  on your own.
 - `install-cmux` (the cmux palette) is macOS-only; on Linux it exits 4 and changes nothing.
 - Run `update` (it replaces the sessionsnap binary) or `uninstall` only when the user asks; `update --check` is safe.
 - Never start an automatic snapshot (`schedule add`) or automate saving any other way (cron, loops,
@@ -80,12 +85,16 @@ Without `agent`, a session ID is looked up in the Claude Code and Codex historie
 
 Saved tabs are `{"type":"terminal",title,cwd,command?}` or
 `{"type":"agent",title,cwd,agent,sessionId,args?}`. Session JSON (`sessions`, `recent`) is
-`{agent,sessionId,title,firstPrompt,cwd,modified}`. A restore plan warns when an agent's program is
-not on PATH, and when a tab will open as a plain shell (unknown agent, invalid ID, session gone).
+`{agent,sessionId,title,firstPrompt,cwd,modified}`; `sessions` and `recent` take `--limit <n>` and
+report `total`. A restore plan warns when an agent's program is not on PATH, and when a tab will open
+as a plain shell (unknown agent, invalid ID, session gone, its folder gone); an applied restore
+repeats those warnings. A `save` that warns "is not running" was read from what the terminal last
+wrote to disk and may be out of date. Output is one compact JSON line when stdout is not a terminal.
 
 ## Exit codes
 
-`0` ok · `1` error · `2` terminal not reachable (cmux not running, tmux not installed) · `3` nothing to do · `4` refused (needs
-confirmation with `--yes`, workspace name already exists, session has no recorded folder, or
-cmux.json is not plain JSON) · `5` unknown cmux state or snapshot format (snapshots must be format 2) · `6` plan
+`0` ok · `1` error (`usage` for a mistyped command) · `2` terminal not reachable
+(`terminal-unreachable`: cmux not running and no saved state, tmux not installed) · `3` nothing to do ·
+`4` refused (`needs-confirmation`: ask the user; or `refused`: workspace name already exists,
+session has no recorded folder, cmux.json is not plain JSON) · `5` unknown cmux state or snapshot format (snapshots must be format 2) · `6` plan
 stale (make a new one) · `7` not found. With `--json`, errors print `{"error": {code, exit, message}}`.
