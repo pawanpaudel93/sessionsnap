@@ -87,7 +87,7 @@ fn a_hostile_import_never_reaches_the_terminal() {
     other.run_with_input(&["import", "-", "--as", "evil", "--map", "/w=/x"], &v.to_string()).unwrap();
     // A terminal tab's command runs again, as saved: the plan people read shows it first.
     let plan = other.run(&["restore", "evil", "--plan"]).unwrap().text;
-    assert!(plan.contains("+ e (runs: echo $(id) `id` \\\\ ; rm -rf ~)"), "{plan}");
+    assert!(plan.contains("+ e (runs: echo $(id) `id` \\ ; rm -rf ~)"), "{plan}");
     let o = other.run(&["restore", "evil", "--yes"]).unwrap();
     assert_eq!(o.json["failed"], 0, "{}", o.json);
     let launched = other.fake.launched.borrow().clone();

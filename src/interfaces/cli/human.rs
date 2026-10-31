@@ -22,6 +22,14 @@ pub fn count(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
+/// `text` safe to print to a terminal: control characters other than newlines and tabs (an escape
+/// sequence in a hand-edited title, which could rewrite what is on screen) are shown escaped.
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() && c != '\n' && c != '\t' { c.escape_debug().to_string() } else { c.to_string() })
+        .collect()
+}
+
 pub fn saved(v: &Version, warnings: &[String]) -> String {
     let mut s = format!(
         "Saved {} v{}: {}, {} ({})",
@@ -179,9 +187,9 @@ pub fn changes(changes: &[Change]) -> String {
 pub fn plan(p: &crate::domain::plan::Plan) -> String {
     use crate::domain::model::Tab;
     use crate::domain::plan::Action;
-    // A tab's command runs on restore, so it is shown, escaped: the snapshot may come from elsewhere.
+    // A tab's command runs on restore, so it is shown: the snapshot may come from elsewhere.
     let tab = |t: &Tab| match t {
-        Tab::Terminal { command: Some(c), .. } => format!("    + {} (runs: {})\n", t.title(), c.escape_debug()),
+        Tab::Terminal { command: Some(c), .. } => format!("    + {} (runs: {c})\n", t.title()),
         _ => format!("    + {}\n", t.title()),
     };
     let mut s = String::new();
@@ -256,4 +264,16 @@ pub fn agents(list: &[AgentStatus]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn printed_text_never_carries_a_control_character() {
+        let shown = printable("Evil\u{1b}]0;owned\u{7} \u{1b}[2J\r\nnext\ttab");
+        assert_eq!(shown, "Evil\\u{1b}]0;owned\\u{7} \\u{1b}[2J\\r\nnext\ttab");
+        assert!(!shown.chars().any(|c| c.is_control() && c != '\n' && c != '\t'));
+    }
 }

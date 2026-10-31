@@ -409,7 +409,7 @@ pub fn main_entry() -> ExitCode {
                 };
                 println!("{}", text.unwrap_or_default());
             } else if !o.text.is_empty() {
-                println!("{}", o.text);
+                println!("{}", human::printable(&o.text));
             }
             ExitCode::from(o.exit.code())
         }
@@ -418,7 +418,7 @@ pub fn main_entry() -> ExitCode {
             if json {
                 println!("{}", error_json(&e));
             } else {
-                eprintln!("sessionsnap: {e:#}");
+                eprintln!("sessionsnap: {}", human::printable(&format!("{e:#}")));
             }
             ExitCode::from(exit.code())
         }
