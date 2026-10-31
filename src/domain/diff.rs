@@ -7,29 +7,88 @@ use crate::domain::model::Workspace;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum Change {
-    WorkspaceAdded { workspace: String },
-    WorkspaceRemoved { workspace: String },
-    TabAdded { workspace: String, title: String },
-    TabRemoved { workspace: String, title: String },
-    TabMoved { title: String, from: String, to: String },
-    TabRenamed { workspace: String, from: String, to: String },
+    WorkspaceAdded {
+        workspace: String,
+    },
+    WorkspaceRemoved {
+        workspace: String,
+    },
+    /// The same cmux workspace under a new name.
+    WorkspaceRenamed {
+        from: String,
+        to: String,
+    },
+    /// Its folder, branch, color or pinning changed: `what` names which.
+    WorkspaceChanged {
+        workspace: String,
+        what: Vec<&'static str>,
+    },
+    TabAdded {
+        workspace: String,
+        title: String,
+    },
+    TabRemoved {
+        workspace: String,
+        title: String,
+    },
+    TabMoved {
+        title: String,
+        from: String,
+        to: String,
+    },
+    TabRenamed {
+        workspace: String,
+        from: String,
+        to: String,
+    },
 }
 
-/// Changes from `a` to `b`. Workspaces match by name (case-insensitive), tabs by `Tab::key`.
+/// Changes from `a` to `b`. Workspaces match by name (case-insensitive), then by cmux workspace ID
+/// (a rename); tabs by `Tab::key`.
 pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
     let names = |ws: &[Workspace]| ws.iter().map(|w| w.name.to_lowercase()).collect::<HashSet<_>>();
-    let (na, nb) = (names(a), names(b));
+    let nb = names(b);
+    // Unmatched old workspaces by cmux ID, so an unmatched new one with the same ID is a rename.
+    let gone: HashMap<&str, &Workspace> = a
+        .iter()
+        .filter(|w| !nb.contains(&w.name.to_lowercase()))
+        .filter_map(|w| Some((w.cmux_workspace_id.as_deref()?, w)))
+        .collect();
+    // New workspace name → its old self.
+    let mut old: HashMap<String, &Workspace> = HashMap::new();
     let mut out = vec![];
-    out.extend(
-        b.iter()
-            .filter(|w| !na.contains(&w.name.to_lowercase()))
-            .map(|w| Change::WorkspaceAdded { workspace: w.name.clone() }),
-    );
+    for w in b {
+        let key = w.name.to_lowercase();
+        if let Some(o) = a.iter().find(|o| o.name.to_lowercase() == key) {
+            old.insert(key, o);
+        } else if let Some(o) = w.cmux_workspace_id.as_deref().and_then(|id| gone.get(id)) {
+            out.push(Change::WorkspaceRenamed { from: o.name.clone(), to: w.name.clone() });
+            old.insert(key, o);
+        } else {
+            out.push(Change::WorkspaceAdded { workspace: w.name.clone() });
+        }
+    }
+    let renamed: HashMap<String, String> = old.iter().map(|(new, o)| (o.name.to_lowercase(), new.clone())).collect();
     out.extend(
         a.iter()
-            .filter(|w| !nb.contains(&w.name.to_lowercase()))
+            .filter(|w| !renamed.contains_key(&w.name.to_lowercase()))
             .map(|w| Change::WorkspaceRemoved { workspace: w.name.clone() }),
     );
+    for w in b {
+        let Some(o) = old.get(&w.name.to_lowercase()) else { continue };
+        let what: Vec<&'static str> = [
+            (o.cwd != w.cwd, "folder"),
+            (o.git_branch != w.git_branch, "branch"),
+            (o.color != w.color, "color"),
+            (o.pinned != w.pinned, "pinned"),
+        ]
+        .into_iter()
+        .filter_map(|(changed, name)| changed.then_some(name))
+        .collect();
+        if !what.is_empty() {
+            out.push(Change::WorkspaceChanged { workspace: w.name.clone(), what });
+        }
+    }
     let (ia, ib) = (tab_index(a), tab_index(b));
     let mut seen = HashSet::new();
     for w in b {
@@ -40,7 +99,8 @@ pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
             }
             match ia.get(&key) {
                 None => out.push(Change::TabAdded { workspace: w.name.clone(), title: t.title().to_string() }),
-                Some((from, _)) if !from.eq_ignore_ascii_case(&w.name) => {
+                // A tab of a renamed workspace has not moved.
+                Some((from, _)) if renamed.get(&from.to_lowercase()) != Some(&w.name.to_lowercase()) => {
                     out.push(Change::TabMoved { title: t.title().to_string(), from: from.clone(), to: w.name.clone() })
                 }
                 Some((_, old)) if old != t.title() => out.push(Change::TabRenamed {
@@ -79,6 +139,8 @@ pub fn summary(changes: &[Change]) -> String {
     let parts = [
         (count(|c| matches!(c, Change::WorkspaceAdded { .. })), "+", "workspace", ""),
         (count(|c| matches!(c, Change::WorkspaceRemoved { .. })), "-", "workspace", ""),
+        (count(|c| matches!(c, Change::WorkspaceRenamed { .. })), "", "workspace", " renamed"),
+        (count(|c| matches!(c, Change::WorkspaceChanged { .. })), "", "workspace", " changed"),
         (count(|c| matches!(c, Change::TabAdded { .. })), "+", "tab", ""),
         (count(|c| matches!(c, Change::TabRemoved { .. })), "-", "tab", ""),
         (count(|c| matches!(c, Change::TabMoved { .. })), "", "tab", " moved"),
@@ -125,6 +187,27 @@ mod tests {
         assert!(c.contains(&Change::TabMoved { title: "two".into(), from: "Alpha".into(), to: "Beta".into() }));
         assert!(c.contains(&Change::TabAdded { workspace: "Beta".into(), title: "three".into() }));
         assert_eq!(summary(&c), "+1 workspace, -1 workspace, +1 tab, 1 tab moved, 1 tab renamed");
+        // cmux renamed a workspace and it moved folder: one rename and one change, no tab moved.
+        let mut a = vec![ws("Alpha", vec![claude("one", A)])];
+        a[0].cmux_workspace_id = Some("W1".into());
+        let mut b = a.clone();
+        b[0].name = "Alpha2".into();
+        b[0].cwd = "/x".into();
+        b[0].git_branch = Some("dev".into());
+        let c = diff(&a, &b);
+        assert_eq!(
+            c,
+            [
+                Change::WorkspaceRenamed { from: "Alpha".into(), to: "Alpha2".into() },
+                Change::WorkspaceChanged { workspace: "Alpha2".into(), what: vec!["folder", "branch"] },
+            ]
+        );
+        assert_eq!(summary(&c), "1 workspace renamed, 1 workspace changed");
+        // Without a cmux ID (tmux) a rename stays a remove and an add.
+        let (mut a2, mut b2) = (a.clone(), b.clone());
+        a2[0].cmux_workspace_id = None;
+        b2[0].cmux_workspace_id = None;
+        assert_eq!(summary(&diff(&a2, &b2)), "+1 workspace, -1 workspace, 1 tab moved");
         assert_eq!(summary(&diff(&a, &a)), "no changes");
         // Changed launch flags show as a changed tab.
         let mut flagged = a.clone();

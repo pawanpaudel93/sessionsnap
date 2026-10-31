@@ -969,6 +969,8 @@ function describeChange(c) {
   switch (c.change) {
     case "workspace-added": return ["add", `Workspace ${c.workspace}`];
     case "workspace-removed": return ["del", `Workspace ${c.workspace}`];
+    case "workspace-renamed": return ["mod", `Workspace ${c.from} → ${c.to}`];
+    case "workspace-changed": return ["mod", `Workspace ${c.workspace}`, `${c.what.join(", ")} changed`];
     case "tab-added": return ["add", `${c.title}`, c.workspace];
     case "tab-removed": return ["del", `${c.title}`, c.workspace];
     case "tab-moved": return ["mod", `${c.title}`, `${c.from} → ${c.to}`];
