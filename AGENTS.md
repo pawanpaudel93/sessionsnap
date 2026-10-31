@@ -1,13 +1,14 @@
 # sessionsnap — instructions for coding agents
 
-sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces and the
-coding-agent sessions in their tabs, and later reopens only what is missing, with each agent tab
+sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces (or tmux
+sessions) and the coding-agent sessions in their tabs, and later reopens only what is missing, with each agent tab
 resumed with its original flags (those on the agent's allow-list). Claude Code and Codex are fully
 supported (their session histories are read); 15 more agents are resume-only and untested, and
 resume only sessions started without flags. It is one Rust binary: a CLI
-with `--json`, a web UI in the cmux Dock, cmux palette commands, and a Claude Code skill. It runs
-on macOS with cmux 0.64+. On Linux, sessionsnap installs, updates and uninstalls, but saving and
-restoring don't work yet: cmux on Linux is a different app with a different command line.
+with `--json`, a web UI in the cmux Dock or the browser from tmux, cmux palette commands, and a Claude Code skill. It runs
+on macOS with cmux 0.64+, and with tmux on macOS and Linux. It uses the terminal it runs in (tmux first;
+outside both, the one running); `--terminal cmux|tmux` picks one. cmux on Linux is a different app with a different command line, not supported
+yet.
 
 ## Using sessionsnap
 
@@ -17,7 +18,8 @@ restoring don't work yet: cmux on Linux is a different app with a different comm
   opens, skips and warns about, then `sessionsnap apply <planId> --json` once they agree.
 - Pass `--yes` only for an action the user asked for by name (`delete`, `prune`, `install-cmux`,
   `uninstall`). Without it, a command that would ask exits 4 instead of prompting.
-- `save` only reads cmux; with no changes it writes nothing and exits 3.
+- `save` only reads the terminal; with no changes, or no tmux server running, it writes nothing
+  and exits 3.
 - Never start an automatic snapshot (`schedule add`) or automate saving unless the user asks.
   Don't start `sessionsnap ui` unless they ask for the UI.
 - `skill/SKILL.md` (installed with `sessionsnap install-skill`) has the full command table and the
@@ -27,7 +29,7 @@ restoring don't work yet: cmux on Linux is a different app with a different comm
 |---|---|
 | 0 | ok |
 | 1 | error (also: an `apply`, `restore` or `uninstall` where some steps failed; the result JSON lists them, not `{"error": …}`) |
-| 2 | cmux not running or not reachable |
+| 2 | the terminal is not reachable (cmux not running, or tmux not installed) |
 | 3 | nothing to do |
 | 4 | refused (needs `--yes`, or would overwrite something) |
 | 5 | unknown cmux state or snapshot format |

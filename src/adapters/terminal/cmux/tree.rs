@@ -119,6 +119,7 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> (Vec<OpenWorksp
                         panels.iter().find(|p| tty.is_some() && p.tty.as_deref().map(norm_tty) == tty)
                     };
                     OpenTab {
+                        processes: vec![],
                         reference: Some(s.reference),
                         title: clean_title(&s.title),
                         cwd: panel.map(|p| p.cwd.clone()).unwrap_or_default(),
@@ -159,6 +160,7 @@ pub fn from_file(file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
                 .panels
                 .iter()
                 .map(|p| OpenTab {
+                    processes: vec![],
                     reference: None,
                     title: clean_title(&p.title),
                     cwd: p.cwd.clone(),

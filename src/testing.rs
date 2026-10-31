@@ -69,11 +69,12 @@ impl FakeScheduler {
 }
 
 impl crate::ports::Scheduler for FakeScheduler {
-    fn install(&self, name: &str, interval: u64) -> anyhow::Result<()> {
+    fn install(&self, name: &str, schedule: &crate::domain::schedule::Schedule) -> anyhow::Result<()> {
         if self.dir.join("scheduler.fail").exists() {
             anyhow::bail!("launchctl said no");
         }
-        self.write(format!("install {name} {interval}"));
+        let terminal = schedule.terminal.as_deref().map(|t| format!(" {t}")).unwrap_or_default();
+        self.write(format!("install {name} {}{terminal}", schedule.interval));
         Ok(())
     }
 
@@ -137,6 +138,7 @@ pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str
             .iter()
             .enumerate()
             .map(|(i, (title, cwd, session))| OpenTab {
+                processes: vec![],
                 reference: Some(format!("surface:{id}-{i}")),
                 title: title.to_string(),
                 cwd: cwd.to_string(),
@@ -157,6 +159,8 @@ pub struct FakeTerminal {
     /// Every tab opened, with its command.
     pub launched: Rc<RefCell<Vec<LaunchTab>>>,
     pub running: Rc<Cell<bool>>,
+    /// The terminal it stands for: "cmux" by default.
+    pub name: Rc<Cell<&'static str>>,
 }
 
 impl Default for FakeTerminal {
@@ -166,6 +170,7 @@ impl Default for FakeTerminal {
             log: Default::default(),
             launched: Default::default(),
             running: Rc::new(Cell::new(true)),
+            name: Rc::new(Cell::new("cmux")),
         }
     }
 }
@@ -225,6 +230,7 @@ fn shell_words(command: &str) -> Vec<String> {
 /// The tab a terminal shows after opening `t`; a resume command opens its session.
 fn open_tab(t: &LaunchTab) -> OpenTab {
     OpenTab {
+        processes: vec![],
         reference: None,
         title: t.title.clone(),
         cwd: t.cwd.clone(),
@@ -233,6 +239,10 @@ fn open_tab(t: &LaunchTab) -> OpenTab {
 }
 
 impl Terminal for FakeTerminal {
+    fn name(&self) -> &'static str {
+        self.name.get()
+    }
+
     fn is_running(&self) -> bool {
         self.running.get()
     }

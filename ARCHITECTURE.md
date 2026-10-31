@@ -8,14 +8,16 @@ means adding an adapter, not changing the core.
 ```
 interfaces/   cli, web          parse input, print output; call app/
      │
-app/          use cases         save, restore, apply, edit, sessions, recent, agents, install,
-                                update, uninstall
+app/          use cases         save, restore, apply, edit, sessions, recent, agents, schedule,
+                                install, update, uninstall
      │
-domain/       pure logic        model (snapshot format), capture, flags, diff, edit ops, restore plans
+domain/       pure logic        model (snapshot format), capture, flags, diff, edit ops, restore plans,
+                                running (the agent in a tab's processes)
      │  depends only on
-ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases
+ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases, Scheduler
      ▲  implemented by
-adapters/     the outside       terminal/cmux, agents/{registry,claude,codex}, store/fs, releases
+adapters/     the outside       terminal/{cmux,tmux,procs}, agents/{registry,claude,codex}, store/fs,
+                                releases, scheduler/launchd
 ```
 
 ## Layers and their rules
@@ -36,7 +38,10 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
 - **`Terminal`**: read what is open (`OpenState`: workspaces, tabs, and for each tab the agent
   running in it as `AgentRef { kind, session_id, args }`), create workspaces and add tabs from
   `LaunchTab { title, cwd, command }`. The command is built and quoted by `app/`; a terminal adapter
-  only runs it. Implemented by `adapters/terminal/cmux`.
+  only runs it. Implemented by `adapters/terminal/cmux` and `adapters/terminal/tmux`. A terminal that
+  can't name a tab's agent (tmux) reports the processes under the tab's shell instead
+  (`OpenTab::processes`, exact arguments from `adapters/terminal/procs`), and `domain::running` finds
+  the agent and its session in them through `AgentCatalog`, so terminals still never see agents.
 - **`SessionHistory`**: one agent's session history: `find`, `title_for`, `scan` (recent sessions).
   Each adapter decides which of its sessions are *recoverable* (interactive, not scripted).
   Implemented by `adapters/agents/claude.rs` and `codex.rs`; a shared contract test
@@ -48,14 +53,19 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
 - **`Releases`**: what `update` needs: the latest release tag, downloads, a SHA-256, unpacking and
   asking a binary its version. Implemented by `adapters/releases.rs` with `curl`, `shasum` or
   `sha256sum`, and `tar`, so the binary needs no HTTP crate; tests use `testing::FakeReleases`.
+- **`Scheduler`**: installs or removes a periodic `sessionsnap --terminal <t> schedule run -- <name>`
+  for an automatic snapshot. Implemented by `adapters/scheduler/launchd.rs` on macOS; elsewhere
+  scheduling is refused. Tests use `testing::FakeScheduler`.
 
 ## The snapshot format
 
 `domain/model.rs`, format version 2. A tab is either a plain terminal (`title`, `cwd`, optional
 `command`) or an agent tab (`title`, `cwd`, `agent`, `sessionId`, `args`, and `leftOut`: why its flags were
 left out when one could not be kept, so it restores as a plain shell; `leftOutUnsure` marks a
-`leftOut` that only says the session's flags are undecided, which a live reading decides). The format names no
-terminal, so a snapshot can be restored by any terminal adapter.
+`leftOut` that only says the session's flags are undecided, which a live reading decides). A version records the
+terminal it was captured from (`source.terminal`, when not cmux), for information only; any terminal
+adapter can restore it. A workspace records `pinned` (cmux's `isPinned`), which restore does not
+reapply.
 
 Snapshots are user-editable files whose contents end up as commands in a shell. Every value that
 reaches a command is validated (no control characters; session IDs checked per agent) and every
@@ -86,10 +96,11 @@ word is shell-quoted. Keep it that way.
 
 ### Add a terminal
 
-1. Create `src/adapters/terminal/<name>/` implementing `Terminal`: report open workspaces and tabs
-   (and, where the terminal can tell, the agent running in each tab), and create workspaces/tabs
-   that run a `LaunchTab` command.
-2. Choose it in `Ctx::open_default` (`src/app/mod.rs`) — for now by configuration or detection.
+1. Create `src/adapters/terminal/<name>/` implementing `Terminal` (and `name`): report open
+   workspaces and tabs (and the agent running in each tab where the terminal can tell, else the
+   tab's processes, as `tmux.rs` does), and create workspaces/tabs that run a `LaunchTab` command.
+2. Choose it in `Ctx::open_default` (`src/app/mod.rs`): add it to `--terminal` and, if it can be
+   detected, to `terminal_for`.
 3. Add a fake-driven test for anything terminal-specific; the use cases are already tested through
    `testing::FakeTerminal`.
 

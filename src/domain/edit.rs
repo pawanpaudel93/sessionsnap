@@ -617,6 +617,7 @@ mod tests {
             }],
         });
         let open = OpenState {
+            warnings: vec![],
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("WD", "Delta", "/w/d", &[("zsh", "/w/d", None)])],

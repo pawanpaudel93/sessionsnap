@@ -3,25 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>sessionsnap — Snapshots of cmux Workspaces and Agent Sessions</title>
+    <title>sessionsnap — Snapshots of cmux or tmux Workspaces and Agent Sessions</title>
     <meta
       name="description"
-      content="Save your cmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more."
+      content="Save your cmux or tmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more."
     />
-    <meta property="og:title" content="sessionsnap — Snapshots of cmux Workspaces and Agent Sessions" />
+    <meta property="og:title" content="sessionsnap — Snapshots of cmux or tmux Workspaces and Agent Sessions" />
     <meta
       property="og:description"
-      content="Save your cmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more."
+      content="Save your cmux or tmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://sessionsnap.pawanpaudel.com.np/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta property="og:url" content="https://sessionsnap.pawanpaudel.com.np/" />
     <link rel="canonical" href="https://sessionsnap.pawanpaudel.com.np/" />
-    <meta name="twitter:title" content="sessionsnap — Snapshots of cmux Workspaces and Agent Sessions" />
-    <meta name="twitter:description" content="Save your cmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more." />
+    <meta name="twitter:title" content="sessionsnap — Snapshots of cmux or tmux Workspaces and Agent Sessions" />
+    <meta name="twitter:description" content="Save your cmux or tmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more." />
     <meta name="twitter:image" content="https://sessionsnap.pawanpaudel.com.np/og.png" />
-    <meta property="og:image:alt" content="sessionsnap — save cmux workspaces and agent sessions, bring them back resumed" />
+    <meta property="og:image:alt" content="sessionsnap — save cmux or tmux workspaces and agent sessions, bring them back resumed" />
     <meta name="theme-color" content="#0d1520" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#f6f7fa" media="(prefers-color-scheme: light)" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
@@ -32,13 +32,13 @@
       "@context": "https://schema.org",
       "@type": "SoftwareSourceCode",
       "name": "sessionsnap",
-      "description": "Save your cmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more.",
+      "description": "Save your cmux or tmux workspaces and the coding-agent sessions in them, then bring them back resumed. Named, versioned snapshots for Claude Code, Codex and more.",
       "url": "https://sessionsnap.pawanpaudel.com.np/",
       "codeRepository": "https://github.com/pawanpaudel93/sessionsnap",
       "license": "https://opensource.org/license/mit",
       "programmingLanguage": "Rust",
-      "runtimePlatform": "cmux",
-      "operatingSystem": "macOS",
+      "runtimePlatform": ["cmux", "tmux"],
+      "operatingSystem": "macOS, Linux",
       "version": "0.1.0",
       "author": {
         "@type": "Person",
@@ -70,11 +70,11 @@
     <main id="main">
       <section class="shell hero hero-split" id="install">
         <div class="hero-inner">
-          <p class="eyebrow">cmux · Claude Code · Codex</p>
-          <h1>Save your cmux workspaces. Bring them back resumed.</h1>
+          <p class="eyebrow">cmux · tmux · Claude Code · Codex</p>
+          <h1>Save your cmux or tmux workspaces. Bring them back resumed.</h1>
           <p class="hero-copy">
-            sessionsnap takes named, versioned snapshots of your cmux workspaces and the coding-agent
-            sessions in their tabs. Later it reopens only what is missing, with each agent resumed in
+            sessionsnap takes named, versioned snapshots of your cmux or tmux workspaces and the
+            coding-agent sessions in their tabs. Later it reopens only what is missing, with each agent resumed in
             its own folder with the flags it was started with.
           </p>
           <div class="actions">
@@ -149,11 +149,11 @@ Restore 3 tab(s)? [y/N] y
             <span class="copy-status" aria-live="polite"></span>
           </div>
           <p class="requirements">
-            Free and open source (MIT). macOS with cmux 0.64 or newer; one binary in
-            <code translate="no">~/.local/bin</code>, and nothing runs in the background. Update with
-            <code translate="no">sessionsnap update</code>; remove with <code translate="no">sessionsnap uninstall</code>.
-            On Linux, sessionsnap installs, updates and uninstalls, but saving and restoring don't work
-            yet: cmux on Linux is a different app with a different command line.
+            Free and open source (MIT). macOS with cmux 0.64 or newer, or tmux; one binary in
+            <code translate="no">~/.local/bin</code>, and nothing runs in the background unless you
+            add an automatic snapshot. Update with <code translate="no">sessionsnap update</code>; remove
+            with <code translate="no">sessionsnap uninstall</code>. On Linux, sessionsnap works with tmux:
+            cmux on Linux is a different app with a different command line, not supported yet.
           </p>
         </div>
       </section>
@@ -161,7 +161,7 @@ Restore 3 tab(s)? [y/N] y
       <section class="shell section" id="how" aria-labelledby="how-title">
         <div class="section-head">
           <h2 id="how-title">Save, edit, restore</h2>
-          <p>Every snapshot is one you ask for. Nothing watches your terminal.</p>
+          <p>Nothing runs in the background unless you add an automatic snapshot.</p>
         </div>
         <ol class="loop">
           <li>
@@ -185,7 +185,7 @@ Restore 3 tab(s)? [y/N] y
       <section class="shell section" id="features" aria-labelledby="features-title">
         <div class="section-head">
           <h2 id="features-title">What it does</h2>
-          <p>A single Rust binary with a CLI, a web UI in the cmux Dock, and cmux palette commands.</p>
+          <p>A single Rust binary with a CLI, a web UI in the cmux Dock (or your browser from tmux), and cmux palette commands.</p>
         </div>
         <dl class="feature-list">
           <div>
@@ -202,7 +202,7 @@ Restore 3 tab(s)? [y/N] y
           </div>
           <div>
             <dt>Find lost sessions</dt>
-            <dd><code translate="no">recent</code> lists agent sessions from the last day that are not open in cmux, and can reopen them.</dd>
+            <dd><code translate="no">recent</code> lists agent sessions from the last day that are not open in your terminal, and can reopen them.</dd>
           </div>
           <div>
             <dt>Scriptable</dt>
@@ -211,6 +211,14 @@ Restore 3 tab(s)? [y/N] y
           <div>
             <dt>Careful with your shell</dt>
             <dd>Every word of a restore command is shell-quoted and session IDs are checked. Only flags on each agent's allow-list are saved; environment variables never are.</dd>
+          </div>
+          <div>
+            <dt>Automatic snapshots</dt>
+            <dd><code translate="no">schedule add</code> saves a snapshot every interval through launchd (macOS), even when sessionsnap isn't running.</dd>
+          </div>
+          <div>
+            <dt>tmux too</dt>
+            <dd>Inside tmux, sessionsnap saves and restores tmux sessions, on macOS and Linux.</dd>
           </div>
         </dl>
       </section>
@@ -265,7 +273,8 @@ Restore 3 tab(s)? [y/N] y
           <p>
             <code translate="no">sessionsnap ui</code> serves a small page on
             <code translate="no">127.0.0.1</code> and shows it in the cmux Dock, or run
-            “sessionsnap: Open UI” from the cmux palette. It stops after 30 minutes without use.
+            “sessionsnap: Open UI” from the cmux palette. From tmux it opens in your default browser.
+            It stops after 30 minutes without use.
           </p>
         </div>
         <div class="grid">
@@ -279,7 +288,7 @@ Restore 3 tab(s)? [y/N] y
           </div>
           <div class="card">
             <h3>Restore and recent</h3>
-            <p>Tick the workspaces and tabs you want, see what would open, then restore. Recent lists agent sessions that are not open in cmux.</p>
+            <p>Tick the workspaces and tabs you want, see what would open, then restore. Recent lists agent sessions that are not open in your terminal.</p>
           </div>
         </div>
       </section>

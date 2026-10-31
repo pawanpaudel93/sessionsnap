@@ -55,10 +55,10 @@ pub fn edit(
         ops.iter().any(|o| matches!(o, Op::TabAddSession { .. } | Op::TabSetSession { .. } | Op::WsFrom { .. }));
     let read_at = super::known::now();
     let open = if ops.iter().any(|o| matches!(o, Op::WsAddLive { .. })) {
-        Some(super::read_open(ctx.terminal.as_ref())?)
+        Some(super::read_open(ctx.terminal.as_ref(), &ctx.agents)?)
     } else if sets_session {
         // Without cmux's state, the record still applies.
-        super::read_open(ctx.terminal.as_ref()).ok()
+        super::read_open(ctx.terminal.as_ref(), &ctx.agents).ok()
     } else {
         None
     };
@@ -78,7 +78,7 @@ pub fn edit(
         let warnings = [notes, edit::warnings(&workspaces, &ctx.agents)].concat();
         return Ok(Edited::DryRun { base_version: previous.version, workspaces, changes, warnings });
     }
-    let source = Source { kind: "edit".into(), cmux_state_version: None, from: None };
+    let source = Source { kind: "edit".into(), ..Default::default() };
     let lock = lock.ok_or_else(|| anyhow::anyhow!("an edit is saved under its snapshot's lock"))?;
     let base = Base { lock: &lock, latest: Some(previous.version), previous: Some(&previous) };
     // What the edit read from cmux is a live launch seen now: every open session's, checked. The

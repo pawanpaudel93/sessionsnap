@@ -125,7 +125,7 @@ def check():
                 require(schema.get("url") == canonical, f"{name}: schema URL")
                 require(schema.get("codeRepository") == REPO, f"{name}: repository")
                 require(schema.get("license") == "https://opensource.org/license/mit", f"{name}: license")
-                require(schema.get("operatingSystem") == "macOS", f"{name}: operatingSystem (save and restore are macOS-only)")
+                require(schema.get("operatingSystem") == "macOS, Linux", f"{name}: operatingSystem (cmux on macOS, tmux on macOS and Linux)")
                 require(schema.get("version") == version, f"{name}: schema version must be {version}")
             else:
                 require(schema.get("@type") == "BreadcrumbList", f"{name}: breadcrumb schema type")
@@ -200,12 +200,12 @@ def check():
             require(word in flat, f"{doc} must list {word} among the flags restored")
         require("even in prose" not in flat, f"{doc} still describes the old credential-guessing filter")
 
-    # Linux: sessionsnap installs there, but save/restore don't work with Linux cmux yet.
+    # Linux: sessionsnap saves and restores tmux there, but Linux cmux is not supported yet.
     for doc, text in {**texts, "llms.txt": llms}.items():
-        require("macOS or Linux" not in text and "macOS and Linux" not in text,
-                f"{doc} must not claim sessionsnap works with cmux on Linux")
-        require("saving and restoring don't work yet" in " ".join(text.split()),
-                f"{doc} must say saving and restoring don't work on Linux yet")
+        flat_text = " ".join(text.split())
+        require("cmux on Linux is a different app" in flat_text and "not supported yet" in flat_text,
+                f"{doc} must say cmux on Linux is not supported yet")
+        require("tmux" in flat_text, f"{doc} must say sessionsnap works with tmux")
 
     # Agent support claims match the README: Claude Code and Codex tested, the rest untested.
     readme = (ROOT / "README.md").read_text()

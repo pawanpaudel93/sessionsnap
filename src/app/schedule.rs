@@ -1,5 +1,6 @@
-//! Automatic snapshots: a snapshot the OS saves from what is open in cmux every interval
-//! (`schedule add`), listed apart from snapshots saved by hand. Only scheduled saves write to it.
+//! Automatic snapshots: a snapshot the OS saves from what is open in its terminal (cmux or tmux)
+//! every interval (`schedule add`), listed apart from snapshots saved by hand. Only scheduled saves
+//! write to it.
 
 use anyhow::Result;
 
@@ -44,9 +45,15 @@ pub fn add(ctx: &Ctx, name: &str, interval: &str) -> Result<(Schedule, Result<Co
         let name = if ctx.store.has_versions(name) { ctx.store.stored_name(name) } else { name.to_string() };
         all.insert(
             name.clone(),
-            Schedule { interval, created_at: super::known::now(), stopped: false, last_run: None },
+            Schedule {
+                interval,
+                created_at: super::known::now(),
+                stopped: false,
+                last_run: None,
+                terminal: (ctx.terminal.name() != "cmux").then(|| ctx.terminal.name().to_string()),
+            },
         );
-        ctx.scheduler.install(&name, interval)?;
+        ctx.scheduler.install(&name, &all[&name])?;
         if let Err(e) = ctx.store.write_schedules(&lock, &all) {
             let _ = ctx.scheduler.remove(&name);
             return Err(e);
@@ -84,7 +91,7 @@ pub fn edit(ctx: &Ctx, name: &str, interval: &str) -> Result<(String, Schedule)>
     schedule.interval = interval;
     let schedule = schedule.clone();
     if !schedule.stopped {
-        ctx.scheduler.install(&key, interval)?;
+        ctx.scheduler.install(&key, &schedule)?;
     }
     ctx.store.write_schedules(&lock, &all)?;
     Ok((key, schedule))
@@ -103,7 +110,7 @@ pub fn set_running(ctx: &Ctx, name: &str, run: bool) -> Result<(String, Schedule
         return Err(failure(Exit::NothingToDo, format!("'{key}' is already {state}")));
     }
     if run {
-        ctx.scheduler.install(&key, schedule.interval)?;
+        ctx.scheduler.install(&key, &Schedule { stopped: false, ..schedule.clone() })?;
     } else {
         ctx.scheduler.remove(&key)?;
     }
@@ -145,8 +152,19 @@ pub fn list(ctx: &Ctx) -> Result<Vec<Listed>> {
 /// becomes the latest version.
 pub fn run(ctx: &Ctx, name: &str) -> Result<Commit> {
     validate_name(name)?;
-    let key = find(&ctx.store.read_schedules()?, name).ok_or_else(|| not_scheduled(name))?;
-    let result = super::snapshots::save_scheduled(ctx, &key);
+    let all = ctx.store.read_schedules()?;
+    let key = find(&all, name).ok_or_else(|| not_scheduled(name))?;
+    // It saves only from the terminal it was added in: a run picking another one (an older
+    // launchd agent with no --terminal, or a run by hand inside the other) is skipped.
+    let wanted = all[&key].terminal.as_deref().unwrap_or("cmux");
+    let result = if ctx.terminal.name() == wanted {
+        super::snapshots::save_scheduled(ctx, &key)
+    } else {
+        Err(failure(
+            Exit::NothingToDo,
+            format!("'{key}' saves from {wanted}; run it with: sessionsnap --terminal {wanted} schedule run {key}"),
+        ))
+    };
     let last = match &result {
         Ok(Commit::Saved { version, .. }) => last_run("saved", Some(version.version), None),
         Ok(Commit::Unchanged { version, .. }) => last_run("unchanged", Some(*version), None),
@@ -172,13 +190,13 @@ pub fn renamed(ctx: &Ctx, old: &str, new: &str) -> Result<()> {
     let mut all = ctx.store.read_schedules()?;
     let Some(schedule) = all.remove(old) else { return Ok(()) };
     let (interval, stopped) = (schedule.interval, schedule.stopped);
-    all.insert(new.to_string(), schedule);
+    all.insert(new.to_string(), schedule.clone());
     ctx.store.write_schedules(&lock, &all)?;
     ctx.scheduler.remove(old)?;
     if stopped {
         return Ok(());
     }
-    ctx.scheduler.install(new, interval).map_err(|e| {
+    ctx.scheduler.install(new, &schedule).map_err(|e| {
         e.context(format!(
             "'{new}' is renamed, but its schedule could not be moved; restart it with: \
              sessionsnap schedule edit {new} --interval {}",

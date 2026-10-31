@@ -426,6 +426,33 @@ impl AgentSpec {
     }
 }
 
+impl AgentSpec {
+    /// The session a launch names in its args, read the way `drop_resume_words` drops it: the
+    /// template's words and the ID after them, a resume flag and its value, and Claude Code's
+    /// `--session-id`. None when the launch names none, or names an invalid ID.
+    pub fn session_in_args(&self, args: &[String]) -> Option<String> {
+        // A fork runs under a new ID; the one in its args is the session it forked from.
+        if args.iter().any(|a| a == "--fork-session") {
+            return None;
+        }
+        let words: Vec<&str> = self.resume.iter().copied().take_while(|w| !w.starts_with('-')).collect();
+        let has_flag = self.resume.last().is_some_and(|w| w.starts_with('-'));
+        let id_flags: Vec<&str> =
+            self.resume_flags.iter().copied().chain((self.kind == "claude").then_some("--session-id")).collect();
+        let found = (0..args.len()).find_map(|i| {
+            let a = args[i].as_str();
+            if !has_flag && !words.is_empty() && args[i..].iter().take(words.len()).eq(words.iter()) {
+                return args.get(i + words.len()).cloned();
+            }
+            if id_flags.contains(&a) {
+                return args.get(i + 1).cloned();
+            }
+            id_flags.iter().find_map(|f| a.strip_prefix(f)?.strip_prefix('=').map(str::to_string))
+        })?;
+        self.valid_id(&found).then_some(found)
+    }
+}
+
 /// Drops what would pick another session from saved args, for every agent:
 /// - the template's leading words in a row (e.g. `threads continue`, `rovodev run`) — and, when the
 ///   template has no flag, the ID after them;
@@ -511,6 +538,23 @@ fn codex_args(args: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_session_a_launch_names() {
+        let claude = find("claude").unwrap();
+        let codex = find("codex").unwrap();
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(claude.session_in_args(&s(&["--model", "opus", "--resume", A])).as_deref(), Some(A));
+        assert_eq!(claude.session_in_args(&s(&["-r", A])).as_deref(), Some(A));
+        assert_eq!(claude.session_in_args(&s(&[&format!("--session-id={A}")])).as_deref(), Some(A));
+        assert_eq!(codex.session_in_args(&s(&["--model", "o3", "resume", A])).as_deref(), Some(A));
+        // None named, a picker without an ID, or an ID that is not one.
+        assert_eq!(claude.session_in_args(&s(&["--continue"])), None);
+        assert_eq!(claude.session_in_args(&s(&["--resume"])), None);
+        assert_eq!(codex.session_in_args(&s(&["resume", "--last"])), None);
+        assert_eq!(claude.session_in_args(&s(&["--resume", "x; rm -rf ~"])), None);
+        assert_eq!(claude.session_in_args(&s(&["--resume", A, "--fork-session"])), None);
+    }
     use crate::testing::{A, B};
 
     fn strings(a: &[&str]) -> Vec<String> {

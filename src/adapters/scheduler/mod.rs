@@ -20,7 +20,7 @@ pub fn open_default() -> Result<Box<dyn Scheduler>> {
 pub struct Unsupported;
 
 impl Scheduler for Unsupported {
-    fn install(&self, _name: &str, _interval: u64) -> Result<()> {
+    fn install(&self, _name: &str, _schedule: &crate::domain::schedule::Schedule) -> Result<()> {
         Err(failure(Exit::Refused, "scheduled saves need macOS (launchd)"))
     }
 

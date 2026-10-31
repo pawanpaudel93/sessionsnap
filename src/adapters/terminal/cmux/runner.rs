@@ -23,11 +23,35 @@ pub trait Runner {
         let _ = timeout;
         self.run(program, args)
     }
+
+    /// Like `run`, with `input` on the program's stdin: for text that must stay off command lines.
+    /// Fakes that never get input keep this default, which refuses.
+    fn run_input(&self, program: &str, _args: &[String], _input: &str) -> Result<Output> {
+        anyhow::bail!("running {program} with input is not supported here")
+    }
 }
 
 pub struct ProcessRunner;
 
 impl Runner for ProcessRunner {
+    fn run_input(&self, program: &str, args: &[String], input: &str) -> Result<Output> {
+        use std::io::Write;
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("running {program}"))?;
+        child.stdin.take().expect("piped").write_all(input.as_bytes())?;
+        let out = child.wait_with_output()?;
+        Ok(Output {
+            success: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        })
+    }
+
     fn run(&self, program: &str, args: &[String]) -> Result<Output> {
         let out = Command::new(program).args(args).output().with_context(|| format!("running {program}"))?;
         Ok(Output {

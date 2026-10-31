@@ -176,6 +176,7 @@ mod tests {
 
     fn open_state() -> OpenState {
         OpenState {
+            warnings: vec![],
             live: true,
             state_version: Some(1),
             workspaces: vec![
@@ -200,6 +201,7 @@ mod tests {
         let history = agents(vec![FakeHistory::codex(&[(B, "/w/a", "codex title")])]);
         let mut open = open_state();
         let tab = |kind: &str, id: &str, args: &[&str]| OpenTab {
+            processes: vec![],
             reference: None,
             title: format!("{kind} tab"),
             cwd: "/w/a".into(),
@@ -245,6 +247,7 @@ mod tests {
         let history = agents(vec![]);
         let mut open = open_state();
         open.workspaces[1].tabs = vec![OpenTab {
+            processes: vec![],
             reference: None,
             title: "bad".into(),
             cwd: "/w/b".into(),
@@ -266,6 +269,7 @@ mod tests {
         let history = agents(vec![]);
         let mut open = open_state();
         open.workspaces[1].tabs = vec![OpenTab {
+            processes: vec![],
             reference: None,
             title: "t".into(),
             cwd: "/w/b".into(),
@@ -477,6 +481,7 @@ mod tests {
     fn workspace_named_sessionsnap_is_captured() {
         let history = agents(vec![]);
         let open = OpenState {
+            warnings: vec![],
             live: true,
             state_version: Some(1),
             workspaces: vec![open_ws("W1", "Alpha", "/w/a", &[]), open_ws("W2", "sessionsnap", "~", &[])],
@@ -489,6 +494,7 @@ mod tests {
     fn captured_names_are_unique() {
         let history = agents(vec![]);
         let open = OpenState {
+            warnings: vec![],
             live: true,
             state_version: Some(1),
             workspaces: vec![

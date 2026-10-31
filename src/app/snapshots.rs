@@ -63,21 +63,27 @@ fn save_as(
             let src = super::load_version(ctx, &src_name, version)?;
             let source = Source {
                 kind: "copy".into(),
-                cmux_state_version: None,
                 from: Some(format!("{}@{}", src.snapshot, src.version)),
+                ..Default::default()
             };
             (src.workspaces, source, vec![])
         }
         None => {
             read_at = super::known::now();
-            let open = super::read_open(ctx.terminal.as_ref())?;
-            if scheduled && !open.live {
-                return Err(failure(Exit::NothingToDo, "cmux is not running"));
+            let open = super::read_open(ctx.terminal.as_ref(), &ctx.agents)?;
+            let terminal = ctx.terminal.name();
+            // Not running and nothing saved by it (tmux keeps no state): nothing to snapshot.
+            if !open.live && (scheduled || open.workspaces.is_empty()) {
+                return Err(failure(Exit::NothingToDo, format!("{terminal} is not running")));
             }
             if scheduled && open.workspaces.is_empty() {
-                return Err(failure(Exit::NothingToDo, "cmux shows no workspaces"));
+                return Err(failure(Exit::NothingToDo, format!("{terminal} shows no workspaces")));
             }
-            let (captured, notes) = capture(&open, &ctx.agents, only)?;
+            let (captured, mut notes) = capture(&open, &ctx.agents, only)?;
+            // Notes about what is open, minus those about workspaces this save leaves alone.
+            let saved = |ws: &str| only.is_empty() || captured.iter().any(|w| w.name.eq_ignore_ascii_case(ws));
+            let open_notes = open.warnings.iter().filter(|w| w.workspace.as_deref().is_none_or(saved));
+            notes.splice(0..0, open_notes.map(|w| w.message.clone()));
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),
@@ -85,7 +91,13 @@ fn save_as(
                 None => captured,
             };
             let kind = if scheduled { super::schedule::SCHEDULED } else { "live" };
-            (workspaces, Source { kind: kind.into(), cmux_state_version: open.state_version, from: None }, notes)
+            let source = Source {
+                kind: kind.into(),
+                cmux_state_version: open.state_version,
+                from: None,
+                terminal: (terminal != "cmux").then(|| terminal.to_string()),
+            };
+            (workspaces, source, notes)
         }
     };
     // A broken latest version is never "unchanged": the save writes one that can be read.

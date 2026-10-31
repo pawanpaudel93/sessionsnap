@@ -20,7 +20,7 @@ pub struct Version {
     pub workspaces: Vec<Workspace>,
 }
 
-/// Where a version came from: "live" (captured from cmux), "edit", or "copy".
+/// Where a version came from: "live" (captured from the terminal), "scheduled", "edit", or "copy".
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
@@ -29,6 +29,9 @@ pub struct Source {
     pub cmux_state_version: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// The terminal it was captured from, when not cmux.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

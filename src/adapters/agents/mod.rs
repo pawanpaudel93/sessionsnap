@@ -73,6 +73,10 @@ impl AgentCatalog for Agents {
         Agents::spec(name).map(|s| s.kind)
     }
 
+    fn session_in_args(&self, kind: &str, args: &[String]) -> Option<String> {
+        Agents::spec(kind)?.session_in_args(args)
+    }
+
     fn display_name(&self, name: &str) -> String {
         Agents::spec(name).map(|s| s.display.to_string()).unwrap_or_else(|| name.to_string())
     }

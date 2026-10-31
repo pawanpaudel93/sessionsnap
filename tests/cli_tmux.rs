@@ -1,0 +1,110 @@
+mod common;
+
+use common::setup;
+use sessionsnap::error::Exit;
+use sessionsnap::testing::FakeScheduler;
+
+#[test]
+fn a_save_from_tmux_says_so_and_a_cmux_one_does_not() {
+    let env = setup();
+    env.run(&["save", "cm"]).unwrap();
+    let v = env.run(&["show", "cm", "--json"]).unwrap();
+    assert!(v.json["version"]["source"].get("terminal").is_none(), "cmux is the default, not written");
+    env.fake.name.set("tmux");
+    env.run(&["save", "tm"]).unwrap();
+    let v = env.run(&["show", "tm", "--json"]).unwrap();
+    assert_eq!(v.json["version"]["source"]["terminal"], "tmux");
+}
+
+#[test]
+fn a_schedule_keeps_saving_from_the_terminal_it_was_added_in() {
+    let env = setup();
+    env.fake.name.set("tmux");
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap();
+    env.run(&["schedule", "edit", "work", "--interval", "1h"]).unwrap();
+    assert_eq!(FakeScheduler::log(env.dir.path()), ["install work 600 tmux", "install work 3600 tmux"]);
+    env.fake.state.borrow_mut().workspaces.clear();
+    let o = env.run(&["schedule", "run", "work"]).unwrap();
+    assert_eq!(o.exit, Exit::NothingToDo);
+    assert_eq!(o.json["reason"], "tmux shows no workspaces");
+}
+
+#[test]
+fn the_terminal_option_takes_only_known_terminals() {
+    use clap::Parser;
+    use sessionsnap::interfaces::cli::Cli;
+    let parse = |t: &str| Cli::try_parse_from(["sessionsnap", "--terminal", t, "list"]);
+    assert_eq!(parse("tmux").unwrap().terminal.as_deref(), Some("tmux"));
+    assert!(parse("iterm").is_err());
+}
+
+#[test]
+fn an_agent_found_in_a_tabs_processes_is_saved_and_a_hostile_flag_never_reaches_a_command() {
+    use sessionsnap::ports::TabProcess;
+    use sessionsnap::testing::{A, open_ws};
+    let env = setup();
+    env.fake.name.set("tmux");
+    let mut ws = open_ws("$1", "work", "/w/a", &[("fix", "/w/a", None)]);
+    let argv = ["/usr/local/bin/claude", "--model", "x; rm -rf ~", "--resume", A];
+    ws.tabs[0].processes =
+        vec![TabProcess { argv: argv.map(String::from).to_vec(), started: std::time::SystemTime::now() }];
+    *env.fake.state.borrow_mut() = Default::default();
+    env.fake.state.borrow_mut().live = true;
+    env.fake.state.borrow_mut().workspaces = vec![ws];
+    env.run(&["save", "tm"]).unwrap();
+    let shown = env.run(&["show", "tm", "--json"]).unwrap().json;
+    let tab = &shown["version"]["workspaces"][0]["tabs"][0];
+    assert_eq!((tab["agent"].as_str(), tab["sessionId"].as_str()), (Some("claude"), Some(A)));
+    assert!(!shown.to_string().contains("rm -rf"), "{shown}");
+    // Nothing open: the restore opens it, and its command never holds the hostile value.
+    env.fake.state.borrow_mut().workspaces.clear();
+    env.run(&["restore", "tm", "--yes"]).unwrap();
+    let launched = env.fake.launched.borrow();
+    assert_eq!(launched.len(), 1);
+    let command = launched[0].command.as_deref().unwrap();
+    assert!(command.contains(A) && !command.contains("rm -rf"), "{command}");
+}
+
+#[test]
+fn a_save_with_nothing_running_writes_nothing() {
+    let env = setup();
+    env.fake.name.set("tmux");
+    *env.fake.state.borrow_mut() = Default::default(); // not live, nothing open
+    let e = env.run(&["save", "x"]).unwrap_err();
+    assert_eq!(sessionsnap::error::exit_of(&e), Exit::NothingToDo);
+    assert_eq!(e.to_string(), "tmux is not running");
+    assert_eq!(env.run(&["list", "--json"]).unwrap().json["snapshots"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn a_schedule_never_saves_from_another_terminal() {
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap(); // added in cmux
+    env.fake.name.set("tmux");
+    let o = env.run(&["schedule", "run", "work"]).unwrap();
+    assert_eq!(o.exit, Exit::NothingToDo);
+    assert!(o.json["reason"].as_str().unwrap().contains("--terminal cmux schedule run work"), "{}", o.json);
+    let listed = env.run(&["schedule", "list"]).unwrap().json;
+    assert_eq!(listed["schedules"][0]["lastRun"]["result"], "skipped");
+    assert_eq!(listed["schedules"][0]["latestVersion"], 1, "nothing saved from tmux");
+}
+
+#[test]
+fn saving_some_workspaces_notes_only_their_own_tabs() {
+    use sessionsnap::ports::TabProcess;
+    use sessionsnap::testing::open_ws;
+    let env = setup();
+    env.fake.name.set("tmux");
+    let claude = || vec![TabProcess { argv: vec!["claude".into()], started: std::time::SystemTime::now() }];
+    let mut a = open_ws("$1", "one", "/w/x", &[("a", "/w/x", None)]);
+    let mut b = open_ws("$2", "two", "/w/x", &[("b", "/w/x", None)]);
+    a.tabs[0].processes = claude();
+    b.tabs[0].processes = claude();
+    env.fake.state.borrow_mut().workspaces = vec![a, b];
+    let all = env.run(&["save", "all", "--json"]).unwrap().json;
+    let notes = all["warnings"].to_string();
+    assert!(notes.contains("one › a") && notes.contains("two › b"), "{notes}");
+    let one = env.run(&["save", "only", "-w", "one", "--json"]).unwrap().json;
+    let notes = one["warnings"].to_string();
+    assert!(notes.contains("one › a") && !notes.contains("two › b"), "{notes}");
+}

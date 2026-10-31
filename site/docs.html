@@ -6,12 +6,12 @@
     <title>sessionsnap Docs: Install, Commands and JSON Reference</title>
     <meta
       name="description"
-      content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux snapshots, JSON output and exit codes, the web UI, files, security and updating."
+      content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux and tmux snapshots, JSON output and exit codes, the web UI, files, security and updating."
     />
     <meta property="og:title" content="sessionsnap Docs: Install, Commands and JSON Reference" />
     <meta
       property="og:description"
-      content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux snapshots, JSON output and exit codes, the web UI, files, security and updating."
+      content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux and tmux snapshots, JSON output and exit codes, the web UI, files, security and updating."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://sessionsnap.pawanpaudel.com.np/og.png" />
@@ -19,7 +19,7 @@
     <meta property="og:url" content="https://sessionsnap.pawanpaudel.com.np/docs" />
     <link rel="canonical" href="https://sessionsnap.pawanpaudel.com.np/docs" />
     <meta name="twitter:title" content="sessionsnap Docs: Install, Commands and JSON Reference" />
-    <meta name="twitter:description" content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux snapshots, JSON output and exit codes, the web UI, files, security and updating." />
+    <meta name="twitter:description" content="Install sessionsnap and use every command: save, show, diff, edit and restore cmux and tmux snapshots, JSON output and exit codes, the web UI, files, security and updating." />
     <meta name="twitter:image" content="https://sessionsnap.pawanpaudel.com.np/og.png" />
     <meta property="og:image:alt" content="sessionsnap — save cmux workspaces and agent sessions, bring them back resumed" />
     <meta name="theme-color" content="#0d1520" media="(prefers-color-scheme: dark)" />
@@ -87,8 +87,10 @@
             <a href="#install">Install</a>
             <a href="#quick-start">Quick start</a>
             <a href="#snapshots">Snapshots</a>
+            <a href="#automatic">Automatic snapshots</a>
             <a href="#editing">Editing</a>
             <a href="#restoring">Restoring</a>
+            <a href="#tmux">tmux</a>
             <a href="#sessions">Sessions and agents</a>
             <a href="#json">JSON and exit codes</a>
             <a href="#web-ui">Web UI</a>
@@ -104,14 +106,15 @@
           <section class="doc-section" id="install">
             <h2>Install</h2>
             <p>
-              You need macOS with <a href="https://cmux.com">cmux</a> 0.64 or newer, and the agents
-              you want to restore on your <code translate="no">PATH</code>.
+              You need macOS with <a href="https://cmux.com">cmux</a> 0.64 or newer, or tmux on macOS
+              or Linux (see <a href="#tmux">tmux</a>), and the agents you want to restore on your
+              <code translate="no">PATH</code>.
             </p>
             <div class="callout">
               <p>
-                <strong>On Linux</strong>, sessionsnap installs, updates and uninstalls, but saving
-                and restoring don't work yet: cmux on Linux is a different app with a different
-                command line. On macOS, sessionsnap is verified with cmux 0.64.22.
+                <strong>On Linux</strong>, sessionsnap saves and restores tmux sessions. cmux on Linux
+                is a different app with a different command line, not supported yet. On macOS,
+                sessionsnap is verified with cmux 0.64.22.
               </p>
             </div>
             <p>One command installs the latest release:</p>
@@ -168,8 +171,8 @@
 <span class="prompt">$ </span>sessionsnap show work                 <span class="comment"># workspaces and tabs</span>
 <span class="prompt">$ </span>sessionsnap restore work --plan       <span class="comment"># what would be reopened</span>
 <span class="prompt">$ </span>sessionsnap restore work              <span class="comment"># plan, confirm, reopen what is missing</span>
-<span class="prompt">$ </span>sessionsnap recent                    <span class="comment"># agent sessions from the last 24h not open in cmux</span>
-<span class="prompt">$ </span>sessionsnap ui                        <span class="comment"># the web UI in the cmux Dock</span></code></pre>
+<span class="prompt">$ </span>sessionsnap recent                    <span class="comment"># agent sessions from the last 24h not open in the terminal</span>
+<span class="prompt">$ </span>sessionsnap ui                        <span class="comment"># the web UI (cmux Dock, or the browser from tmux)</span></code></pre>
             </div>
             <p>
               Every command takes <code translate="no">--json</code> (machine-readable output, never
@@ -206,7 +209,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr>
                     <td><code translate="no">sessionsnap save [name]</code></td>
                     <td>
-                      Save what is open in cmux as a new version of a snapshot. If nothing changed it
+                      Save what is open in the terminal as a new version of a snapshot. If nothing changed it
                       writes nothing and exits 3.
                       <code translate="no">-w, --workspace &lt;ws&gt;</code> (repeatable): only capture
                       these open workspaces; the rest of the snapshot is kept.
@@ -217,7 +220,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                     </td>
                   </tr>
                   <tr><td><code translate="no">sessionsnap list</code></td><td>List snapshots with their latest version, workspace and tab counts, time and message: the ones you saved under Manual, then the automatic ones under Automatic.</td></tr>
-                  <tr><td><code translate="no">sessionsnap open</code></td><td>List the workspaces and tabs open in cmux now.</td></tr>
+                  <tr><td><code translate="no">sessionsnap open</code></td><td>List the workspaces and tabs open in the terminal now.</td></tr>
                   <tr><td><code translate="no">sessionsnap show &lt;name&gt;[@v]</code></td><td>Show a snapshot's workspaces and tabs: each tab's position, kind (<code translate="no">shell</code> or the agent, such as <code translate="no">claude</code>) and title.</td></tr>
                   <tr><td><code translate="no">sessionsnap history &lt;name&gt;</code></td><td>List a snapshot's versions.</td></tr>
                   <tr><td><code translate="no">sessionsnap diff &lt;name&gt;@a &lt;name&gt;@b</code></td><td>Compare two versions: workspaces and tabs added (<code translate="no">+</code>), removed (<code translate="no">-</code>), moved (<code translate="no">→</code>) and renamed (<code translate="no">~</code>).</td></tr>
@@ -232,10 +235,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
           <section class="doc-section" id="automatic">
             <h2>Automatic snapshots</h2>
             <p>
-              An automatic snapshot is saved from what is open in cmux every interval, by launchd
-              (macOS only), even when sessionsnap is not running. Like any save, a run with no
-              changes writes nothing, so its history holds one version per change. Runs are skipped
-              while cmux is not running or shows no workspaces. Automatic snapshots are listed apart
+              An automatic snapshot is saved every interval, by launchd (macOS only), from the terminal
+              it was added in (cmux or tmux), even when sessionsnap is not running. Like any save, a
+              run with no changes writes nothing, so its history holds one version per change. Runs
+              are skipped while that terminal is not running or shows no workspaces, and so is a run from the other
+              terminal (<code translate="no">schedule run</code> by hand inside it). Automatic snapshots are listed apart
               from the ones you save, and only their schedule saves to them; to keep a version for
               good, copy it out with <code translate="no">sessionsnap save &lt;name&gt; --from &lt;auto&gt;@&lt;v&gt;</code>.
               Intervals are a number and a unit: <code translate="no">30m</code>, <code translate="no">2h</code>,
@@ -259,10 +263,38 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             </div>
           </section>
 
+          <section class="doc-section" id="tmux">
+            <h2>tmux</h2>
+            <p>
+              sessionsnap works out which terminal it runs in: inside tmux it uses tmux (even tmux in
+              a cmux tab), inside cmux it uses cmux, and from anywhere else the one that is running:
+              cmux, else a tmux with sessions. <code translate="no">--terminal tmux</code> or
+              <code translate="no">--terminal cmux</code> picks one. Each tmux session is a workspace and
+              each pane a tab. A restore opens each tab in its own window (splits are not saved) and
+              types the agent's resume command into its shell; a name tmux can't hold
+              (<code translate="no">.</code> or <code translate="no">:</code>) is kept in the session
+              option <code translate="no">@sessionsnap_name</code>, and a name another session has gets
+              a number (<code translate="no">work-2</code>). With no tmux server running,
+              <code translate="no">save</code> writes nothing and exits 3.
+            </p>
+            <p>
+              tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell
+              for an agent's process and reads its arguments exactly. The session is the one they name
+              (<code translate="no">--resume &lt;id&gt;</code>, <code translate="no">codex resume &lt;id&gt;</code>);
+              else, for Claude Code and Codex, the one session in that folder changed since the agent
+              started. Nothing is guessed: when several sessions there changed since (one may be
+              another terminal's), or several panes run the same agent in one folder with no ID in
+              their command, those panes are saved as plain tabs, and <code translate="no">save</code>
+              says so. Each version records the terminal it came from,
+              and an automatic snapshot keeps saving from the terminal it was added in. The palette is
+              cmux's; the web UI works with both (see <a href="#web-ui">Web UI</a>).
+            </p>
+          </section>
+
           <section class="doc-section" id="editing">
             <h2>Editing</h2>
             <p>
-              Edits change a saved snapshot, not cmux, and each one is a new version. A tab is
+              Edits change a saved snapshot, not the terminal, and each one is a new version. A tab is
               <code translate="no">&lt;workspace&gt;#&lt;position&gt;</code> (1-based) or
               <code translate="no">&lt;workspace&gt;:"&lt;part of the title&gt;"</code>; a workspace is its
               name or a unique part of it.
@@ -328,7 +360,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
           <section class="doc-section" id="restoring">
             <h2>Restoring</h2>
             <p>
-              A restore compares the snapshot with what is open in cmux and makes a plan: workspaces to
+              A restore compares the snapshot with what is open in the terminal and makes a plan: workspaces to
               create, and tabs to add to workspaces that are already open. Tabs that are already open
               are skipped. You see the plan before anything opens.
             </p>
@@ -350,7 +382,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                       <code translate="no">--pick</code>: choose the snapshot interactively.
                     </td>
                   </tr>
-                  <tr><td><code translate="no">sessionsnap apply &lt;plan-id&gt;</code></td><td>Apply a plan made by <code translate="no">restore</code> or <code translate="no">recent</code>. If cmux changed since the plan was made it refuses with exit 6; make a new plan.</td></tr>
+                  <tr><td><code translate="no">sessionsnap apply &lt;plan-id&gt;</code></td><td>Apply a plan made by <code translate="no">restore</code> or <code translate="no">recent</code>. If the terminal changed since the plan was made it refuses with exit 6; make a new plan.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -455,13 +487,13 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                       <code translate="no">--search &lt;text&gt;</code> in titles, prompts, folders or IDs;
                       <code translate="no">--cwd &lt;dir&gt;</code> (or below); <code translate="no">--days &lt;n&gt;</code>
                       (default 30); <code translate="no">--agent &lt;kind&gt;</code>. A <code translate="no">●</code>
-                      marks sessions open in cmux.
+                      marks sessions open in the terminal.
                     </td>
                   </tr>
                   <tr>
                     <td><code translate="no">sessionsnap recent</code></td>
                     <td>
-                      Interactive agent sessions active recently that are not open in cmux.
+                      Interactive agent sessions active recently that are not open in the terminal.
                       <code translate="no">--hours &lt;n&gt;</code> (default 24), <code translate="no">--agent &lt;kind&gt;</code>,
                       <code translate="no">--restore</code> (plan reopening them; applies with
                       <code translate="no">--yes</code> or after confirmation), <code translate="no">--plan</code>
@@ -503,11 +535,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 <tbody>
                   <tr><td>0</td><td><code translate="no">ok</code></td><td>Done.</td></tr>
                   <tr><td>1</td><td><code translate="no">error</code></td><td>Error, or some restore steps failed.</td></tr>
-                  <tr><td>2</td><td><code translate="no">cmux-unreachable</code></td><td>cmux is not running or not reachable.</td></tr>
+                  <tr><td>2</td><td><code translate="no">cmux-unreachable</code></td><td>The terminal is not reachable: cmux is not running, or tmux is not installed.</td></tr>
                   <tr><td>3</td><td><code translate="no">nothing-to-do</code></td><td>No changes to save, or nothing to restore.</td></tr>
                   <tr><td>4</td><td><code translate="no">refused</code></td><td>A confirmation was declined or needs <code translate="no">--yes</code>.</td></tr>
                   <tr><td>5</td><td><code translate="no">unknown-format</code></td><td>Unknown cmux state or snapshot format.</td></tr>
-                  <tr><td>6</td><td><code translate="no">plan-stale</code></td><td>cmux changed since the plan was made.</td></tr>
+                  <tr><td>6</td><td><code translate="no">plan-stale</code></td><td>The terminal changed since the plan was made.</td></tr>
                   <tr><td>7</td><td><code translate="no">not-found</code></td><td>No such snapshot, version, workspace, tab or plan.</td></tr>
                 </tbody>
               </table>
@@ -519,14 +551,18 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>
               <code translate="no">sessionsnap ui</code> serves a small page on
               <code translate="no">http://127.0.0.1:47317/</code> and shows it in the cmux Dock (the right
-              sidebar). The page runs the same commands as the CLI.
+              sidebar). Run in tmux, it opens the page in your default browser instead, and the page
+              saves from and restores into tmux. On macOS the page gets its key through
+              <code translate="no">osascript</code>'s input, never a command line; on Linux the page opens
+              without it and the keyed link is printed in the terminal running
+              <code translate="no">sessionsnap ui</code>. The page runs the same commands as the CLI.
             </p>
             <ul>
               <li><strong>Snapshots:</strong> save what is open, update a snapshot from what is open, delete one.</li>
               <li><strong>Workspaces:</strong> rename (double-click), reorder, remove, drag tabs to reorder or move them, add an agent session or a shell tab, add a workspace from cmux or from another snapshot. Edits are previewed and saved together as one version.</li>
               <li><strong>History:</strong> compare two versions; restore an older one.</li>
               <li><strong>Restore:</strong> tick workspaces and tabs, see what would open, then restore.</li>
-              <li><strong>Recent:</strong> agent sessions (Claude Code, Codex) from the last days that are not open in cmux.</li>
+              <li><strong>Recent:</strong> agent sessions (Claude Code, Codex) from the last days that are not open in the terminal.</li>
             </ul>
             <p>
               It runs while its terminal is open and stops after 30 minutes without use; nothing starts
@@ -586,9 +622,12 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                 <tbody>
                   <tr><td>Snapshots</td><td><code translate="no">~/.sessionsnap/snapshots/&lt;name&gt;/&lt;NNNN&gt;-&lt;time&gt;.json</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
                   <tr><td>Saved sessions' flags</td><td><code translate="no">~/.sessionsnap/sessions.json</code> (locks in <code translate="no">~/.sessionsnap/locks</code>); <code translate="no">SESSIONSNAP_HOME</code></td></tr>
+                  <tr><td>Automatic snapshots' schedules</td><td><code translate="no">~/.sessionsnap/schedules.json</code>; <code translate="no">SESSIONSNAP_HOME</code></td></tr>
+                  <tr><td>Schedules' launchd agents (macOS)</td><td><code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.&lt;name&gt;.plist</code></td></tr>
                   <tr><td>Claude Code transcripts (read)</td><td><code translate="no">~/.claude/projects</code>; <code translate="no">SESSIONSNAP_CLAUDE_DIR</code> (another <code translate="no">~/.claude</code>)</td></tr>
                   <tr><td>Codex sessions (read)</td><td><code translate="no">~/.codex/sessions</code>; <code translate="no">SESSIONSNAP_CODEX_DIR</code> (another <code translate="no">~/.codex</code>)</td></tr>
                   <tr><td>cmux binary</td><td><code translate="no">cmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_CMUX_BIN</code></td></tr>
+                  <tr><td>tmux binary</td><td><code translate="no">tmux</code> on <code translate="no">PATH</code>; <code translate="no">SESSIONSNAP_TMUX_BIN</code></td></tr>
                   <tr><td>cmux state file (read)</td><td><code translate="no">~/Library/Application Support/cmux/session-com.cmuxterm.app.json</code>; <code translate="no">SESSIONSNAP_CMUX_STATE</code></td></tr>
                   <tr><td>cmux socket (web UI)</td><td><code translate="no">$CMUX_SOCKET_PATH</code> (or its older name <code translate="no">$CMUX_SOCKET</code>), else the path in <code translate="no">~/Library/Application Support/cmux/last-socket-path</code>; <code translate="no">SESSIONSNAP_CMUX_SOCKET</code></td></tr>
                   <tr><td>cmux palette config</td><td><code translate="no">~/.config/cmux/cmux.json</code> (on Linux, <code translate="no">$XDG_CONFIG_HOME/cmux/cmux.json</code> when that is set); <code translate="no">SESSIONSNAP_CMUX_CONFIG</code></td></tr>
@@ -616,7 +655,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <li>A tab whose flags, ID, folder or command hold a control character (newline, ^C, ESC …) is never run, and an agent record with one is not saved. A resume command with a backslash is not typed into an already open workspace.</li>
               <li>Environment variables from cmux's state are never stored. Of an agent's flags, only those on its allow-list are saved; every other known flag (<code translate="no">--append-system-prompt</code>, <code translate="no">-c mcp_servers…</code>, …) is left out, and <code translate="no">save</code> names what it left out. A flag sessionsnap doesn't know (<code translate="no">--api-key</code>, <code translate="no">--header</code>, …) leaves out the whole agent session. Kept values are checked for their kind (inline JSON is not a path) and for known credential formats (see <a href="#restoring">How flags are restored</a>). A password typed inside a permission rule or other free text is not detected; recognised are token formats, auth headers and URLs with a password. A flag that limits the agent (deny rules, sandbox, permission mode, settings) that can't be saved exactly as given leaves out the whole agent session rather than resume it with fewer limits; so does any flag of an agent whose flags are untested. Restore filters older snapshots through the same rules.</li>
               <li>Snapshot files are readable only by you (folder 0700, files 0600).</li>
-              <li>The web UI listens on <code translate="no">127.0.0.1</code> only and needs the key from its link (new for each start, never put on a command line). It answers four connections at once (16 more may wait), runs one command at a time, and shows its page in cmux at most once a second.</li>
+              <li>The web UI listens on <code translate="no">127.0.0.1</code> only and needs the key from its link (new for each start, never put on a command line). It answers four connections at once (16 more may wait), runs one command at a time, and shows its page at most once a second.</li>
             </ul>
           </section>
 
@@ -654,12 +693,13 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <h2>Uninstall</h2>
             <div class="code-panel">
               <pre><code translate="no"><span class="prompt">$ </span>sessionsnap uninstall               <span class="comment"># lists what it removes and asks first</span>
-<span class="prompt">$ </span>sessionsnap uninstall --keep-data   <span class="comment"># keep your snapshots in ~/.sessionsnap</span></code></pre>
+<span class="prompt">$ </span>sessionsnap uninstall --keep-data   <span class="comment"># keep your snapshots and schedules.json in ~/.sessionsnap</span></code></pre>
             </div>
             <p>After you confirm (or with <code translate="no">-y</code>), <code translate="no">uninstall</code> removes:</p>
             <ul>
               <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay (if its <code translate="no">"commands"</code> array holds comments, this step is skipped and you remove those entries by hand);</li>
               <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>, only if sessionsnap wrote it;</li>
+              <li>every automatic snapshot's launchd agent (<code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.*</code>, macOS), even with <code translate="no">--keep-data</code>, which keeps the snapshots and <code translate="no">schedules.json</code>;</li>
               <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a symlink, or a folder holding files sessionsnap did not make, is left alone;</li>
               <li>the <code translate="no">sessionsnap</code> binary. One installed with cargo is left; run <code translate="no">cargo uninstall sessionsnap</code> afterwards.</li>
             </ul>

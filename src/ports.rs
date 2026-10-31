@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::domain::flags::FlagCheck;
 use crate::domain::model::{SessionRef, Version};
+use crate::domain::schedule::Schedule;
 use anyhow::Result;
 
 /// What is open in the terminal.
@@ -19,6 +20,15 @@ pub struct OpenState {
     pub live: bool,
     pub state_version: Option<u64>,
     pub workspaces: Vec<OpenWorkspace>,
+    /// What could not be read as it should, for the save to note.
+    pub warnings: Vec<OpenWarning>,
+}
+
+/// A note about what is open: about one workspace (`save -w` shows only its own), or all.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenWarning {
+    pub workspace: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +53,16 @@ pub struct OpenTab {
     pub cwd: String,
     /// The agent running in the tab, when the terminal knows one.
     pub agent: Option<AgentRef>,
+    /// What runs under the tab's shell, nearest first, from a terminal that can't name the agent
+    /// (tmux); `domain::running` finds the agent in it. Empty otherwise.
+    pub processes: Vec<TabProcess>,
+}
+
+/// A process running in a tab: its exact arguments (program first) and when it started.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabProcess {
+    pub argv: Vec<String>,
+    pub started: SystemTime,
 }
 
 /// A coding agent's session running in a terminal tab, as the terminal reports it.
@@ -80,10 +100,13 @@ pub struct LaunchTab {
     pub command: Option<String>,
 }
 
-/// What sessionsnap needs from a terminal: read what is open, open workspaces and tabs. One
-/// implementation today:
-/// `adapters::terminal::cmux::cli::CmuxCli`.
+/// What sessionsnap needs from a terminal: read what is open, open workspaces and tabs. Implemented
+/// by `adapters::terminal::cmux::cli::CmuxCli` and `adapters::terminal::tmux::Tmux`.
 pub trait Terminal {
+    /// The terminal's name, as `--terminal` and saved versions give it.
+    fn name(&self) -> &'static str {
+        "cmux"
+    }
     /// True when the terminal is running and answers.
     fn is_running(&self) -> bool;
     /// Starts the terminal if needed and waits until it answers.
@@ -96,15 +119,16 @@ pub trait Terminal {
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()>;
     /// Shows `url` in the terminal: points a browser already on its address (ignoring the `#` part)
     /// at it ("reused"), else adds a Dock browser tab ("dock"), else, with the Dock off, opens a
-    /// browser tab ("tab"). The `#` part may carry a key, so it never goes on a command line; when
-    /// it cannot be handed over another way, the page is shown without it.
+    /// browser tab ("tab"); tmux opens the default browser ("browser"). The `#` part may carry a
+    /// key, so it never goes on a command line; when it cannot be handed over another way, the page
+    /// is shown without it.
     fn show_url(&self, url: &str) -> Result<Shown>;
 }
 
 /// Where `Terminal::show_url` showed a page, and whether the link's `#` part reached it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shown {
-    /// "reused", "dock" or "tab".
+    /// "reused", "dock", "tab" or "browser" (tmux: the default browser).
     pub place: &'static str,
     /// Why the page was shown without its `#` part; None when the whole link reached it.
     pub fragment_error: Option<String>,
@@ -165,6 +189,9 @@ pub trait SessionHistory {
 pub trait AgentCatalog {
     /// The kind of the agent with this name, alias or program name; None when unknown.
     fn kind_of(&self, name: &str) -> Option<&'static str>;
+    /// The session a launch of agent `kind` names in its args (`--resume <id>`); None when it
+    /// names none or an invalid one.
+    fn session_in_args(&self, kind: &str, args: &[String]) -> Option<String>;
     /// A name for people, e.g. "Codex"; the name itself for unknown agents.
     fn display_name(&self, name: &str) -> String;
     /// True when `session_id` is a session ID of agent `kind` (false for unknown agents).
@@ -204,8 +231,9 @@ pub trait Releases {
 /// Runs `sessionsnap schedule run <name>` every so often, even with sessionsnap not running.
 /// Implemented by `adapters::scheduler::Launchd` (macOS); tests use `testing::FakeScheduler`.
 pub trait Scheduler {
-    /// Runs the save of `name` every `interval` seconds, replacing any earlier schedule of it.
-    fn install(&self, name: &str, interval: u64) -> Result<()>;
+    /// Runs the save of `name` every `schedule.interval` seconds, from `schedule.terminal`,
+    /// replacing any earlier schedule of it.
+    fn install(&self, name: &str, schedule: &Schedule) -> Result<()>;
     /// Stops the saves of `name`; nothing to do when there are none.
     fn remove(&self, name: &str) -> Result<()>;
 }

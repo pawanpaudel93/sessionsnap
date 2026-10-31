@@ -1,5 +1,5 @@
 //! Scheduled saves as launchd agents: one `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`
-//! per automatic snapshot, running `sessionsnap schedule run -- <name>` every interval.
+//! per automatic snapshot, running `sessionsnap --terminal <t> schedule run -- <name>` every interval.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -7,6 +7,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 
 use crate::adapters::home_dir;
+use crate::domain::schedule::Schedule;
 use crate::error::{Exit, failure};
 use crate::ports::Scheduler;
 
@@ -78,11 +79,11 @@ impl Launchd {
 }
 
 impl Scheduler for Launchd {
-    fn install(&self, name: &str, interval: u64) -> Result<()> {
+    fn install(&self, name: &str, schedule: &Schedule) -> Result<()> {
         let label = Self::label(name);
         let path = self.plist_path(name);
         std::fs::create_dir_all(&self.agents_dir).with_context(|| format!("creating {}", self.agents_dir.display()))?;
-        std::fs::write(&path, plist(&label, &self.program, name, interval, &self.env))
+        std::fs::write(&path, plist(&label, &self.program, name, schedule, &self.env))
             .with_context(|| format!("writing {}", path.display()))?;
         self.bootout(&label)?;
         let out = self.launchctl(&["bootstrap", &Self::domain()?, &path.to_string_lossy()])?;
@@ -107,12 +108,18 @@ impl Scheduler for Launchd {
     }
 }
 
-/// The agent's plist: runs `<program> schedule run -- <name>` every `interval` seconds, not at load
-/// (`schedule add` has just saved).
-pub fn plist(label: &str, program: &Path, name: &str, interval: u64, env: &[(String, String)]) -> String {
+/// The agent's plist: runs `<program> --terminal <t> schedule run -- <name>` every interval, not at
+/// load (`schedule add` has just saved). The terminal is always named: launchd runs outside both.
+pub fn plist(label: &str, program: &Path, name: &str, schedule: &Schedule, env: &[(String, String)]) -> String {
     let s = |v: &str| format!("<string>{}</string>", xml(v));
-    let args: Vec<String> =
-        [program.to_string_lossy().as_ref(), "schedule", "run", "--", name].iter().map(|a| s(a)).collect();
+    let program = program.to_string_lossy();
+    let terminal = schedule.terminal.as_deref().unwrap_or("cmux");
+    let args: Vec<String> = std::iter::once(program.as_ref())
+        .chain(["--terminal", terminal])
+        .chain(["schedule", "run", "--", name])
+        .map(s)
+        .collect();
+    let interval = schedule.interval;
     let vars: String = env.iter().map(|(k, v)| format!("\n    <key>{}</key>{}", xml(k), s(v))).collect();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -163,15 +170,24 @@ mod tests {
         }
     }
 
+    fn every(interval: u64) -> Schedule {
+        Schedule { interval, created_at: "t".into(), stopped: false, last_run: None, terminal: None }
+    }
+
     fn log(dir: &Path) -> String {
         std::fs::read_to_string(dir.join("log")).unwrap_or_default()
     }
 
     #[test]
     fn plist_runs_the_named_save_every_interval() {
-        let p =
-            plist("sessionsnap.schedule.work", Path::new("/bin/s<x>"), "-work", 600, &[("PATH".into(), "/a&b".into())]);
-        assert!(p.contains("<string>/bin/s&lt;x&gt;</string><string>schedule</string><string>run</string><string>--</string><string>-work</string>"), "{p}");
+        let p = plist(
+            "sessionsnap.schedule.work",
+            Path::new("/bin/s<x>"),
+            "-work",
+            &every(600),
+            &[("PATH".into(), "/a&b".into())],
+        );
+        assert!(p.contains("<string>/bin/s&lt;x&gt;</string><string>--terminal</string><string>cmux</string><string>schedule</string><string>run</string><string>--</string><string>-work</string>"), "{p}");
         assert!(p.contains("<key>StartInterval</key><integer>600</integer>"));
         assert!(p.contains("<key>PATH</key><string>/a&amp;b</string>"));
         assert!(p.contains("<key>RunAtLoad</key><false/>"));
@@ -186,10 +202,22 @@ mod tests {
     }
 
     #[test]
+    fn plist_names_a_tmux_schedules_terminal() {
+        let tmux = Schedule { terminal: Some("tmux".into()), ..every(60) };
+        let p = plist("l", Path::new("/bin/s"), "w", &tmux, &[]);
+        assert!(
+            p.contains(
+                "<string>/bin/s</string><string>--terminal</string><string>tmux</string><string>schedule</string>"
+            ),
+            "{p}"
+        );
+    }
+
+    #[test]
     fn install_replaces_the_agent_and_remove_deletes_it() {
         let dir = tempfile::tempdir().unwrap();
         let l = fake(dir.path(), false);
-        l.install("Work", 600).unwrap();
+        l.install("Work", &every(600)).unwrap();
         let plist = dir.path().join("agents/sessionsnap.schedule.work.plist");
         assert!(std::fs::read_to_string(&plist).unwrap().contains("<string>Work</string>"));
         let calls = log(dir.path());
@@ -203,7 +231,7 @@ mod tests {
     #[test]
     fn a_failed_load_leaves_no_plist() {
         let dir = tempfile::tempdir().unwrap();
-        let e = fake(dir.path(), true).install("work", 600).unwrap_err();
+        let e = fake(dir.path(), true).install("work", &every(600)).unwrap_err();
         assert!(format!("{e:#}").contains("nope"), "{e:#}");
         assert!(!dir.path().join("agents/sessionsnap.schedule.work.plist").exists());
     }
@@ -212,8 +240,8 @@ mod tests {
     fn remove_all_takes_only_sessionsnap_agents() {
         let dir = tempfile::tempdir().unwrap();
         let l = fake(dir.path(), false);
-        l.install("a", 600).unwrap();
-        l.install("b", 3600).unwrap();
+        l.install("a", &every(600)).unwrap();
+        l.install("b", &every(3600)).unwrap();
         std::fs::write(dir.path().join("agents/com.other.plist"), "x").unwrap();
         assert_eq!(l.remove_all().unwrap(), ["sessionsnap.schedule.a", "sessionsnap.schedule.b"]);
         let left: Vec<_> =
