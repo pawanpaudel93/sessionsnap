@@ -4,6 +4,26 @@ All notable changes to sessionsnap are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Automatic snapshots on Linux, as systemd user timers.
+
+### Fixed
+
+- tmux older than 3.5 (as on Ubuntu 24.04): its sessions were read as none, so saves from it were
+  skipped.
+- Scheduled cmux saves: cmux's default socket mode refuses programs it didn't start, so every
+  scheduled save skipped; they now save from the state cmux writes every few seconds.
+
+### Changed
+
+- A save reads only what was appended to each Claude Code transcript since the last one.
+- The terminal is picked only when a command needs one; `list`, `show` and `update` never wait on it.
+- `restore` with no name restores the most recently saved snapshot; `list` names each snapshot's
+  workspaces, folders and agents, and takes `--cwd`.
+
 ## [0.1.0] - 2026-10-31
 
 The first release.

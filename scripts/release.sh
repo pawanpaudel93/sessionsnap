@@ -161,10 +161,15 @@ else
 fi
 [ "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)" = "$VERSION" ] ||
   die "Cargo.toml did not take the new version."
-# The changelog describes every release: its "Unreleased" section for this version gets today's date.
+# The changelog describes every release: its "## [Unreleased]" section (or "## [X.Y.Z] - Unreleased")
+# becomes this version's, with today's date.
+TODAY=$(date +%Y-%m-%d)
+if grep -q '^## \[Unreleased\]$' CHANGELOG.md && ! grep -q "^## \[$VERSION\] - " CHANGELOG.md; then
+  subst CHANGELOG.md "s/^## \[Unreleased\]\$/## [$VERSION] - $TODAY/"
+fi
 grep -q "^## \[$VERSION\] - " CHANGELOG.md || die "CHANGELOG.md has no section for $VERSION; write one first."
 VERSION_RE=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
-subst CHANGELOG.md "s/^## \[$VERSION_RE\] - Unreleased\$/## [$VERSION] - $(date +%Y-%m-%d)/"
+subst CHANGELOG.md "s/^## \[$VERSION_RE\] - Unreleased\$/## [$VERSION] - $TODAY/"
 
 # --- checks (the same script CI runs) ----------------------------------------
 scripts/check.sh

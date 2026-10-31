@@ -17,7 +17,7 @@ domain/       pure logic        model (snapshot format), capture, flags, diff, e
 ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases, Scheduler
      ▲  implemented by
 adapters/     the outside       terminal/{cmux,tmux,procs}, agents/{registry,claude,codex}, store/fs,
-                                releases, scheduler/launchd
+                                releases, scheduler/{launchd,systemd}
 ```
 
 ## Layers and their rules
@@ -54,8 +54,8 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
   asking a binary its version. Implemented by `adapters/releases.rs` with `curl`, `shasum` or
   `sha256sum`, and `tar`, so the binary needs no HTTP crate; tests use `testing::FakeReleases`.
 - **`Scheduler`**: installs or removes a periodic `sessionsnap --terminal <t> schedule run -- <name>`
-  for an automatic snapshot. Implemented by `adapters/scheduler/launchd.rs` on macOS; elsewhere
-  scheduling is refused. Tests use `testing::FakeScheduler`.
+  for an automatic snapshot. Implemented by `adapters/scheduler/launchd.rs` on macOS and
+  `adapters/scheduler/systemd.rs` (user timers) on Linux; elsewhere scheduling is refused. Tests use `testing::FakeScheduler`.
 
 ## The snapshot format
 
