@@ -51,6 +51,8 @@ it, `sessionsnap uninstall [--keep-data]` removes sessionsnap (asks first). The 
   offline against fake releases) and `scripts/test-site.py`. CI runs the same script on macOS and
   Linux; `scripts/release.sh` runs it too. No test may run cmux, an agent, a browser, or touch
   the network.
+  `scripts/ci-local.sh` runs what CI runs (that script on this machine and on Linux, and the tests on
+  the minimum Rust version) in Docker, for when CI can't run.
 - Commits follow Conventional Commits: `type(scope): lowercase summary`, e.g.
   `feat(agents): add gemini history`. Types: feat, fix, refactor, docs, test, chore, ci, style.
   Never commit `target/`, `dist/`, `docs/` or `.superpowers/`.
