@@ -1,6 +1,6 @@
 # sessionsnap
 
-sessionsnap saves named, versioned snapshots of cmux workspaces (or tmux sessions) and the coding-agent sessions in their tabs, and reopens only what is missing, with each agent tab resumed in its own folder with the flags it was started with. It is a single Rust binary with a CLI, a web UI in the cmux Dock, cmux palette commands and a Claude Code skill. Nothing runs in the background unless you add an automatic snapshot (`schedule add`).
+sessionsnap saves named, versioned snapshots of cmux workspaces (or tmux sessions) and the coding-agent sessions in their tabs, and reopens only what is missing, with each agent tab resumed in its own folder with the flags it was started with. It is a single Rust binary with a CLI, a web UI in the cmux Dock (or the default browser from tmux), cmux palette commands and a Claude Code skill. Nothing runs in the background unless you add an automatic snapshot (`schedule add`).
 
 It needs macOS with cmux 0.64 or newer, or tmux on macOS or Linux: sessionsnap uses the terminal it runs in (tmux first; outside both, the one running), and `--terminal cmux|tmux` picks one. cmux on Linux is a different app with a different command line, not supported yet.
 

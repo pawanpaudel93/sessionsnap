@@ -53,14 +53,19 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
 - **`Releases`**: what `update` needs: the latest release tag, downloads, a SHA-256, unpacking and
   asking a binary its version. Implemented by `adapters/releases.rs` with `curl`, `shasum` or
   `sha256sum`, and `tar`, so the binary needs no HTTP crate; tests use `testing::FakeReleases`.
+- **`Scheduler`**: installs or removes a periodic `sessionsnap --terminal <t> schedule run -- <name>`
+  for an automatic snapshot. Implemented by `adapters/scheduler/launchd.rs` on macOS; elsewhere
+  scheduling is refused. Tests use `testing::FakeScheduler`.
 
 ## The snapshot format
 
 `domain/model.rs`, format version 2. A tab is either a plain terminal (`title`, `cwd`, optional
 `command`) or an agent tab (`title`, `cwd`, `agent`, `sessionId`, `args`, and `leftOut`: why its flags were
 left out when one could not be kept, so it restores as a plain shell; `leftOutUnsure` marks a
-`leftOut` that only says the session's flags are undecided, which a live reading decides). The format names no
-terminal, so a snapshot can be restored by any terminal adapter.
+`leftOut` that only says the session's flags are undecided, which a live reading decides). A version records the
+terminal it was captured from (`source.terminal`, when not cmux), for information only; any terminal
+adapter can restore it. A workspace records `pinned` (cmux's `isPinned`), which restore does not
+reapply.
 
 Snapshots are user-editable files whose contents end up as commands in a shell. Every value that
 reaches a command is validated (no control characters; session IDs checked per agent) and every

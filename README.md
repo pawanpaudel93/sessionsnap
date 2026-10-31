@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml/badge.svg)](https://github.com/pawanpaudel93/sessionsnap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 ![Terminal: cmux | tmux](https://img.shields.io/badge/terminal-cmux%20%7C%20tmux-8A2BE2)
 
 **Save your cmux or tmux workspaces and the coding-agent sessions in them; bring them back resumed.**
@@ -12,7 +12,7 @@ Website: <https://sessionsnap.pawanpaudel.com.np>
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces (or tmux
 sessions) and the agent sessions in their tabs (Claude Code, Codex and more). Save what is open, edit it, and later reopen
 only what is missing, with each agent tab resumed in its own folder with the flags it was started
-with that sessionsnap knows to be safe to pass again. It is a single Rust binary with a CLI, a web UI in the cmux Dock, and cmux palette commands.
+with that sessionsnap knows to be safe to pass again. It is a single Rust binary with a CLI, a web UI in the cmux Dock (or the browser from tmux), and cmux palette commands.
 
 Nothing runs in the background unless you add an automatic snapshot: every other snapshot is one
 you ask for.
@@ -44,9 +44,11 @@ you ask for.
   opens; workspaces and tabs that are already open are left alone.
 - **Edit snapshots:** rename, reorder and remove workspaces, move tabs between them, add agent
   sessions by ID.
-- **Find lost sessions:** `recent` lists agent sessions from the last day that are not open in cmux.
+- **Find lost sessions:** `recent` lists agent sessions from the last day that are not open in the terminal.
 - **Scriptable:** every command takes `--json` and `--yes`, with stable exit codes.
-- **Web UI and palette:** a page in the cmux Dock, and commands in the cmux command palette.
+- **Web UI and palette:** a page in the cmux Dock (or the browser from tmux), and commands in the
+  cmux command palette.
+- **Automatic snapshots:** `schedule add` saves a snapshot every interval through launchd (macOS).
 - **tmux too:** inside tmux, sessionsnap saves and restores tmux sessions, on macOS and Linux.
 
 ## Requirements
@@ -110,7 +112,7 @@ sessionsnap diff work@3 work@4
 sessionsnap restore work --plan       # what would be reopened
 sessionsnap restore work              # plan, confirm, reopen what is missing
 sessionsnap restore work --tab 'Cascadia#3'   # just that tab, into Cascadia if it is open
-sessionsnap recent                    # agent sessions from the last 24h not open in cmux
+sessionsnap recent                    # agent sessions from the last 24h not open in the terminal
 sessionsnap sessions --agent codex    # Codex sessions on disk
 sessionsnap tab work Cascadia#4 --move "Cascadia Community"
 sessionsnap tab work Cascadia --add-session <session-id>
@@ -121,10 +123,11 @@ sessionsnap rename work job           # rename a snapshot (and its schedule)
 
 ### Automatic snapshots
 
-An automatic snapshot is saved from what is open in cmux every interval by launchd (macOS only),
-even when sessionsnap isn't running. A run with no changes writes nothing, so its history holds one
-version per change. Runs are skipped while cmux is not running or shows no workspaces. `list` shows
-automatic snapshots under their own heading, and only their schedule saves to them: copy a version
+An automatic snapshot is saved every interval by launchd (macOS only) from the terminal it was added
+in (cmux or tmux), even when sessionsnap isn't running. A run with no changes writes nothing, so its
+history holds one version per change. Runs are skipped while that terminal is not running or shows
+no workspaces, and a run from another terminal (`schedule run` by hand inside the other one) is
+skipped too. `list` shows automatic snapshots under their own heading, and only their schedule saves to them: copy a version
 out with `sessionsnap save <name> --from <auto>@<v>` to keep it.
 
 ```sh
@@ -144,17 +147,19 @@ agent in `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist`; `uninstall`
 
 sessionsnap works out which terminal it runs in: inside tmux it uses tmux (even tmux in a cmux tab),
 inside cmux it uses cmux, and from anywhere else (another terminal app) the one that is running:
-cmux, else a tmux with sessions. `--terminal tmux` or `--terminal cmux` picks one. Each tmux session is a workspace and each pane a
-tab; a restore opens each tab in its own window (splits are not saved), types the agent's resume
-command into its shell, and keeps a name tmux can't hold (`.` or `:`) in the session option
-`@sessionsnap_name`.
+cmux, else a tmux with sessions. `--terminal tmux` or `--terminal cmux` picks one. Each tmux
+session is a workspace and each pane a tab; a restore opens each tab in its own window (splits are
+not saved) and types the agent's resume command into its shell. A name tmux can't hold (`.` or
+`:`) is kept in the session option `@sessionsnap_name`, and a name another session has gets a
+number (`work-2`). With no tmux server running, `save` writes nothing and exits 3.
 
 tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell for an
 agent's process and reads its arguments exactly (`/proc` on Linux, the kernel on macOS). Its session
 is the one the arguments name (`--resume <id>`, `codex resume <id>`); else, for Claude Code and
-Codex, the session in that folder changed most recently since the agent started. When several panes
-run the same agent in one folder with no ID in their command, none is guessed: they are saved as
-plain tabs, and `save` says so. Each version records the terminal it came from, and an automatic
+Codex, the one session in that folder changed since the agent started. Nothing is guessed: when
+several sessions there changed since (one may be another terminal's), or several panes run the
+same agent in one folder with no ID in their command, those panes are saved as plain tabs, and
+`save` says so. Each version records the terminal it came from, and an automatic
 snapshot keeps saving from the terminal it was added in. The palette is cmux's; the web UI works
 with both (see [Web UI](#web-ui)).
 
@@ -301,7 +306,7 @@ version, `recent`, and `apply`, which rebuilds the plan): a session the record h
 out (a plain shell with the reason, or skipped in an open workspace), and one it has flags for
 resumes with those, with a warning ("using the session's newest known flags") when the tab's own
 differ. A session put in a tab by an edit (`--add-session`, `--session`, `ws --from`) takes its
-flags from there too, or, when it is open in cmux, the flags it runs with now (a launch that loses
+flags from there too, or, when it is open in the terminal, the flags it runs with now (a launch that loses
 it leaves it out); a session seen nowhere resumes with no flags and a warning ("launch flags
 unknown; resuming with defaults").
 
@@ -340,15 +345,17 @@ printed in the terminal running `sessionsnap ui`.
 A full restore adds only missing agent tabs to a workspace that is already open (a shell might be
 a duplicate). A tab you pick (`--tab`, or a subset ticked in the UI) is added to its open workspace
 even when it is a shell, or as a plain shell, with the reason, when its session can't be resumed.
-- **Recent:** agent sessions (Claude Code, Codex) from the last days that are not open in cmux.
+- **Recent:** agent sessions (Claude Code, Codex) from the last days that are not open in the
+  terminal.
 
 Details:
 
 - It runs while its terminal is open and stops after 30 minutes without use; nothing starts at
-  login. Stop it with Ctrl-C, or close the "sessionsnap UI" workspace.
+  login. Stop it with Ctrl-C, or, when it was started from the cmux palette, close the
+  "sessionsnap UI" workspace.
 - It answers four connections at once and lets 16 more wait (beyond that, 503). It runs one
   command at a time; a command that would wait over 3 s for another is refused, and the page says
-  so. It shows its page in cmux at most once a second (otherwise 429).
+  so. It shows its page at most once a second (otherwise 429).
 - Flags: `--port <n>` (default 47317), `--idle-minutes <n>` (default 30), `--no-open` (serve
   without showing the page).
 - The link carries a key after `#` (`…/#t=<key>`), which browsers never send to a server. The key
@@ -366,6 +373,8 @@ Details:
 |---|---|---|
 | Snapshots | `~/.sessionsnap/snapshots/<name>/<NNNN>-<time>.json` | `SESSIONSNAP_HOME` |
 | Saved sessions' flags | `~/.sessionsnap/sessions.json` (lock files in `~/.sessionsnap/locks`) | `SESSIONSNAP_HOME` |
+| Automatic snapshots' schedules | `~/.sessionsnap/schedules.json` | `SESSIONSNAP_HOME` |
+| Schedules' launchd agents (macOS) | `~/Library/LaunchAgents/sessionsnap.schedule.<name>.plist` | none |
 | Claude Code transcripts (read) | `~/.claude/projects` | `SESSIONSNAP_CLAUDE_DIR` (another `~/.claude`) |
 | Codex sessions (read) | `~/.codex/sessions` | `SESSIONSNAP_CODEX_DIR` (another `~/.codex`) |
 | cmux binary | `cmux` on `PATH` | `SESSIONSNAP_CMUX_BIN` |
@@ -440,14 +449,15 @@ Not yet checked:
 
 ```sh
 sessionsnap uninstall               # asks first; --yes skips the prompt
-sessionsnap uninstall --keep-data   # keep your snapshots in ~/.sessionsnap
+sessionsnap uninstall --keep-data   # keep your snapshots and schedules.json in ~/.sessionsnap
 ```
 
 This removes the `"sessionsnap: …"` palette commands from cmux's `cmux.json` (after backing it
 up next to itself; your other commands and comments stay; if its `"commands"` array holds
 comments, the step is skipped and you remove those entries by hand), the Claude Code skill
-(`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), `~/.sessionsnap` (or
-`SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap
+(`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), every automatic snapshot's launchd
+agent (macOS; removed even with `--keep-data`, which keeps the snapshots and `schedules.json`),
+`~/.sessionsnap` (or `SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap
 did not make), and the `sessionsnap` binary. Anything already gone is
 reported, not an error. If a step fails (say the binary's folder is not writable), the others still
 run, the report lists what was removed and what failed with its error, and the exit code is 1. It

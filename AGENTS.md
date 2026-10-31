@@ -5,7 +5,7 @@ sessions) and the coding-agent sessions in their tabs, and later reopens only wh
 resumed with its original flags (those on the agent's allow-list). Claude Code and Codex are fully
 supported (their session histories are read); 15 more agents are resume-only and untested, and
 resume only sessions started without flags. It is one Rust binary: a CLI
-with `--json`, a web UI in the cmux Dock, cmux palette commands, and a Claude Code skill. It runs
+with `--json`, a web UI in the cmux Dock or the browser from tmux, cmux palette commands, and a Claude Code skill. It runs
 on macOS with cmux 0.64+, and with tmux on macOS and Linux. It uses the terminal it runs in (tmux first;
 outside both, the one running); `--terminal cmux|tmux` picks one. cmux on Linux is a different app with a different command line, not supported
 yet.
@@ -18,7 +18,8 @@ yet.
   opens, skips and warns about, then `sessionsnap apply <planId> --json` once they agree.
 - Pass `--yes` only for an action the user asked for by name (`delete`, `prune`, `install-cmux`,
   `uninstall`). Without it, a command that would ask exits 4 instead of prompting.
-- `save` only reads cmux; with no changes it writes nothing and exits 3.
+- `save` only reads the terminal; with no changes, or no tmux server running, it writes nothing
+  and exits 3.
 - Never start an automatic snapshot (`schedule add`) or automate saving unless the user asks.
   Don't start `sessionsnap ui` unless they ask for the UI.
 - `skill/SKILL.md` (installed with `sessionsnap install-skill`) has the full command table and the
