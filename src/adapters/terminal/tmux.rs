@@ -17,6 +17,8 @@ const NAME_OPTION: &str = "@sessionsnap_name";
 const AS_OPTION: &str = "@sessionsnap_as";
 /// Separates the fields of `list-panes` lines: a control character no name or path holds.
 const SEP: char = '\u{1f}';
+/// Longest wait for one tmux call.
+const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// At most this many processes are read under one pane's shell.
 const MAX_PROCESSES: usize = 20;
 
@@ -59,11 +61,17 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
     /// characters, `SEP` included, and non-ASCII names into `_`.
     fn tmux(&self, args: &[&str]) -> Result<Output> {
         let args: Vec<String> = std::iter::once("-u").chain(args.iter().copied()).map(String::from).collect();
-        self.runner.run(&self.program, &args).map_err(|_| self.not_installed())
+        // Bounded, so a hung tmux never hangs a restore (or the web UI, which runs one at a time).
+        self.runner.run_timeout(&self.program, &args, CALL_TIMEOUT).map_err(|e| {
+            let missing = e.chain().any(|c| {
+                c.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+            });
+            if missing { self.not_installed() } else { e }
+        })
     }
 
     fn not_installed(&self) -> anyhow::Error {
-        failure(Exit::CmuxUnreachable, format!("could not run `{}`: is tmux installed and on PATH?", self.program))
+        failure(Exit::TerminalUnreachable, format!("could not run `{}`: is tmux installed and on PATH?", self.program))
     }
 
     fn tmux_ok(&self, args: &[&str]) -> Result<String> {
@@ -97,7 +105,8 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
             if err.contains("no server running") || err.contains("error connecting") {
                 return Ok(vec![]);
             }
-            return Err(failure(Exit::Error, format!("`tmux list-panes` failed: {err}")));
+            let why = if err.is_empty() { "it gave no reason" } else { err };
+            return Err(failure(Exit::Error, format!("`tmux list-panes` failed: {why}")));
         }
         Ok(out.stdout.lines().filter_map(parse_pane).collect())
     }
@@ -553,11 +562,11 @@ mod tests {
         struct Missing;
         impl Runner for Missing {
             fn run(&self, _: &str, _: &[String]) -> Result<Output> {
-                anyhow::bail!("No such file or directory")
+                Err(anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound)).context("running tmux"))
             }
         }
         let t = Tmux { runner: Missing, program: "tmux".into(), procs: FakeProcs::default() };
         assert!(!t.is_running());
-        assert_eq!(crate::error::exit_of(&t.read_open_state().unwrap_err()), Exit::CmuxUnreachable);
+        assert_eq!(crate::error::exit_of(&t.read_open_state().unwrap_err()), Exit::TerminalUnreachable);
     }
 }

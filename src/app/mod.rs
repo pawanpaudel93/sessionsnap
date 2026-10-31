@@ -42,6 +42,8 @@ pub struct Ctx {
     pub interactive: bool,
     /// Text for `--batch -` when the caller is not a terminal (the web UI); stdin when None.
     pub input: Option<String>,
+    /// Whether a folder exists (tests that use made-up folders say yes to all).
+    pub folder_exists: fn(&str) -> bool,
 }
 
 impl Ctx {
@@ -64,6 +66,7 @@ impl Ctx {
             yes,
             interactive: !json && std::io::stdin().is_terminal(),
             input: None,
+            folder_exists: |path| std::path::Path::new(path).is_dir(),
         })
     }
 }

@@ -66,7 +66,8 @@ fn uninstall_asks_first() {
     let (exit, v) = run_json(&args(&["uninstall"]), |cli| Ok(env.ctx(true, cli.yes, None)));
     assert_eq!(exit, Exit::Refused);
     let message = v["error"]["message"].as_str().unwrap();
-    assert!(message.contains("This removes:") && message.contains("pass --yes"), "{message}");
+    assert!(message.contains("This removes:") && message.contains("ask the user"), "{message}");
+    assert_eq!(v["error"]["code"], "needs-confirmation");
 }
 
 #[test]

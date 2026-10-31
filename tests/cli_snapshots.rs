@@ -162,3 +162,23 @@ fn an_existing_double_dash_snapshot_still_works_but_no_new_one_is_made() {
     let err = env.run(&["save", "--from", "work@1", "--", "--z"]).unwrap_err();
     assert!(format!("{err:#}").contains("can't start with '--'"), "{err:#}");
 }
+
+#[test]
+fn a_save_while_the_terminal_is_not_running_says_it_may_be_out_of_date() {
+    let env = common::setup();
+    env.fake.state.borrow_mut().live = false;
+    let o = env.run(&["save", "work"]).unwrap();
+    assert!(
+        o.json["warnings"].to_string().contains("is not running: saved from what it last wrote to disk"),
+        "{}",
+        o.json
+    );
+}
+
+#[test]
+fn sessions_can_be_limited_and_say_how_many_there_are() {
+    let env = common::setup();
+    let o = env.run(&["sessions", "--limit", "1"]).unwrap();
+    assert_eq!(o.json["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(o.json["total"], 2);
+}

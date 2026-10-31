@@ -84,6 +84,12 @@ fn save_as(
             let saved = |ws: &str| only.is_empty() || captured.iter().any(|w| w.name.eq_ignore_ascii_case(ws));
             let open_notes = open.warnings.iter().filter(|w| w.workspace.as_deref().is_none_or(saved));
             notes.splice(0..0, open_notes.map(|w| w.message.clone()));
+            if !open.live {
+                let stale = format!(
+                    "{terminal} is not running: saved from what it last wrote to disk, which may be out of date"
+                );
+                notes.insert(0, stale);
+            }
             live = Some(crate::domain::capture::seen(&open, &ctx.agents, &captured));
             let workspaces = match &previous {
                 Some(p) if !only.is_empty() => merge(&p.workspaces, captured),

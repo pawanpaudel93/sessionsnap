@@ -58,11 +58,11 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             restore(ctx, snapshot, workspaces, tabs, plan, pick)
         }
         Command::Apply { plan_id } => apply(ctx, &plan_id),
-        Command::Sessions { search, cwd, days, agent } => {
-            sessions(ctx, search.as_deref(), cwd.as_deref(), days, agent.as_deref())
+        Command::Sessions { search, cwd, days, agent, limit } => {
+            sessions(ctx, search.as_deref(), cwd.as_deref(), days, agent.as_deref(), limit)
         }
-        Command::Recent { hours, agent, restore, plan, pick } => {
-            recent(ctx, hours, agent.as_deref(), restore, plan, pick)
+        Command::Recent { hours, agent, restore, plan, pick, limit } => {
+            recent(ctx, hours, agent.as_deref(), restore, plan, pick, limit)
         }
         Command::Agents => {
             let list = app::agents::list(ctx);
@@ -384,7 +384,7 @@ pub(crate) fn confirm(ctx: &Ctx, question: &str) -> Result<()> {
     if ctx.yes || (ctx.interactive && pick::confirm(question)?) {
         Ok(())
     } else {
-        Err(failure(Exit::Refused, format!("{question} Not confirmed (pass --yes)")))
+        Err(crate::error::needs_confirmation(question))
     }
 }
 
@@ -549,9 +549,15 @@ fn plan_then_apply(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Out
 fn applied(ctx: &Ctx, plan: &Plan) -> Result<Outcome> {
     let steps = app::restore::run_plan(ctx, plan)?;
     let failed = steps.iter().filter(|s| !s.ok).count();
+    // The plan's warnings too: a restore applied at once (--yes, a yes at the prompt) shows them
+    // nowhere else.
+    let mut text = human::steps(&steps);
+    for w in &plan.warnings {
+        text.push_str(&format!("\n! {w}"));
+    }
     let out = Outcome::ok(
-        json!({"planId": plan.plan_id, "applied": true, "steps": steps, "failed": failed}),
-        human::steps(&steps),
+        json!({"planId": plan.plan_id, "applied": true, "steps": steps, "failed": failed, "warnings": plan.warnings}),
+        text,
     );
     Ok(if failed > 0 { out.with_exit(Exit::Error) } else { out })
 }
@@ -561,13 +567,22 @@ fn apply(ctx: &Ctx, plan_id: &str) -> Result<Outcome> {
     applied(ctx, &plan)
 }
 
-fn sessions(ctx: &Ctx, search: Option<&str>, cwd: Option<&str>, days: u64, agent: Option<&str>) -> Result<Outcome> {
+fn sessions(
+    ctx: &Ctx,
+    search: Option<&str>,
+    cwd: Option<&str>,
+    days: u64,
+    agent: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Outcome> {
     let (list, open) = app::sessions::list(ctx, search, cwd, days, agent)?;
+    let total = list.len();
+    let list = &list[..limit.unwrap_or(total).min(total)];
     let rows: Vec<Value> = list
         .iter()
         .map(|s| json!({"session": session_json(s), "open": open.contains(&SessionRef::new(&s.agent, &s.session_id))}))
         .collect();
-    Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)))
+    Ok(Outcome::ok(json!({"sessions": rows, "total": total}), human::sessions(list, &open)))
 }
 
 /// A session as `sessions` and `recent` print it.
@@ -585,6 +600,7 @@ fn recent(
     restore: bool,
     plan_only: bool,
     pick_flag: bool,
+    limit: Option<usize>,
 ) -> Result<Outcome> {
     let wants_plan = restore || plan_only || (pick_flag && ctx.interactive);
     if wants_plan {
@@ -594,13 +610,15 @@ fn recent(
     if list.is_empty() {
         return Ok(Outcome::ok(
             json!({"sessions": []}),
-            format!("No agent sessions from the last {hours}h are missing from cmux."),
+            format!("No agent sessions from the last {hours}h are missing from {}.", ctx.terminal.name()),
         )
         .with_exit(Exit::NothingToDo));
     }
     if !wants_plan {
-        let rows: Vec<Value> = list.iter().map(session_json).collect();
-        return Ok(Outcome::ok(json!({"sessions": rows}), human::sessions(&list, &open)));
+        let total = list.len();
+        let shown = &list[..limit.unwrap_or(total).min(total)];
+        let rows: Vec<Value> = shown.iter().map(session_json).collect();
+        return Ok(Outcome::ok(json!({"sessions": rows, "total": total}), human::sessions(shown, &open)));
     }
     plan_then_apply(ctx, app::restore::sessions_source(&list), plan_only)
 }

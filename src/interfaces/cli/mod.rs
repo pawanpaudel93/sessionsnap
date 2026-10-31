@@ -22,7 +22,8 @@ pub struct Cli {
     /// Print machine-readable JSON (never prompts)
     #[arg(long, global = true)]
     pub json: bool,
-    /// Answer yes to confirmations
+    /// Answer yes to the confirmations of delete, prune, restore, install-cmux and uninstall
+    /// (agents: only when the user asked for that action)
     #[arg(long, short = 'y', global = true)]
     pub yes: bool,
     /// Terminal to save from and restore into (default: the one this runs in, tmux first; outside
@@ -126,6 +127,9 @@ pub enum Command {
         /// Only this agent's sessions (e.g. claude, codex)
         #[arg(long)]
         agent: Option<String>,
+        /// Show at most this many, newest first (`total` in the JSON says how many there are)
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Interactive agent sessions active recently that are not open in the terminal
     Recent {
@@ -143,6 +147,9 @@ pub enum Command {
         /// Show them and ask whether to reopen
         #[arg(long)]
         pick: bool,
+        /// List at most this many, newest first (a restore still takes them all)
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// List the agents sessionsnap can resume, how well, and whether their program is on PATH
     Agents,
@@ -306,7 +313,7 @@ impl Outcome {
 /// The JSON printed for an error under `--json`.
 pub fn error_json(e: &anyhow::Error) -> Value {
     let exit = exit_of(e);
-    json!({"error": {"code": exit.name(), "exit": exit.code(), "message": format!("{e:#}")}})
+    json!({"error": {"code": crate::error::code_of(e), "exit": exit.code(), "message": format!("{e:#}")}})
 }
 
 /// Runs `sessionsnap <args> --json` in-process: the exit and the JSON the binary would print.
@@ -348,9 +355,15 @@ pub fn main_entry() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
-            // clap would exit 2, which means "cmux unreachable" here.
+            // clap would exit 2, which means "terminal unreachable" here.
             let code = if e.use_stderr() { 1 } else { 0 };
-            let _ = e.print();
+            // Under --json a mistyped command is JSON too, so a caller can read why.
+            if e.use_stderr() && std::env::args().any(|a| a == "--json") {
+                let message = e.render().to_string();
+                println!("{}", json!({"error": {"code": "usage", "exit": code, "message": message.trim()}}));
+            } else {
+                let _ = e.print();
+            }
             return ExitCode::from(code);
         }
     };
@@ -364,7 +377,13 @@ pub fn main_entry() -> ExitCode {
     match result {
         Ok(o) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&o.json).unwrap_or_default());
+                // Indented for a person at a terminal; one compact line for a program (fewer tokens).
+                let text = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                    serde_json::to_string_pretty(&o.json)
+                } else {
+                    serde_json::to_string(&o.json)
+                };
+                println!("{}", text.unwrap_or_default());
             } else if !o.text.is_empty() {
                 println!("{}", o.text);
             }

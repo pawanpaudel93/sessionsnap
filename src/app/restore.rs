@@ -33,7 +33,7 @@ pub fn require_terminal(ctx: &Ctx, plan_only: bool) -> Result<()> {
     if plan_only {
         if !ctx.terminal.is_running() {
             return Err(failure(
-                Exit::CmuxUnreachable,
+                Exit::TerminalUnreachable,
                 format!("{} is not running; start it first (restore without --plan starts it)", ctx.terminal.name()),
             ));
         }
@@ -50,10 +50,34 @@ pub fn prepare(ctx: &Ctx, source: PlanSource, plan_only: bool) -> Result<Plan> {
     let open = read_open(ctx.terminal.as_ref(), &ctx.agents)?;
     let mut plan = make_plan(source, &ctx.store, &ctx.agents, &open)?;
     plan.warnings.extend(missing_programs(&plan, &ctx.agents));
+    plan.warnings.extend(missing_folders(&plan, ctx.folder_exists));
     if !plan.is_empty() {
         ctx.store.save_plan(&plan)?;
     }
     Ok(plan)
+}
+
+/// One warning per tab whose folder is gone (a removed git worktree, a moved project): it opens
+/// as a plain shell in the home folder, since an agent resumed elsewhere can't find its session.
+fn missing_folders(plan: &Plan, folder_exists: fn(&str) -> bool) -> Vec<String> {
+    plan.actions
+        .iter()
+        .flat_map(|a| {
+            let (ws, tabs) = match a {
+                Action::CreateWorkspace { name, tabs, .. } => (name, tabs),
+                Action::AddTabs { workspace_name, tabs, .. } => (workspace_name, tabs),
+            };
+            tabs.iter().map(move |t| (ws, t))
+        })
+        .filter(|(_, t)| !t.cwd().is_empty() && !folder_exists(t.cwd()))
+        .map(|(ws, t)| {
+            format!(
+                "{ws} › {}: its folder {} is gone, so it opens as a plain shell in your home folder",
+                t.title(),
+                t.cwd()
+            )
+        })
+        .collect()
 }
 
 /// One warning per agent the plan resumes whose program is not on PATH.
@@ -85,8 +109,14 @@ pub fn load_for_apply(ctx: &Ctx, plan_id: &str) -> Result<Plan> {
 }
 
 /// Applies `plan` to the terminal; one step per workspace created or tab added.
+/// Applies `plan` once: a second apply of it at the same time (the CLI and the web UI, an agent
+/// retrying) waits for the first, then finds the plan used up instead of opening everything again.
 pub fn run_plan(ctx: &Ctx, plan: &Plan) -> Result<Vec<ApplyStep>> {
-    apply_plan(plan, &ctx.store, &ctx.agents, ctx.terminal.as_ref())
+    let _turn = ctx.store.lock_file(&format!("plan-{}.lock", plan.plan_id))?;
+    ctx.store.load_plan(&plan.plan_id).map_err(|_| {
+        failure(Exit::NothingToDo, format!("plan {} was applied already (or has expired)", plan.plan_id))
+    })?;
+    apply_plan(plan, &ctx.store, &ctx.agents, ctx.terminal.as_ref(), ctx.folder_exists)
 }
 
 /// The workspaces a plan restores (a snapshot selection, or recovered sessions in one workspace),
@@ -129,21 +159,38 @@ pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &Open
 }
 
 /// Applies a plan if it still matches what is open; continues past failed steps.
-pub fn apply_plan(plan: &Plan, store: &Store, agents: &Agents, terminal: &dyn Terminal) -> Result<Vec<ApplyStep>> {
+pub fn apply_plan(
+    plan: &Plan,
+    store: &Store,
+    agents: &Agents,
+    terminal: &dyn Terminal,
+    folder_exists: fn(&str) -> bool,
+) -> Result<Vec<ApplyStep>> {
     let open = read_open(terminal, agents)?;
     let (saved, picked, _) = source_workspaces(&plan.source, store, agents)?;
     let rebuilt = build_actions_picked(&saved, &open, agents, &picked);
     if rebuilt.actions != plan.actions {
-        return Err(failure(Exit::PlanStale, "what is open in cmux changed since this plan was made; make a new plan"));
+        return Err(failure(
+            Exit::PlanStale,
+            format!("what is open in {} changed since this plan was made; make a new plan", terminal.name()),
+        ));
     }
-    let launch = |t: &Tab| launch_tab(agents, t);
+    let existing = |cwd: &str| Some(safe_cwd(cwd)).filter(|c| folder_exists(c)).unwrap_or_else(|| safe_cwd(""));
+    let launch = |t: &Tab| {
+        let mut tab = launch_tab(agents, t);
+        if !folder_exists(&tab.cwd) {
+            // Gone since the plan (its warning said so): a plain shell at home, never the agent.
+            tab = LaunchTab { cwd: safe_cwd(""), command: None, ..tab };
+        }
+        tab
+    };
     let mut steps = vec![];
     for action in &plan.actions {
         match action {
             Action::CreateWorkspace { name, cwd, tabs } => steps.push(step(
                 format!("create workspace {name} with {} tab{}", tabs.len(), if tabs.len() == 1 { "" } else { "s" }),
                 terminal
-                    .create_workspace(name, &safe_cwd(cwd), &tabs.iter().map(launch).collect::<Vec<_>>())
+                    .create_workspace(name, &existing(cwd), &tabs.iter().map(launch).collect::<Vec<_>>())
                     .map(|_| ()),
             )),
             Action::AddTabs { workspace_ref, workspace_name, tabs } => {
@@ -250,12 +297,12 @@ mod tests {
         assert_eq!(plan.tab_count(), 3);
         store.save_plan(&plan).unwrap();
         assert_eq!(store.load_plan(&plan.plan_id).unwrap(), plan);
-        let steps = apply_plan(&plan, &store, &agents, &fake).unwrap();
+        let steps = apply_plan(&plan, &store, &agents, &fake, |_| true).unwrap();
         assert!(steps.iter().all(|s| s.ok), "{steps:?}");
         assert_eq!(*fake.log.borrow(), ["add workspace:WA two", "create Gamma 1", "create Delta 1"]);
         let commands: Vec<Option<String>> = fake.launched.borrow().iter().map(|t| t.command.clone()).collect();
         assert_eq!(commands, [Some(format!("claude --resume {B}")), Some(format!("claude --resume {C}")), None]);
-        assert_eq!(exit_of(&apply_plan(&plan, &store, &agents, &fake).unwrap_err()), Exit::PlanStale);
+        assert_eq!(exit_of(&apply_plan(&plan, &store, &agents, &fake, |_| true).unwrap_err()), Exit::PlanStale);
         assert!(make_plan(source, &store, &agents, &fake.read_open_state().unwrap()).unwrap().is_empty());
     }
 }
@@ -263,7 +310,9 @@ mod tests {
 #[cfg(test)]
 mod launch_tests {
     use super::*;
-    use crate::testing::A;
+    use crate::domain::model::Workspace;
+    use crate::error::exit_of;
+    use crate::testing::{A, FakeTerminal, agent_tab};
 
     #[test]
     fn launch_tabs_resume_agents_with_saved_flags() {
@@ -298,5 +347,28 @@ mod launch_tests {
         assert!(!launched.cwd.contains('\r') && !launched.cwd.is_empty());
         let term = Tab::Terminal { title: "t".into(), cwd: "/w".into(), command: Some("npm run dev".into()) };
         assert_eq!(cmd(&term).as_deref(), Some("npm run dev"));
+    }
+
+    #[test]
+    fn an_apply_that_waited_for_another_finds_the_plan_used_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeTerminal::default();
+        let ctx = crate::testing::ctx(dir.path(), fake.clone(), true, true, None);
+        let saved = vec![Workspace {
+            name: "Alpha".into(),
+            cwd: "/w/a".into(),
+            git_branch: None,
+            cmux_workspace_id: None,
+            pinned: false,
+            color: None,
+            tabs: vec![agent_tab("claude", "one", "/w/a", A)],
+        }];
+        ctx.store.save_new("work", "m", Default::default(), saved).unwrap();
+        let plan = prepare(&ctx, snapshot_source(&ctx, "work", vec![], vec![]).unwrap(), true).unwrap();
+        // The first apply ran and removed the plan while this one waited on its lock.
+        ctx.store.remove_plan(&plan.plan_id);
+        let e = run_plan(&ctx, &plan).unwrap_err();
+        assert_eq!(exit_of(&e), Exit::NothingToDo, "{e:#}");
+        assert!(fake.launched.borrow().is_empty(), "nothing opened twice");
     }
 }

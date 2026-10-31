@@ -32,7 +32,7 @@ pub struct System<R: Runner> {
 impl<R: Runner> Processes for System<R> {
     fn list(&self) -> Result<Vec<Proc>> {
         let args: Vec<String> = ["-A", "-o", "pid=", "-o", "ppid=", "-o", "etime="].map(String::from).to_vec();
-        let out = self.runner.run("ps", &args)?;
+        let out = self.runner.run_timeout("ps", &args, std::time::Duration::from_secs(15))?;
         if !out.success {
             bail!("`ps` failed: {}", out.stderr.trim());
         }

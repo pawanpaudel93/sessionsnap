@@ -47,6 +47,7 @@ pub fn ctx(dir: &Path, terminal: FakeTerminal, json: bool, yes: bool, input: Opt
         yes,
         interactive: false,
         input,
+        folder_exists: |_| true,
     }
 }
 
