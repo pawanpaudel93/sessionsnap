@@ -147,9 +147,12 @@ pub fn source_workspaces(
 pub fn make_plan(source: PlanSource, store: &Store, agents: &Agents, open: &OpenState) -> Result<Plan> {
     let (saved, picked, notes) = source_workspaces(&source, store, agents)?;
     let built = build_actions_picked(&saved, open, agents, &picked);
+    // The process and a count too: two plans in one millisecond (two processes, or one) differ.
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let now = chrono::Local::now();
     Ok(Plan {
-        plan_id: format!("p{}", now.format("%Y%m%d%H%M%S%3f")),
+        plan_id: format!("p{}x{}x{n}", now.format("%Y%m%d%H%M%S%3f"), std::process::id()),
         created_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
         source,
         actions: built.actions,
@@ -297,6 +300,10 @@ mod tests {
         assert_eq!(plan.tab_count(), 3);
         store.save_plan(&plan).unwrap();
         assert_eq!(store.load_plan(&plan.plan_id).unwrap(), plan);
+        let again = make_plan(source.clone(), &store, &agents, &fake.read_open_state().unwrap()).unwrap();
+        assert_ne!(again.plan_id, plan.plan_id, "two plans in a row get their own id");
+        store.save_plan(&again).unwrap();
+        assert_eq!(store.load_plan(&again.plan_id).unwrap(), again);
         let steps = apply_plan(&plan, &store, &agents, &fake, |_| true).unwrap();
         assert!(steps.iter().all(|s| s.ok), "{steps:?}");
         assert_eq!(*fake.log.borrow(), ["add workspace:WA two", "create Gamma 1", "create Delta 1"]);
