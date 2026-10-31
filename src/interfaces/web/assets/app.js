@@ -82,7 +82,7 @@ const commands = pendingTracker((state) => {
 function cliArgs(args) {
   // How many positionals follow each command the page sends; its options come after them.
   const positionals = { save: 1, delete: 1, edit: 1, show: 1, history: 1, diff: 2, restore: 1, apply: 1, rename: 2,
-    "schedule add": 1, "schedule edit": 1, "schedule stop": 1, "schedule start": 1, "schedule run": 1,
+    export: 1, import: 1, "schedule add": 1, "schedule edit": 1, "schedule stop": 1, "schedule start": 1, "schedule run": 1,
     "schedule remove": 1 };
   const valued = { "-m": "--message", "--message": "--message", "--search": "--search", "--tab": "--tab",
     "--days": "--days", "--hours": "--hours", "--base": "--base", "--interval": "--interval" };
@@ -415,6 +415,19 @@ async function viewList() {
     go("snapshot", { snapshot: n, tab: "edit", version: null });
   }, { class: "primary" });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+  // The file is read here and sent as input: the server never opens a file the page names.
+  const file = h("input", { type: "file", accept: ".json,application/json", hidden: "" });
+  file.addEventListener("change", () => guard(async () => {
+    const chosen = file.files[0];
+    file.value = "";
+    if (!chosen) return;
+    const r = await sessionsnap(["import", "-"], await chosen.text());
+    toast(r.exit === 3 ? `${r.result.snapshot}: nothing changed since v${r.result.version}`
+      : `Imported ${r.result.snapshot} v${r.result.version}`);
+    go("snapshot", { snapshot: r.result.snapshot, tab: "edit", version: null });
+  }));
+  const importFile = h("button", { title: "Save a snapshot exported on another machine (a .json file)",
+    onclick: () => file.click() }, "Import…");
   const open = (s) => go("snapshot", { snapshot: s.name, tab: "edit", version: null });
   // Automatic snapshots (saved on a schedule) are listed apart from the ones saved by hand.
   const auto = shown.filter((s) => s.schedule);
@@ -456,7 +469,7 @@ async function viewList() {
         return li;
       }));
   return h("section", { class: "stack" },
-    h("div", { class: "row" }, name, save),
+    h("div", { class: "row" }, name, save, importFile, file),
     shown.length === 0
       ? h("div", { class: "empty" }, h("strong", {}, "No snapshots yet"),
         `Name one above to save the workspaces and tabs open in ${TERMINAL} now.`)
@@ -496,6 +509,17 @@ async function viewSnapshot() {
       : r.exit === 3 ? "Nothing changed since the last version." : `Saved v${r.result.version}: ${r.result.message}`);
     render();
   }, { title: `Save what is open in ${TERMINAL} now, as the schedule does` });
+  const exportFile = actionButton("Export", async () => {
+    if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
+    const v = (await sessionsnap(["export", name])).result;
+    const url = URL.createObjectURL(new Blob([`${JSON.stringify(v, null, 2)}\n`], { type: "application/json" }));
+    const a = h("a", { href: url, download: `${v.snapshot}-v${v.version}.json` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast(`Exported ${v.snapshot} v${v.version}: only the snapshot, not the agents' session history`);
+  }, { title: "Download the latest version as a file, to import on another machine" });
   const update = sched ? runNow : actionButton("Update", async () => {
     if (opsOf(name).length) return toast("Save or discard your edits first.", "error");
     const r = await sessionsnap(["save", name]);
@@ -539,7 +563,7 @@ async function viewSnapshot() {
   return h("section", { class: "stack" },
     h("div", {},
       h("div", { class: "crumb" }, h("button", { class: "link", onclick: () => go("list") }, icon("back"), "Snapshots")),
-      h("div", { class: "page-title" }, h("h1", {}, title), rename, h("span", { class: "grow" }), update, del)),
+      h("div", { class: "page-title" }, h("h1", {}, title), rename, h("span", { class: "grow" }), exportFile, update, del)),
     sched ? schedulePanel(sched) : null,
     tabs,
     body);

@@ -284,6 +284,9 @@ printed in the terminal running `sessionsnap ui`.
 
 - **Snapshots:** save what is open, update a snapshot from what is open, rename (the pencil or a
   double-click on its name) or delete one. The list has Manual and Automatic sections.
+- **Export and import:** Export downloads a snapshot's latest version as a file; Import… saves one
+  exported on another machine. The page reads and writes the files itself; the server never opens
+  a file the page names. (Moving folders with `--map` is in the CLI.)
 - **Automatic snapshots:** start one with a name and any interval ("Save automatically"); on its
   page, see whether it runs and how its last run went, run it now, stop or start it, change its
   interval, or make it a normal snapshot.
