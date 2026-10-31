@@ -7,7 +7,7 @@ use crate::adapters::store::lock::Lock;
 use crate::domain::capture::{capture, carry_over, merge};
 use crate::domain::diff::{self, Change};
 use crate::domain::edit;
-use crate::domain::model::{Source, Version, Workspace, parse_ref, validate_name, validate_new_name};
+use crate::domain::model::{Source, Version, Workspace, map_folders, parse_ref, validate_name, validate_new_name};
 use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, failure};
 
@@ -24,6 +24,12 @@ pub enum Commit {
 /// version of `name`. Holds the snapshot's lock from reading its latest version to writing the
 /// next, so a save or edit landing meanwhile is never undone.
 pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message: Option<String>) -> Result<Commit> {
+    refuse_scheduled(ctx, name)?;
+    save_as(ctx, name, only, from, message, false)
+}
+
+/// An automatic snapshot is only saved by its schedule.
+fn refuse_scheduled(ctx: &Ctx, name: &str) -> Result<()> {
     validate_name(name)?;
     if let Some(key) = super::schedule::find(&ctx.store.read_schedules()?, name) {
         return Err(failure(
@@ -33,7 +39,37 @@ pub fn save(ctx: &Ctx, name: &str, only: &[String], from: Option<&str>, message:
             ),
         ));
     }
-    save_as(ctx, name, only, from, message, false)
+    Ok(())
+}
+
+/// Saves `imported` (an exported version, from this machine or another) as the next version of
+/// `name`, its folders moved by `maps`. It is checked like any version file when restored; only
+/// what is in it comes along, never an agent's history of the session.
+pub fn import(
+    ctx: &Ctx,
+    name: &str,
+    imported: Version,
+    maps: &[(String, String)],
+    message: Option<String>,
+) -> Result<Commit> {
+    refuse_scheduled(ctx, name)?;
+    let mut workspaces = imported.workspaces;
+    map_folders(&mut workspaces, maps);
+    // Another machine's cmux IDs would match unrelated workspaces here.
+    workspaces.iter_mut().for_each(|w| w.cmux_workspace_id = None);
+    let from = format!("{}@{}", imported.snapshot, imported.version);
+    let lock = ctx.store.lock(name)?;
+    let new = is_new(ctx, name);
+    if new {
+        validate_new_name(name)?;
+    }
+    let latest = if new { None } else { ctx.store.versions(name)?.last().copied() };
+    let (previous, unreadable) = if new { (None, None) } else { newest_readable(ctx, name)? };
+    let base = Base { lock: &lock, latest, previous: previous.as_ref() };
+    let message = message.or_else(|| new.then(|| format!("imported {from}")));
+    let source = Source { kind: "import".into(), from: Some(from), ..Default::default() };
+    let force = unreadable.is_some();
+    commit(ctx, name, base, workspaces, source, message, unreadable.into_iter().collect(), force)
 }
 
 /// A save of automatic snapshot `name` by its schedule (see `app::schedule::run`).

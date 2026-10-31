@@ -28,6 +28,8 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
         Command::Diff { a, b } => diff_cmd(ctx, &a, &b),
         Command::Prune { name, keep } => prune(ctx, &name, keep),
         Command::Delete { name } => delete(ctx, &name),
+        Command::Export { snapshot, output } => export(ctx, &snapshot, output.as_deref()),
+        Command::Import { file, name, map, message } => import(ctx, &file, name, &map, message),
         Command::Rename { old, new } => {
             let from = app::snapshots::rename(ctx, &old, &new)?;
             Ok(Outcome::ok(json!({"from": from, "to": new}), format!("Renamed {from} to {new}")))
@@ -168,6 +170,49 @@ fn save(
     };
     let commit = app::snapshots::save(ctx, &name, only, from.as_deref(), message)?;
     Ok(committed(commit))
+}
+
+fn export(ctx: &Ctx, snapshot: &str, output: Option<&str>) -> Result<Outcome> {
+    let (name, version) = crate::domain::model::parse_ref(snapshot)?;
+    let v = app::load_version(ctx, &name, version)?;
+    let Some(file) = output else {
+        return Ok(Outcome::ok(serde_json::to_value(&v)?, serde_json::to_string_pretty(&v)?));
+    };
+    let path = std::path::Path::new(file);
+    if path.symlink_metadata().is_ok() {
+        return Err(failure(Exit::Refused, format!("{file} exists; pick another file or remove it first")));
+    }
+    crate::util::json::write_private_json_atomic(path, &v)?;
+    Ok(Outcome::ok(
+        json!({"snapshot": v.snapshot, "version": v.version, "file": file}),
+        format!("Exported {} v{} to {file}", v.snapshot, v.version),
+    ))
+}
+
+fn import(ctx: &Ctx, file: &str, name: Option<String>, map: &[String], message: Option<String>) -> Result<Outcome> {
+    let text = match (file, &ctx.input) {
+        ("-", Some(text)) => text.clone(),
+        ("-", None) => std::io::read_to_string(std::io::stdin())?,
+        _ => std::fs::read_to_string(file).map_err(|e| failure(Exit::NotFound, format!("can't read {file}: {e}")))?,
+    };
+    let imported = crate::domain::model::parse_version(&text).map_err(|why| {
+        let exit = if why.starts_with("format") { Exit::UnknownFormat } else { Exit::Error };
+        failure(exit, format!("{file} is not an exported snapshot: {why}"))
+    })?;
+    let maps = map
+        .iter()
+        .map(|m| {
+            let (old, new) = m.split_once('=').unwrap_or((m, ""));
+            let ok = |p: &str| p.starts_with('/') && !p.chars().any(char::is_control);
+            if ok(old) && ok(new) {
+                Ok((old.to_string(), new.to_string()))
+            } else {
+                Err(failure(Exit::Error, format!("--map needs two absolute folders, OLD=NEW: {m:?}")))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let name = name.unwrap_or_else(|| imported.snapshot.clone());
+    Ok(committed(app::snapshots::import(ctx, &name, imported, &maps, message)?))
 }
 
 /// The outcome of writing a version: exit 3 when nothing changed. Shared by save and edits. Names
