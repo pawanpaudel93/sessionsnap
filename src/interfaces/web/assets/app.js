@@ -34,7 +34,7 @@ function said(op, text) {
   return op;
 }
 
-// `reconnect`: the page has no usable key; render() then offers the Reconnect button.
+// `reconnect`: the page has no usable key; render() then offers to show it again (Reconnect).
 class CommandError extends Error {
   constructor(message, exit, reconnect = false) {
     super(message);
@@ -46,6 +46,8 @@ class CommandError extends Error {
 // The terminal the page's commands save from and restore into ("cmux" or "tmux"), for its wording;
 // the server says which at start (GET /api/hello).
 let TERMINAL = "cmux";
+// Whether the server shows its page in the default browser (from tmux, or `ui --browser`) rather than in cmux.
+let BROWSER = false;
 
 const START_HINT = "Start it with `sessionsnap ui` (in cmux, also the palette command \"sessionsnap: Open UI\").";
 
@@ -128,7 +130,7 @@ function sessionsnap(args, input, wanted) {
 async function runCommand(args, input) {
   if (!TOKEN) {
     throw new CommandError(
-      "This page has no key yet. Click Reconnect to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
+      "This page has no key yet. Open it again below to get one. If that fails, open the link printed in the terminal running `sessionsnap ui`.",
       1, true);
   }
   let r;
@@ -352,17 +354,18 @@ function errorView(message) {
     h("button", { onclick: render }, "Try again"));
 }
 
-// Asks the running server to show this page with its key (POST /api/show needs none). The server
-// points this tab, or a Dock tab, at the keyed link; the hashchange handler then re-renders.
+// Asks the running server to show this page with its key (POST /api/show needs none), in cmux or
+// the default browser (`place`; null: where it shows pages). The server points this tab, or a new
+// one, at the keyed link; the hashchange handler then re-renders. The key never comes back here.
 function reconnectView(message) {
   const status = h("p", { class: "muted small" });
-  const button = actionButton("Reconnect", async () => {
+  const reconnect = (place) => async () => {
     status.className = "muted small";
     status.textContent = "Asking the sessionsnap UI to show this page…";
     try {
       let r;
       try {
-        r = await fetch("/api/show", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        r = await fetch("/api/show", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(place ? { in: place } : {}) });
       } catch {
         throw new Error("The sessionsnap UI server is not running.");
       }
@@ -381,18 +384,24 @@ function reconnectView(message) {
         return;
       }
       status.textContent = shown === "reused" ? "Reconnecting…"
-        : shown === "browser" ? "Opened the sessionsnap UI in a new browser tab."
+        : shown === "browser" ? "Opened the sessionsnap UI in a new tab of your default browser."
           : `Opened the sessionsnap UI in a new cmux ${shown === "dock" ? "Dock " : ""}tab.`;
     } catch (e) {
       status.className = "error small";
       status.textContent = `${e.message} ${START_HINT}`;
     }
-  }, { class: "primary" });
+  };
+  // A cmux server shows pages in cmux or the browser; the one it uses by default comes first.
+  const places = BROWSER ? [["browser", "Open in browser"], ["cmux", "Open in cmux"]]
+    : [["cmux", "Open in cmux"], ["browser", "Open in browser"]];
+  const buttons = TERMINAL === "cmux"
+    ? places.map(([place, label], i) => actionButton(label, reconnect(place), i === 0 ? { class: "primary" } : {}))
+    : [actionButton("Reconnect", reconnect(null), { class: "primary" })];
   return h("div", { class: "status" },
     icon("plug", "icon-lg"),
     h("h2", {}, "Not connected"),
     h("p", { class: "muted" }, message),
-    button,
+    h("div", { class: "row" }, buttons),
     status);
 }
 
@@ -1273,6 +1282,9 @@ window.addEventListener("hashchange", () => {
 // Learn the terminal first (a quick local call); render either way.
 fetch("/api/hello")
   .then((r) => r.json())
-  .then((hello) => { if (hello.terminal === "tmux" || hello.terminal === "cmux") TERMINAL = hello.terminal; })
+  .then((hello) => {
+    if (hello.terminal === "tmux" || hello.terminal === "cmux") TERMINAL = hello.terminal;
+    BROWSER = hello.browser === true;
+  })
   .catch(() => {})
   .finally(render);

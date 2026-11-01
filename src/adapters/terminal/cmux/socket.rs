@@ -52,7 +52,18 @@ pub fn call(path: &Path, method: &str, params: Value) -> Result<Value> {
     (&stream).write_all(line.as_bytes()).context("writing to cmux's socket")?;
     let mut answer = String::new();
     BufReader::new(&stream).read_line(&mut answer).context("reading cmux's answer")?;
-    let v: Value = serde_json::from_str(answer.trim()).context("cmux's socket answered something other than JSON")?;
+    // cmux refuses some callers in plain text, e.g. "ERROR: Access denied - only processes started
+    // inside cmux can connect" for a process that is not cmux's descendant.
+    if let Some(why) = answer.trim().strip_prefix("ERROR:") {
+        bail!("cmux refused {method}: {}", why.trim());
+    }
+    let v: Value = serde_json::from_str(answer.trim()).with_context(|| {
+        if answer.trim().is_empty() {
+            "cmux's socket closed without answering".to_string()
+        } else {
+            "cmux's socket answered something other than JSON".to_string()
+        }
+    })?;
     if v["ok"].as_bool() == Some(true) {
         return Ok(v["result"].clone());
     }
@@ -221,6 +232,41 @@ mod tests {
         // A refused path is never connected to.
         let err = format!("{:#}", call(&link, "browser.navigate", json!({})).unwrap_err());
         assert!(err.contains("not using cmux's socket"), "{err}");
+    }
+
+    /// cmux's answers: a result, a JSON error, a plain-text refusal, or none.
+    #[test]
+    fn reads_cmuxs_answers() {
+        use std::io::Read;
+        let dir = tempfile::Builder::new().prefix("ss").tempdir_in("/tmp").unwrap();
+        let sock = dir.path().join("s");
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let answers = [
+            "{\"ok\":true,\"result\":{\"pong\":true}}\n",
+            "{\"ok\":false,\"error\":{\"code\":\"invalid_params\",\"message\":\"Browser operation failed\"}}\n",
+            "ERROR: Access denied - only processes started inside cmux can connect\n",
+            "",
+        ];
+        let server = std::thread::spawn(move || {
+            for answer in answers {
+                let (mut s, _) = listener.accept().unwrap();
+                let mut byte = [0u8; 1];
+                while s.read(&mut byte).unwrap() == 1 && byte[0] != b'\n' {}
+                s.write_all(answer.as_bytes()).unwrap();
+            }
+        });
+        let ask = || {
+            call(&sock, "browser.navigate", json!({"url": "http://127.0.0.1:1/#t=k3y"})).map_err(|e| format!("{e:#}"))
+        };
+        assert_eq!(ask(), Ok(json!({"pong": true})));
+        assert_eq!(ask(), Err("cmux refused browser.navigate: invalid_params: Browser operation failed".into()));
+        assert_eq!(
+            ask(),
+            Err("cmux refused browser.navigate: Access denied - only processes started inside cmux can connect".into())
+        );
+        let none = ask().unwrap_err();
+        assert!(none.contains("closed without answering") && !none.contains("k3y"), "{none}");
+        server.join().unwrap();
     }
 
     /// The process at the other end of a connected socket is checked by its user ID.

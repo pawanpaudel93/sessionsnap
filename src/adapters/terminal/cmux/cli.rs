@@ -172,7 +172,7 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             "--working-directory",
             tab.cwd.as_str(),
         ])?;
-        let surface = find_ref(&out, "surface")
+        let surface = new_surface(&out)
             .ok_or_else(|| failure(Exit::Error, format!("cmux new-surface printed no surface ref: {}", out.trim())))?;
         if let Some(command) = &tab.command {
             // `cmux send` turns the two characters \n into Enter.
@@ -210,11 +210,11 @@ impl<R: Runner> Terminal for CmuxCli<R> {
             let out = self.cmux_within(&["new-surface", "--type", "browser", "--placement", "dock", "--url", base])?;
             if out.success {
                 self.show_dock()?;
-                (find_ref(&out.stdout, "surface"), "dock")
+                (new_surface(&out.stdout), "dock")
             } else {
                 // cmux 0.64 keeps the Dock behind Settings → Beta Features; without it use a normal tab.
                 let out = self.cmux_ok_within(&["browser", "open", base])?;
-                (find_ref(&out, "surface"), "tab")
+                (new_surface(&out), "tab")
             }
         };
         let Some(fragment) = fragment else { return Ok(Shown::whole(place)) };
@@ -277,6 +277,18 @@ pub fn layout_json(tabs: &[LaunchTab]) -> String {
         })
         .collect();
     json!({"pane": {"surfaces": surfaces}}).to_string()
+}
+
+/// The surface `new-surface` or `browser open` made: its "surface:<n>" ref, else the first UUID
+/// (cmux 0.65 prints `OK <surface UUID> <pane UUID> workspace:<n>` whatever `--id-format` says).
+pub fn new_surface(text: &str) -> Option<String> {
+    find_ref(text, "surface").or_else(|| text.split_whitespace().find(|t| is_uuid(t)).map(str::to_string))
+}
+
+/// 8-4-4-4-12 hex digits.
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.iter().map(|p| p.len()).eq([8, 4, 4, 4, 12]) && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// The first "<kind>:<digits>" token in cmux output.
@@ -706,5 +718,10 @@ mod tests {
         assert_eq!(find_ref("OK workspace:12", "workspace").as_deref(), Some("workspace:12"));
         assert_eq!(find_ref("created (surface:3)", "surface").as_deref(), Some("surface:3"));
         assert_eq!(find_ref("workspace:abc", "workspace"), None);
+        // cmux 0.65 prints UUIDs for the surface and pane.
+        let out = "OK 31EEB17C-492B-4D87-9CE2-F0557C6795E9 B6C8B874-5AD0-44BF-A408-3CBB65541048 workspace:1000140009";
+        assert_eq!(new_surface(out).as_deref(), Some("31EEB17C-492B-4D87-9CE2-F0557C6795E9"));
+        assert_eq!(new_surface("OK surface:40 pane:3 workspace:1").as_deref(), Some("surface:40"));
+        assert_eq!(new_surface("OK workspace:1 31EEB17C-492B"), None);
     }
 }

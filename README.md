@@ -281,7 +281,11 @@ Want another agent supported? See [Add an agent](ARCHITECTURE.md#add-an-agent).
 `sessionsnap ui` serves a small page on `http://127.0.0.1:47317/` and shows it in the cmux Dock (the
 right sidebar). From the palette: "sessionsnap: Open UI" (it runs in its own "sessionsnap UI"
 workspace). Run in tmux, it opens the page in your default browser instead, and the page saves from
-and restores into tmux. On macOS the page gets its key through `osascript`'s input, never a command
+and restores into tmux. `sessionsnap ui --browser` opens it in your default browser from cmux too,
+and the page still saves from and restores into cmux. A page opened by hand (a pasted address) has
+no key and shows "Not connected", with **Open in cmux** and **Open in browser** (from tmux:
+**Reconnect**): the server opens a new page with its key there, and never hands the key to the
+page that asked. On macOS the page gets its key through `osascript`'s input, never a command
 line; on Linux `xdg-open` would need it on one, so the page opens without it and the keyed link is
 printed in the terminal running `sessionsnap ui`.
 
@@ -316,13 +320,14 @@ Details:
   command at a time; a command that would wait over 3 s for another is refused, and the page says
   so. It shows its page at most once a second (otherwise 429).
 - Flags: `--port <n>` (default 47317), `--idle-minutes <n>` (default 30), `--no-open` (serve
-  without showing the page).
+  without showing the page), `--browser` (show it in the default browser, also from cmux).
 - The link carries a key after `#` (`…/#t=<key>`), which browsers never send to a server. The key
   lasts as long as the server: each start makes a new one. It never goes on a command line, where
   other users could read it with `ps`: cmux opens the page without it, and the key is handed over
   through cmux's socket. If that fails, the page opens without a key and `sessionsnap ui` prints
-  the keyed link in its terminal. If the page has no key or an old one, click **Reconnect**, open
-  that link, or run `sessionsnap ui` again.
+  the keyed link in its terminal. If the page has no key or an old one, open it again from the page
+  (**Open in cmux**, **Open in browser**, or **Reconnect** from tmux), open that link, or run
+  `sessionsnap ui` again.
 - In cmux 0.64 the Dock is a beta feature (Settings → Beta Features → Dock). Without it the page
   opens as a normal browser tab.
 

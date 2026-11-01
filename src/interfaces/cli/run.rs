@@ -71,7 +71,9 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             let text = human::agents(&list);
             Ok(Outcome::ok(json!({"agents": list}), text))
         }
-        Command::Ui { port, idle_minutes, no_open } => crate::interfaces::web::ui(ctx, port, idle_minutes, !no_open),
+        Command::Ui { port, idle_minutes, no_open, browser } => {
+            crate::interfaces::web::ui(ctx, port, idle_minutes, !no_open, browser)
+        }
         Command::InstallCmux { print } => install_cmux(ctx, print),
         Command::Completions { .. } | Command::Man => {
             let text = super::generated(&command).unwrap_or_default();

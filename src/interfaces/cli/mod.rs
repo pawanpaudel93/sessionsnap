@@ -221,6 +221,9 @@ pub enum Command {
         /// Do not show the page
         #[arg(long)]
         no_open: bool,
+        /// Show the page in the default browser, also from cmux (save and restore still use cmux)
+        #[arg(long)]
+        browser: bool,
     },
     /// Add sessionsnap commands to the cmux command palette (~/.config/cmux/cmux.json)
     InstallCmux {
