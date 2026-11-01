@@ -15,6 +15,8 @@ use crate::ports::Shown;
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_JS: &str = include_str!("assets/app.js");
 const APP_CSS: &str = include_str!("assets/app.css");
+/// The sessionsnap logo (a copy of assets/logo.svg; scripts/test-site.py checks they match).
+const FAVICON_SVG: &str = include_str!("assets/favicon.svg");
 
 /// Commands the page may run (not `ui` nor the installers).
 pub const ALLOWED: &[&str] = &[
@@ -37,6 +39,10 @@ pub struct Server<'a> {
     pub show: Box<ShowFn<'a>>,
     /// The terminal the page's commands use, for its wording.
     pub terminal: TerminalKind,
+    /// A cmux server's way to show the page in the default browser instead (`with_browser`).
+    show_browser: Option<Box<ShowFn<'a>>>,
+    /// Pages show in the default browser unless asked otherwise (`ui --browser`).
+    pub browser: bool,
     shows: ShowGate,
     /// Commands run one at a time, as before the server had workers. The store's per-snapshot lock
     /// guards its files; this also keeps one page's commands in order and bounds the work.
@@ -103,6 +109,13 @@ impl Drop for ShowTurn<'_> {
 }
 
 #[derive(Deserialize)]
+struct ShowBody {
+    /// "browser" or "cmux"; without it, where this server shows pages by default.
+    #[serde(default, rename = "in")]
+    place: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct RunBody {
     args: Vec<String>,
     #[serde(default)]
@@ -111,12 +124,29 @@ struct RunBody {
 
 impl<'a> Server<'a> {
     pub fn new(port: u16, token: String, show: Box<ShowFn<'a>>) -> Self {
-        Server { port, token, show, terminal: TerminalKind::Cmux, shows: ShowGate::default(), runs: Mutex::new(()) }
+        Server {
+            port,
+            token,
+            show,
+            terminal: TerminalKind::Cmux,
+            show_browser: None,
+            browser: false,
+            shows: ShowGate::default(),
+            runs: Mutex::new(()),
+        }
     }
 
     /// The server for a page whose commands use `terminal`.
     pub fn for_terminal(mut self, terminal: TerminalKind) -> Self {
         self.terminal = terminal;
+        self
+    }
+
+    /// The server that can also show its page in the default browser, with `show`; `default`:
+    /// pages show there unless asked otherwise.
+    pub fn with_browser(mut self, show: Box<ShowFn<'a>>, default: bool) -> Self {
+        self.show_browser = Some(show);
+        self.browser = default;
         self
     }
 
@@ -141,13 +171,20 @@ impl<'a> Server<'a> {
             ("GET", "/app.css") => {
                 Response { status: 200, content_type: "text/css; charset=utf-8", body: APP_CSS.into() }
             }
+            ("GET", "/favicon.svg") => {
+                Response { status: 200, content_type: "image/svg+xml", body: FAVICON_SVG.into() }
+            }
             ("GET", "/api/hello") => {
                 let version = env!("CARGO_PKG_VERSION");
-                Response::json(200, &json!({"app": "sessionsnap", "version": version, "terminal": self.terminal}))
+                let browser = self.browser || self.terminal == TerminalKind::Tmux;
+                Response::json(
+                    200,
+                    &json!({"app": "sessionsnap", "version": version, "terminal": self.terminal, "browser": browser}),
+                )
             }
             ("POST", "/api/run") => self.run(req, make_ctx),
             ("POST", "/api/show") => self.show(req),
-            (_, "/" | "/app.js" | "/app.css" | "/api/hello" | "/api/run" | "/api/show") => {
+            (_, "/" | "/app.js" | "/app.css" | "/favicon.svg" | "/api/hello" | "/api/run" | "/api/show") => {
                 Response::text(405, "method not allowed")
             }
             _ => Response::text(404, "not found"),
@@ -164,7 +201,7 @@ impl<'a> Server<'a> {
         match (req.method.as_str(), req.path.as_str()) {
             // Another site can load these too (a no-cors fetch, a script tag); browsers say so in
             // Sec-Fetch-Site. cmux opening the page sends `none`, the page's own loads `same-origin`.
-            ("GET", "/" | "/app.js" | "/app.css") => {
+            ("GET", "/" | "/app.js" | "/app.css" | "/favicon.svg") => {
                 req.header("sec-fetch-site").is_none_or(|site| site == "none" || site == "same-origin")
             }
             ("POST", "/api/run") => {
@@ -188,9 +225,9 @@ impl<'a> Server<'a> {
         req.header("content-type").is_some_and(|c| c.starts_with("application/json"))
     }
 
-    /// Shows this server's page, with its key, in cmux. Needs no key: it is how a page without
-    /// one (or a second `sessionsnap ui`) gets one, and the key only ever goes to cmux, never on a
-    /// command line.
+    /// Shows this server's page, with its key, in cmux or the default browser (`{"in": …}`). Needs
+    /// no key: it is how a page without one (or a second `sessionsnap ui`) gets one. The key only
+    /// ever goes to a page this server opens, never into the answer or on a command line.
     fn show(&self, req: &Request) -> Response {
         if self.foreign_origin(req) {
             return Response::text(403, "wrong origin");
@@ -198,7 +235,13 @@ impl<'a> Server<'a> {
         if !Self::is_json(req) {
             return Response::text(415, "send JSON");
         }
-        self.show_page()
+        let browser = match serde_json::from_slice::<ShowBody>(&req.body).map(|b| b.place) {
+            Ok(None) => None,
+            Ok(Some(p)) if p == "browser" => Some(true),
+            Ok(Some(p)) if p == "cmux" => Some(false),
+            _ => return Response::text(400, r#"send {} or {"in": "browser"} or {"in": "cmux"}"#),
+        };
+        self.show_page(browser)
     }
 
     /// Shows the keyed link in cmux: `200 {"shown": …, "keyed": …}`, `502` with the reason, or
@@ -206,28 +249,33 @@ impl<'a> Server<'a> {
     /// started under `SHOW_GAP` ago. When cmux showed the
     /// page but could not be handed its key, the keyed link is printed to this server's own
     /// terminal instead, for the user to open.
-    pub fn show_page(&self) -> Response {
+    /// `browser` picks the default browser or cmux; None, this server's default. A tmux server
+    /// shows pages only in the browser.
+    pub fn show_page(&self, browser: Option<bool>) -> Response {
         let Some(_turn) = self.shows.enter() else {
             return Response::text(429, "The sessionsnap UI is being shown already; try again in a moment.");
         };
         let link = format!("http://127.0.0.1:{}/#t={}", self.port, self.token);
-        match (self.show)(&link) {
+        let (show, place) = match &self.show_browser {
+            Some(b) if browser.unwrap_or(self.browser) => (b, "the browser".to_string()),
+            _ => (&self.show, self.terminal.to_string()),
+        };
+        match show(&link) {
             Ok(shown) => {
                 if let Some(why) = &shown.fragment_error {
                     eprintln!(
                         "sessionsnap: showed the UI in {} but could not hand it its key ({}).\n\
-                         Open this link, or click Reconnect on the page to try again:\n{link}",
-                        self.terminal,
+                         Open this link, or open it again from the page to try again:\n{link}",
+                        place,
                         why.replace(&self.token, "…")
                     );
                 }
                 Response::json(200, &json!({"shown": shown.place, "keyed": shown.fragment_error.is_none()}))
             }
             // cmux's message could quote the link; the key stays out of the answer.
-            Err(e) => Response::text(
-                502,
-                &format!("could not show the UI in {}: {e:#}", self.terminal).replace(&self.token, "…"),
-            ),
+            Err(e) => {
+                Response::text(502, &format!("could not show the UI in {place}: {e:#}").replace(&self.token, "…"))
+            }
         }
     }
 
@@ -238,7 +286,7 @@ impl<'a> Server<'a> {
         if !req.header("x-sessionsnap-token").is_some_and(|t| same(t, &self.token)) {
             return Response::json(
                 401,
-                &json!({"error": {"code": "stale-token", "message": "The sessionsnap UI was restarted, so this page's key is old. Click Reconnect, or run `sessionsnap ui`."}}),
+                &json!({"error": {"code": "stale-token", "message": "The sessionsnap UI was restarted, so this page's key is old. Open it again from this page, or run `sessionsnap ui`."}}),
             );
         }
         if !Self::is_json(req) {
@@ -359,12 +407,20 @@ mod tests {
             assert!(html.contains(r#"src="/app.js""#) && html.contains(r#"href="/app.css""#));
             assert_eq!(s.handle(&req("GET", "/app.js", &[], ""), mk).content_type, "text/javascript; charset=utf-8");
             assert_eq!(s.handle(&req("GET", "/app.css", &[], ""), mk).status, 200);
+            assert!(html.contains(r#"<link rel="icon" href="/favicon.svg" type="image/svg+xml">"#));
+            let icon = s.handle(&req("GET", "/favicon.svg", &[], ""), mk);
+            assert_eq!((icon.status, icon.content_type), (200, "image/svg+xml"));
+            assert!(String::from_utf8(icon.body).unwrap().starts_with("<svg"));
             assert_eq!(s.handle(&req("GET", "/nope", &[], ""), mk).status, 404);
             assert_eq!(s.handle(&req("DELETE", "/", &[], ""), mk).status, 405);
             let hello = body(&s.handle(&req("GET", "/api/hello", &[], ""), mk));
             assert_eq!((hello["app"].as_str(), hello["terminal"].as_str()), (Some("sessionsnap"), Some("cmux")));
-            let tmux = server().for_terminal(TerminalKind::Tmux);
-            assert_eq!(body(&tmux.handle(&req("GET", "/api/hello", &[], ""), mk))["terminal"], "tmux");
+            assert_eq!(hello["browser"], false, "a cmux server shows its page in cmux");
+            let tmux = body(&server().for_terminal(TerminalKind::Tmux).handle(&req("GET", "/api/hello", &[], ""), mk));
+            assert_eq!((tmux["terminal"].as_str(), tmux["browser"].as_bool()), (Some("tmux"), Some(true)));
+            let browser = server().with_browser(Box::new(|_| Ok(Shown::whole("browser"))), true);
+            let browser = body(&browser.handle(&req("GET", "/api/hello", &[], ""), mk));
+            assert_eq!((browser["terminal"].as_str(), browser["browser"].as_bool()), (Some("cmux"), Some(true)));
         });
     }
 
@@ -707,6 +763,48 @@ mod tests {
             let mut r = show_req(&[("content-type", "application/json")]);
             r.headers[0].1 = "evil.example:47317".into();
             assert_eq!(s.handle(&r, mk).status, 403, "wrong host");
+        });
+    }
+
+    /// A cmux server shows the page where the request asks, else where it shows pages by default;
+    /// anything else is refused before anything is shown.
+    #[test]
+    fn show_picks_cmux_or_the_browser() {
+        with_store(|mk| {
+            for default in [false, true] {
+                let seen = std::sync::Mutex::new(vec![]);
+                let s = Server::new(
+                    PORT,
+                    "t0k".into(),
+                    Box::new(|_| {
+                        seen.lock().unwrap().push("cmux");
+                        Ok(Shown::whole("dock"))
+                    }),
+                )
+                .with_browser(
+                    Box::new(|_| {
+                        seen.lock().unwrap().push("browser");
+                        Ok(Shown::whole("browser"))
+                    }),
+                    default,
+                )
+                .with_show_limits(Duration::ZERO, Duration::from_secs(5));
+                let json = [("content-type", "application/json")];
+                for (body, status) in [
+                    (r#"{"in":"browser"}"#, 200),
+                    (r#"{"in":"cmux"}"#, 200),
+                    ("{}", 200),
+                    (r#"{"in":"open -a Calculator"}"#, 400),
+                    (r#"{"in":1}"#, 400),
+                    ("not json", 400),
+                ] {
+                    let r = s.handle(&req("POST", "/api/show", &json, body), mk);
+                    assert_eq!(r.status, status, "{body}");
+                    assert!(!String::from_utf8(r.body).unwrap().contains("t0k"), "the key never goes back");
+                }
+                let by_default = if default { "browser" } else { "cmux" };
+                assert_eq!(*seen.lock().unwrap(), ["browser", "cmux", by_default], "default {default}");
+            }
         });
     }
 

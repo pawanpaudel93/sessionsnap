@@ -108,6 +108,12 @@ pub fn show_url(kind: TerminalKind, url: &str) -> anyhow::Result<crate::ports::S
     }
 }
 
+/// Shows `url` in the default browser, whichever terminal the page's commands use: tmux's place
+/// for pages is the browser.
+pub fn show_in_browser(url: &str) -> anyhow::Result<crate::ports::Shown> {
+    Tmux::open_default().show_url(url)
+}
+
 impl Terminal for Detected {
     fn kind(&self) -> TerminalKind {
         self.get().kind()

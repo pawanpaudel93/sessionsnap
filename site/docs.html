@@ -577,7 +577,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">sessionsnap ui</code> serves a small page on
               <code translate="no">http://127.0.0.1:47317/</code> and shows it in the cmux Dock (the right
               sidebar). Run in tmux, it opens the page in your default browser instead, and the page
-              saves from and restores into tmux. On macOS the page gets its key through
+              saves from and restores into tmux. <code translate="no">sessionsnap ui --browser</code>
+              opens it in your default browser from cmux too, and the page still saves from and restores
+              into cmux. On macOS the page gets its key through
               <code translate="no">osascript</code>'s input, never a command line; on Linux the page opens
               without it and the keyed link is printed in the terminal running
               <code translate="no">sessionsnap ui</code>. The page runs the same commands as the CLI.
@@ -606,8 +608,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               where other users could read it with <code translate="no">ps</code>: cmux opens the page
               without it, and the key is handed over through cmux's socket. If that fails, the page opens
               without a key and <code translate="no">sessionsnap ui</code> prints the keyed link in its
-              terminal. If the page has no key or an old one, click <strong>Reconnect</strong>, open that
-              link, or run <code translate="no">sessionsnap ui</code> again. In cmux
+              terminal. If the page has no key or an old one, open it again from the page
+              (<strong>Open in cmux</strong>, <strong>Open in browser</strong>, or
+              <strong>Reconnect</strong> from tmux), open that link, or run <code translate="no">sessionsnap ui</code> again. In cmux
               0.64 the Dock is a beta feature (Settings → Beta Features → Dock); without it the page
               opens as a normal browser tab.
             </p>

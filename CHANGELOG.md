@@ -4,6 +4,23 @@ All notable changes to sessionsnap are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `sessionsnap ui --browser`: the web UI in your default browser from cmux too; save and restore
+  still use cmux.
+- Web UI from cmux: a page without its key (an address pasted into a browser) offers **Open in
+  cmux** and **Open in browser** instead of only Reconnect into cmux.
+- Web UI: the sessionsnap logo as the page's icon.
+
+### Fixed
+
+- cmux 0.65: restoring tabs into an open workspace failed with "cmux new-surface printed no surface
+  ref" (cmux now prints the new tab's UUID instead of its ref).
+- When cmux refuses to hand the web UI its key (it lets only processes started inside cmux use its
+  socket), the message says so instead of "answered something other than JSON".
+
 ## [0.1.1] - 2026-10-31
 
 ### Added

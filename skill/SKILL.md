@@ -37,6 +37,7 @@ is saved as a plain tab, and `save` says so.
   hooks) unless the user asks for it.
 - Do not start `sessionsnap ui` unless the user asks for the UI; it is for people.
 - `sessionsnap ui` re-shows an already running UI (it asks that server to show its page) instead of starting a second one.
+  `sessionsnap ui --browser` shows it in the default browser from cmux too, also when a UI is already running.
 - `save` only reads the terminal. If nothing changed, or no tmux server runs, it writes nothing and exits 3. Its `warnings` name the
   flags it left out (only allow-listed flags are saved) and any agent session it left out (a
   restricting flag it could not save, a flag it doesn't know, flags of an untested agent, or a

@@ -159,6 +159,8 @@ def check():
     require(len(set(descriptions)) == len(PAGES), "page descriptions must be unique")
     for asset in ("og.png", "apple-touch-icon.png", "favicon.svg", "styles.css", "script.js"):
         require((SITE / asset).is_file(), f"missing site/{asset}")
+    require((ROOT / "src/interfaces/web/assets/favicon.svg").read_bytes() == (ROOT / "assets" / "logo.svg").read_bytes(),
+            "src/interfaces/web/assets/favicon.svg (the web UI's icon) must be identical to assets/logo.svg")
     require((SITE / "favicon.svg").read_bytes() == (ROOT / "assets" / "logo.svg").read_bytes(),
             "site/favicon.svg must be identical to assets/logo.svg")
 

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde_json::json;
 
+use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, failure};
 use crate::interfaces::cli::{Ctx, Outcome};
 use api::{MakeCtx, Server};
@@ -78,7 +79,7 @@ fn serve_until(
             });
         }
         if show_at_start {
-            scope.spawn(|| report_shown(&server.show_page()));
+            scope.spawn(|| report_shown(&server.show_page(None)));
         }
         loop {
             match listener.accept() {
@@ -210,12 +211,15 @@ pub fn is_running(port: u16) -> bool {
     request(port, &req, Duration::from_secs(2)).is_ok_and(|out| out.contains(r#""app":"sessionsnap""#))
 }
 
-/// Asks the UI server on `port` to show its page (with its key) in cmux; returns where, and
-/// whether the key reached the page (if not, that server printed the keyed link in its terminal).
-pub fn ask_to_show(port: u16) -> Result<(String, bool)> {
+/// Asks the UI server on `port` to show its page (with its key) where it shows pages, or in the
+/// default browser; returns where, and whether the key reached the page (if not, that server
+/// printed the keyed link in its terminal).
+pub fn ask_to_show(port: u16, browser: bool) -> Result<(String, bool)> {
+    let body = if browser { r#"{"in":"browser"}"# } else { "{}" };
     let req = format!(
         "POST /api/show HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
-         Content-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
     );
     // Showing runs cmux, which can take a few seconds.
     let out =
@@ -238,14 +242,14 @@ pub fn new_token() -> Result<String> {
 
 /// A UI already answers on `port`: its key is only in that server's memory, so ask it to show
 /// its own page.
-fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
+fn already_running(port: u16, url: &str, open: bool, browser: bool) -> Result<Outcome> {
     if !open {
         return Ok(Outcome::ok(
             json!({"url": url, "started": false}),
             format!("The sessionsnap UI is already running at {url}."),
         ));
     }
-    match ask_to_show(port) {
+    match ask_to_show(port, browser) {
         Ok((shown, true)) => Ok(Outcome::ok(
             json!({"url": url, "started": false, "shown": shown, "keyed": true}),
             format!("The sessionsnap UI is already running at {url}; showed it ({shown})."),
@@ -254,7 +258,7 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
             json!({"url": url, "started": false, "shown": shown, "keyed": false}),
             format!(
                 "The sessionsnap UI is already running at {url}; showed it ({shown}) but could not hand it its key. \
-                 Open the link printed in the terminal running `sessionsnap ui`, or click Reconnect on the page."
+                 Open the link printed in the terminal running `sessionsnap ui`, or open it again from the page."
             ),
         )),
         Err(e) => Err(failure(
@@ -268,8 +272,8 @@ fn already_running(port: u16, url: &str, open: bool) -> Result<Outcome> {
 }
 
 /// `sessionsnap ui`: serves the page on 127.0.0.1 and shows it in cmux's Dock, or the default
-/// browser from tmux; returns once idle.
-pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome> {
+/// browser from tmux or with `browser`; returns once idle.
+pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool, browser: bool) -> Result<Outcome> {
     let url = format!("http://127.0.0.1:{port}/");
     let idle = idle_minutes
         .checked_mul(60)
@@ -277,17 +281,21 @@ pub fn ui(ctx: &Ctx, port: u16, idle_minutes: u64, open: bool) -> Result<Outcome
         .ok_or_else(|| failure(Exit::Error, "--idle-minutes is too large"))?;
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
-        Err(_) if is_running(port) => return already_running(port, &url, open),
+        Err(_) if is_running(port) => return already_running(port, &url, open, browser),
         Err(e) => {
             return Err(failure(Exit::Error, format!("cannot listen on 127.0.0.1:{port} ({e}); pick another --port")));
         }
     };
     // Shows run on their own thread, so each opens its own terminal client: cmux shows the page in
-    // its Dock, tmux in the default browser. The key travels in the link's fragment, which the
-    // browser keeps to itself.
+    // its Dock, tmux (or `--browser`) the default browser. The key travels in the link's fragment,
+    // which the browser keeps to itself.
     let terminal = ctx.terminal.kind();
     let show = move |u: &str| crate::app::show_url(terminal, u);
-    let server = Server::new(port, new_token()?, Box::new(show)).for_terminal(terminal);
+    let mut server = Server::new(port, new_token()?, Box::new(show)).for_terminal(terminal);
+    if terminal == TerminalKind::Cmux {
+        // The page asks for either; `--browser` makes the browser the default.
+        server = server.with_browser(Box::new(crate::app::show_in_browser), browser);
+    }
     eprintln!("sessionsnap UI at {url}. It stops after {idle_minutes} min without use; Ctrl-C stops it now.");
     if !open {
         eprintln!("Run `sessionsnap ui` again to show it.");
@@ -351,8 +359,10 @@ mod tests {
         let cli = Cli::try_parse_from(["sessionsnap", "ui", "--port", "5000", "--no-open"]).unwrap();
         assert!(matches!(
             cli.command,
-            crate::interfaces::cli::Command::Ui { port: 5000, idle_minutes: 30, no_open: true }
+            crate::interfaces::cli::Command::Ui { port: 5000, idle_minutes: 30, no_open: true, browser: false }
         ));
+        let cli = Cli::try_parse_from(["sessionsnap", "--terminal", "cmux", "ui", "--browser"]).unwrap();
+        assert!(matches!(cli.command, crate::interfaces::cli::Command::Ui { browser: true, .. }));
     }
 
     fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + Send + Sync + '_ {
@@ -755,10 +765,42 @@ mod tests {
         );
         let dir = tempfile::tempdir().unwrap();
         let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
-            ask_to_show(port).map_err(|e| format!("{e:#}"))
+            ask_to_show(port, false).map_err(|e| format!("{e:#}"))
         });
         assert_eq!(out, Ok(("reused".to_string(), true)));
         assert_eq!(*seen.lock().unwrap(), vec![format!("http://127.0.0.1:{port}/#t=k3y")]);
+    }
+
+    /// A second `ui --browser` asks a running cmux server to show its page in the browser.
+    #[test]
+    fn a_second_ui_for_the_browser_asks_for_the_browser() {
+        let (listener, port) = listen();
+        let seen = std::sync::Mutex::new(vec![]);
+        let server = Server::new(
+            port,
+            "k3y".into(),
+            Box::new(|_| {
+                seen.lock().unwrap().push("cmux");
+                Ok(Shown::whole("dock"))
+            }),
+        )
+        .with_browser(
+            Box::new(|_| {
+                seen.lock().unwrap().push("browser");
+                Ok(Shown::whole("browser"))
+            }),
+            false,
+        )
+        .with_show_limits(Duration::ZERO, Duration::from_secs(5));
+        let dir = tempfile::tempdir().unwrap();
+        let url = format!("http://127.0.0.1:{port}/");
+        let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
+            [true, false].map(|b| {
+                already_running(port, &url, true, b).map(|o| o.json["shown"].clone()).map_err(|e| format!("{e:#}"))
+            })
+        });
+        assert_eq!(out, [Ok(json!("browser")), Ok(json!("dock"))]);
+        assert_eq!(*seen.lock().unwrap(), ["browser", "cmux"]);
     }
 
     /// A show function that, like `cmux browser goto`, returns only once the page has loaded.
@@ -777,7 +819,7 @@ mod tests {
         let server = Server::new(port, "k3y".into(), Box::new(show_that_loads_the_page(port)));
         let dir = tempfile::tempdir().unwrap();
         let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
-            ask_to_show(port).map_err(|e| format!("{e:#}"))
+            ask_to_show(port, false).map_err(|e| format!("{e:#}"))
         });
         assert_eq!(out, Ok(("reused".to_string(), true)));
     }
@@ -815,7 +857,7 @@ mod tests {
         );
         let dir = tempfile::tempdir().unwrap();
         let out = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
-            ask_to_show(port).map_err(|e| format!("{e:#}"))
+            ask_to_show(port, false).map_err(|e| format!("{e:#}"))
         });
         assert_eq!(out, Ok(("dock".to_string(), false)));
     }
@@ -826,7 +868,7 @@ mod tests {
         let server = Server::new(port, "k3y".into(), Box::new(|_| anyhow::bail!("no cmux")));
         let dir = tempfile::tempdir().unwrap();
         let err = serve_while(listener, &server, &test_ctx_maker(dir.path()), false, || {
-            ask_to_show(port).map_err(|e| format!("{e:#}"))
+            ask_to_show(port, false).map_err(|e| format!("{e:#}"))
         })
         .unwrap_err();
         assert!(err.contains("no cmux"), "{err}");
