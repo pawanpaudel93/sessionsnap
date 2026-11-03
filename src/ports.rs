@@ -205,6 +205,10 @@ pub trait SessionHistory {
     fn records_launches(&self) -> bool {
         false
     }
+    /// True when what keeps that record is installed (Pi's sessionsnap extension).
+    fn recorder_installed(&self) -> bool {
+        false
+    }
 }
 
 /// What the domain needs to know about coding agents: their names, what their session IDs look
