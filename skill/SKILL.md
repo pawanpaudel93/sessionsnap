@@ -69,7 +69,7 @@ is saved as a plain tab, and `save` says so.
 | Move a snapshot to another machine | `sessionsnap export <name>[@v] -o <file> --json`, there `sessionsnap import <file> [--as <name>] [--map <old>=<new>] --json` (only the snapshot; show the user the plan's tab commands before restoring a file from someone else) |
 | Save automatically every interval (launchd on macOS, systemd on Linux) | `sessionsnap schedule add <name> --interval 30m --json` (a new name; saves once now) |
 | Automatic snapshots | `sessionsnap schedule list --json` (`running`, `lastRun`); `list --json` rows of automatic ones have `schedule` |
-| Pause / resume / change one | `sessionsnap schedule stop\|start <name> --json`, `sessionsnap schedule edit <name> --interval 2h --json` |
+| Pause / resume / change one | `sessionsnap schedule stop\|start <name> --json`, `sessionsnap schedule edit <name> --interval 2h --json`; versions kept: `--keep N` on `add` or `edit` (default 50, 0 keeps all) |
 | Save one now | `sessionsnap schedule run <name> --json` |
 | Make it a normal snapshot | `sessionsnap schedule remove <name> --json` (versions kept; `save` to an automatic one is refused, exit 4) |
 | Preview edits without saving | `sessionsnap edit <name> --batch - --dry-run --json` (ops on stdin); save them with `--base <baseVersion>` from the preview, which exits 6 if the snapshot changed since |

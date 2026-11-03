@@ -190,12 +190,18 @@ pub fn apply_plan(
     let mut steps = vec![];
     for action in &plan.actions {
         match action {
-            Action::CreateWorkspace { name, cwd, tabs } => steps.push(step(
-                format!("create workspace {name} with {} tab{}", tabs.len(), if tabs.len() == 1 { "" } else { "s" }),
-                terminal
-                    .create_workspace(name, &existing(cwd), &tabs.iter().map(launch).collect::<Vec<_>>())
-                    .map(|_| ()),
-            )),
+            Action::CreateWorkspace { name, cwd, tabs, windows } => {
+                let mut launches: Vec<LaunchTab> = tabs.iter().map(launch).collect();
+                split_into(&mut launches, windows);
+                steps.push(step(
+                    format!(
+                        "create workspace {name} with {} tab{}",
+                        tabs.len(),
+                        if tabs.len() == 1 { "" } else { "s" }
+                    ),
+                    terminal.create_workspace(name, &existing(cwd), &launches).map(|_| ()),
+                ))
+            }
             Action::AddTabs { workspace_ref, workspace_name, tabs } => {
                 for tab in tabs {
                     steps.push(step(
@@ -210,6 +216,24 @@ pub fn apply_plan(
     Ok(steps)
 }
 
+/// Marks `launches` to open as `windows` say: each window's tabs after its first split beside it,
+/// and its last one carries the layout. Nothing when the windows don't cover the tabs exactly.
+fn split_into(launches: &mut [LaunchTab], windows: &[crate::domain::model::Window]) {
+    if !crate::domain::model::covers(windows, launches.len()) {
+        return;
+    }
+    let mut i = 0;
+    for w in windows {
+        for (k, tab) in launches[i..i + w.tabs].iter_mut().enumerate() {
+            tab.split = k > 0;
+        }
+        if w.tabs > 1 {
+            launches[i + w.tabs - 1].layout = Some(w.layout.clone());
+        }
+        i += w.tabs;
+    }
+}
+
 /// What the terminal opens for a saved tab: the agent's resume command (with the saved flags,
 /// quoted for the shell), or the terminal tab's own command. An agent tab that cannot be resumed
 /// and any command with a control character get no command (the plan has already turned those
@@ -221,7 +245,13 @@ pub fn launch_tab(agents: &Agents, tab: &Tab) -> LaunchTab {
         Tab::Agent { left_out: Some(_), .. } => None,
         Tab::Agent { agent, session_id, args, .. } => agents.resume_command(agent, session_id, args),
     };
-    LaunchTab { title: tab.title().to_string(), cwd: safe_cwd(tab.cwd()), command: command.filter(|c| !has_control(c)) }
+    LaunchTab {
+        split: false,
+        layout: None,
+        title: tab.title().to_string(),
+        cwd: safe_cwd(tab.cwd()),
+        command: command.filter(|c| !has_control(c)),
+    }
 }
 
 /// `cwd`, or the home folder when it is empty or has a control character.
@@ -255,6 +285,7 @@ mod tests {
 
     fn workspace(name: &str, cwd: &str, id: Option<&str>, tabs: Vec<Tab>) -> Workspace {
         Workspace {
+            windows: vec![],
             name: name.into(),
             color: None,
             cwd: cwd.into(),
@@ -362,6 +393,7 @@ mod launch_tests {
         let fake = FakeTerminal::default();
         let ctx = crate::testing::ctx(dir.path(), fake.clone(), true, true, None);
         let saved = vec![Workspace {
+            windows: vec![],
             name: "Alpha".into(),
             cwd: "/w/a".into(),
             git_branch: None,

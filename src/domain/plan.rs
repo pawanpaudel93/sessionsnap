@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::agents::{Resume, flags_problem, problem, resume_status, unknown_session};
 use crate::domain::edit::{find_ws, locate, parse_tab_ref};
 use crate::domain::known::{KnownSessions, UNKNOWN_FLAGS};
-use crate::domain::model::{SessionRef, Tab, Workspace, has_control};
+use crate::domain::model::{SessionRef, Tab, Window, Workspace, has_control};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, OpenWorkspace};
 
@@ -30,8 +30,19 @@ pub enum PlanSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum Action {
-    CreateWorkspace { name: String, cwd: String, tabs: Vec<Tab> },
-    AddTabs { workspace_ref: String, workspace_name: String, tabs: Vec<Tab> },
+    CreateWorkspace {
+        name: String,
+        cwd: String,
+        tabs: Vec<Tab>,
+        /// tmux: its split windows, when every saved tab is opened (`Workspace::windows`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        windows: Vec<Window>,
+    },
+    AddTabs {
+        workspace_ref: String,
+        workspace_name: String,
+        tabs: Vec<Tab>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -157,6 +168,7 @@ pub fn recovered_workspace(
     }
     let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
     let ws = Workspace {
+        windows: vec![],
         name: "Recovered sessions".into(),
         color: None,
         cwd,
@@ -266,11 +278,16 @@ pub fn build_actions_picked(
                     });
                 }
             }
-            None => b.actions.push(Action::CreateWorkspace {
-                name: ws.name.clone(),
-                cwd: ws.cwd.clone(),
-                tabs: pending.into_iter().map(|(t, _)| t).collect(),
-            }),
+            None => {
+                // Split windows only when every saved tab opens: otherwise the panes don't line up.
+                let windows = ws.split_windows().filter(|_| pending.len() == ws.tabs.len()).unwrap_or_default();
+                b.actions.push(Action::CreateWorkspace {
+                    name: ws.name.clone(),
+                    cwd: ws.cwd.clone(),
+                    tabs: pending.into_iter().map(|(t, _)| t).collect(),
+                    windows: windows.to_vec(),
+                })
+            }
         }
     }
     b
@@ -324,6 +341,7 @@ mod tests {
 
     fn workspace(name: &str, cwd: &str, id: Option<&str>, tabs: Vec<Tab>) -> Workspace {
         Workspace {
+            windows: vec![],
             name: name.into(),
             color: None,
             cwd: cwd.into(),
@@ -373,11 +391,13 @@ mod tests {
                     tabs: vec![claude_tab("two", "/w/a", B)]
                 },
                 Action::CreateWorkspace {
+                    windows: vec![],
                     name: "Gamma".into(),
                     cwd: "/w/c".into(),
                     tabs: vec![claude_tab("three", "/w/c", C)]
                 },
                 Action::CreateWorkspace {
+                    windows: vec![],
                     name: "Delta".into(),
                     cwd: "/w/d".into(),
                     tabs: vec![Tab::Terminal { title: "lost".into(), cwd: "/w/d".into(), command: None }],
@@ -463,6 +483,7 @@ mod tests {
         assert_eq!(
             b.actions,
             vec![Action::CreateWorkspace {
+                windows: vec![],
                 name: "Gamma".into(),
                 cwd: "/w/c".into(),
                 tabs: vec![
@@ -509,6 +530,7 @@ mod tests {
         assert_eq!(
             b.actions,
             vec![Action::CreateWorkspace {
+                windows: vec![],
                 name: "Gamma".into(),
                 cwd: "/w/c".into(),
                 tabs: vec![
@@ -555,6 +577,7 @@ mod tests {
         assert_eq!(
             b.actions,
             vec![Action::CreateWorkspace {
+                windows: vec![],
                 name: "Gamma".into(),
                 cwd: "/w/c".into(),
                 tabs: vec![shell("deny"), shell("print"), shell("sandbox"), shell("gemini"), model]
@@ -615,6 +638,7 @@ mod tests {
         assert_eq!(
             b.actions,
             vec![Action::CreateWorkspace {
+                windows: vec![],
                 name: "Gamma".into(),
                 cwd: "/w/c".into(),
                 tabs: vec![claude_tab("three", "/w/c", C)],

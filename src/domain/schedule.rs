@@ -11,6 +11,9 @@ use crate::error::{Exit, failure};
 /// Shortest interval: a save reads all of cmux, so more often than this only adds load.
 pub const MIN_INTERVAL: u64 = 60;
 
+/// Versions a new automatic snapshot keeps when `--keep` was not given.
+pub const DEFAULT_KEEP: u32 = 50;
+
 /// Every automatic snapshot, by its stored name (`<root>/schedules.json`).
 pub type Schedules = BTreeMap<String, Schedule>;
 
@@ -28,6 +31,17 @@ pub struct Schedule {
     /// The terminal it saves from, when not cmux (`--terminal`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<crate::domain::terminal::TerminalKind>,
+    /// Versions to keep after each save (`--keep`); 0 or None (a schedule made before `--keep`,
+    /// whose history nobody agreed to cut): all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<u32>,
+}
+
+impl Schedule {
+    /// How many versions to keep; 0 keeps them all.
+    pub fn keep(&self) -> u32 {
+        self.keep.unwrap_or(0)
+    }
 }
 
 /// What the latest scheduled save did.

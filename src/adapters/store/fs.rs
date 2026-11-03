@@ -560,13 +560,19 @@ fn publish(
     }
 }
 
+/// A file a save that crashed may have left in a snapshot's folder: a temporary version
+/// (`.0003-<stamp>.<pid>-<n>.tmp`) or a number claim (`0003.claim`).
+pub fn is_leftover(name: &str) -> bool {
+    (name.starts_with('.') && name.ends_with(".tmp")) || name.ends_with(".claim")
+}
+
 /// Removes what a save that crashed may have left in `dir`: temporary files and number claims,
 /// at least `age` old (a stale lock's age while a live save may hold the lock: it has none that old).
 fn remove_leftovers(dir: &Path, age: Duration) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        let leftover = (name.starts_with('.') && name.ends_with(".tmp")) || name.ends_with(".claim");
+        let leftover = is_leftover(&name);
         let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|m| m.elapsed().unwrap_or_default() >= age);
         if leftover && old {
             let _ = fs::remove_file(e.path());
@@ -620,6 +626,7 @@ mod tests {
 
     fn ws(name: &str) -> Workspace {
         Workspace {
+            windows: vec![],
             name: name.into(),
             color: None,
             cwd: "/w".into(),
@@ -1015,7 +1022,14 @@ mod tests {
         let mut all = Schedules::new();
         all.insert(
             "work".into(),
-            Schedule { interval: 600, created_at: "t".into(), stopped: false, last_run: None, terminal: None },
+            Schedule {
+                interval: 600,
+                created_at: "t".into(),
+                stopped: false,
+                last_run: None,
+                terminal: None,
+                keep: None,
+            },
         );
         s.write_schedules(&lock, &all).unwrap();
         assert_eq!(s.read_schedules().unwrap(), all);

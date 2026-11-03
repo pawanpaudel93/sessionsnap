@@ -181,6 +181,7 @@ mod tests {
             stopped: false,
             last_run: None,
             terminal: terminal.and_then(crate::domain::terminal::TerminalKind::parse),
+            keep: None,
         }
     }
 

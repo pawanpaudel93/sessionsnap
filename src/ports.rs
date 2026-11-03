@@ -44,6 +44,9 @@ pub struct OpenWorkspace {
     /// Pinned to the top of the terminal's workspace list.
     pub pinned: bool,
     pub tabs: Vec<OpenTab>,
+    /// tmux: its windows, in order, each with how many of `tabs` it holds and its layout. Empty
+    /// for cmux.
+    pub windows: Vec<crate::domain::model::Window>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +102,10 @@ pub struct LaunchTab {
     pub title: String,
     pub cwd: String,
     pub command: Option<String>,
+    /// tmux: open it as a pane beside the previous tab, in that tab's window.
+    pub split: bool,
+    /// tmux: once this tab is open, arrange its window's panes so (the window's last tab).
+    pub layout: Option<String>,
 }
 
 /// What sessionsnap needs from a terminal: read what is open, open workspaces and tabs. Implemented
@@ -160,6 +167,8 @@ pub struct SessionInfo {
     /// Last change, RFC 3339 local time.
     pub modified: String,
     pub modified_at: SystemTime,
+    /// When its record was created (the file's birth time), when the system says.
+    pub created_at: Option<SystemTime>,
     /// A session a person ran and may want back, as the agent's history judges it; false for
     /// one-shot and scripted runs and the agent's own internal sessions.
     pub recoverable: bool,

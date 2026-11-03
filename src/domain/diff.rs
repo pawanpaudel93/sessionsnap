@@ -185,6 +185,7 @@ mod tests {
 
     fn ws(name: &str, tabs: Vec<Tab>) -> Workspace {
         Workspace {
+            windows: vec![],
             name: name.into(),
             color: None,
             cwd: "/w".into(),

@@ -487,7 +487,13 @@ mod tests {
     }
 
     fn launch(title: &str, cwd: &str, command: Option<&str>) -> LaunchTab {
-        LaunchTab { title: title.into(), cwd: cwd.into(), command: command.map(str::to_string) }
+        LaunchTab {
+            split: false,
+            layout: None,
+            title: title.into(),
+            cwd: cwd.into(),
+            command: command.map(str::to_string),
+        }
     }
 
     const KEY: &str = "0123456789abcdef0123456789abcdef";

@@ -230,6 +230,7 @@ impl Claude {
             first_prompt: first,
             modified,
             modified_at,
+            created_at: meta.created().ok(),
             recoverable: interactive && !internal,
         })
     }

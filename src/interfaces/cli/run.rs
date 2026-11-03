@@ -385,14 +385,41 @@ fn delete(ctx: &Ctx, name: &str) -> Result<Outcome> {
 fn schedule_json(s: &Schedule) -> Value {
     json!({
         "interval": format_interval(s.interval), "intervalSeconds": s.interval, "running": !s.stopped,
-        "createdAt": s.created_at, "lastRun": s.last_run,
+        "createdAt": s.created_at, "lastRun": s.last_run, "keep": s.keep(),
     })
+}
+
+/// Asks before a `--keep` lower than the versions `name` holds: its next save deletes the rest,
+/// as `prune` would (which asks too).
+fn confirm_keep(ctx: &Ctx, name: &str, keep: Option<u32>) -> Result<()> {
+    let Some(keep) = keep.filter(|&k| k > 0).map(|k| k as usize) else { return Ok(()) };
+    let count = app::snapshots::version_count(ctx, name).unwrap_or(0);
+    if count <= keep {
+        return Ok(());
+    }
+    confirm(
+        ctx,
+        &format!(
+            "Keep only the newest {keep} of {name}'s {count} versions? Its next save deletes the {} older ones.",
+            count - keep
+        ),
+    )
+}
+
+/// "keeping the newest 50 versions", or "keeping every version" for 0.
+fn keeping(keep: u32) -> String {
+    if keep == 0 {
+        "keeping every version".into()
+    } else {
+        format!("keeping the newest {}", human::count(keep as usize, "version"))
+    }
 }
 
 fn schedule(ctx: &Ctx, command: ScheduleCommand) -> Result<Outcome> {
     match command {
-        ScheduleCommand::Add { name, interval } => {
-            let (s, first) = app::schedule::add(ctx, &name, &interval)?;
+        ScheduleCommand::Add { name, interval, keep } => {
+            confirm_keep(ctx, &name, keep)?;
+            let (s, first) = app::schedule::add(ctx, &name, &interval, keep)?;
             let every = format_interval(s.interval);
             let (first_json, first_text) = match first {
                 Ok(Commit::Saved { version, .. }) => (
@@ -411,7 +438,7 @@ fn schedule(ctx: &Ctx, command: ScheduleCommand) -> Result<Outcome> {
             };
             Ok(Outcome::ok(
                 json!({"snapshot": name, "schedule": schedule_json(&s), "firstSave": first_json}),
-                format!("Saving {name} every {every}; first save: {first_text}"),
+                format!("Saving {name} every {every}, {}; first save: {first_text}", keeping(s.keep())),
             ))
         }
         ScheduleCommand::List => {
@@ -431,12 +458,13 @@ fn schedule(ctx: &Ctx, command: ScheduleCommand) -> Result<Outcome> {
             let text = human::schedules(&rows);
             Ok(Outcome::ok(json!({"schedules": rows}), text))
         }
-        ScheduleCommand::Edit { name, interval } => {
-            let (key, s) = app::schedule::edit(ctx, &name, &interval)?;
+        ScheduleCommand::Edit { name, interval, keep } => {
+            confirm_keep(ctx, &name, keep)?;
+            let (key, s) = app::schedule::edit(ctx, &name, interval.as_deref(), keep)?;
             let every = format_interval(s.interval);
             Ok(Outcome::ok(
                 json!({"snapshot": key, "schedule": schedule_json(&s)}),
-                format!("Saving {key} every {every}"),
+                format!("Saving {key} every {every}, {}", keeping(s.keep())),
             ))
         }
         ScheduleCommand::Stop { name } => start_stop(ctx, &name, false),

@@ -128,6 +128,7 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> (Vec<OpenWorksp
                 })
                 .collect();
             OpenWorkspace {
+                windows: vec![],
                 id: tw.id,
                 reference: Some(tw.reference),
                 name: fw.map(|f| f.name.clone()).unwrap_or_else(|| clean_title(&tw.title)),
@@ -150,6 +151,7 @@ pub fn join(tree: Vec<TreeWorkspace>, file: &[FileWorkspace]) -> (Vec<OpenWorksp
 pub fn from_file(file: &[FileWorkspace]) -> Vec<OpenWorkspace> {
     file.iter()
         .map(|f| OpenWorkspace {
+            windows: vec![],
             id: f.id.clone(),
             reference: None,
             name: f.name.clone(),

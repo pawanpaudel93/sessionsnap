@@ -259,8 +259,9 @@ for t in $LINUX_TARGETS; do
 done
 
 # --- release notes ----------------------------------------------------------
-# The repo commits straight to main, so the notes come from the Conventional Commit subjects
-# since the previous tag (gh's --generate-notes lists merged PRs).
+# The notes are this version's CHANGELOG section, written for people. Only when that section is
+# empty do they fall back to the Conventional Commit subjects since the previous tag (the repo
+# commits straight to main, so gh's --generate-notes would list no PRs).
 say "Writing dist/NOTES.md"
 PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
 RANGE=${PREV:+$PREV..}HEAD
@@ -269,6 +270,10 @@ section() { # section TITLE REGEX: one bullet per matching subject, prefix strip
   lines=$(git log --no-merges --format=%s "$RANGE" | grep -E "$2" | grep -v '^chore: release' |
     sed -E -e 's/^[a-z]+(\([^)]*\))?!: /- **Breaking:** /' -e 's/^[a-z]+(\([^)]*\))?: /- /') || true
   [ -z "$lines" ] || printf '### %s\n\n%s\n\n' "$1" "$lines"
+}
+changelog() { # this version's CHANGELOG section, without its heading or leading blank lines
+  awk -v head="## [$VERSION] - " 'index($0, head) == 1 { on = 1; next } on && /^## \[/ { exit } on' CHANGELOG.md |
+    sed -e '/./,$!d'
 }
 INSTALL='curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh'
 {
@@ -280,11 +285,16 @@ INSTALL='curl -fsSL https://sessionsnap.pawanpaudel.com.np/install.sh | sh'
   else
     printf 'Install or upgrade (macOS and Linux):\n\n```sh\n%s\n```\n\n' "$INSTALL"
     printf 'Already installed? Run `sessionsnap update`.\n\n'
-    section "Features" '^feat(\(|!|:)'
-    section "Fixes" '^fix(\(|!|:)'
-    section "Performance" '^perf(\(|!|:)'
-    section "Docs" '^docs(\(|!|:)'
-    section "Other" '^(refactor|build|ci|test|chore|style)(\(|!|:)'
+    CHANGES=$(changelog)
+    if [ -n "$CHANGES" ]; then
+      printf '%s\n\n' "$CHANGES"
+    else
+      section "Features" '^feat(\(|!|:)'
+      section "Fixes" '^fix(\(|!|:)'
+      section "Performance" '^perf(\(|!|:)'
+      section "Docs" '^docs(\(|!|:)'
+      section "Other" '^(refactor|build|ci|test|chore|style)(\(|!|:)'
+    fi
     printf '**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
   fi
 } >"$DIST/NOTES.md"

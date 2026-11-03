@@ -23,9 +23,8 @@ pub struct Cli {
     /// Print machine-readable JSON (never prompts)
     #[arg(long, global = true)]
     pub json: bool,
-    /// Answer yes to the confirmations of delete, prune, restore, recent --restore, install-cmux and
-    /// uninstall
-    /// (agents: only when the user asked for that action)
+    /// Answer yes to the confirmations of delete, prune, schedule --keep, restore, recent --restore,
+    /// install-cmux and uninstall (agents: only when the user asked for that action)
     #[arg(long, short = 'y', global = true)]
     pub yes: bool,
     /// Terminal to save from and restore into (default: the one this runs in, tmux first; outside
@@ -213,10 +212,10 @@ pub enum Command {
     /// Serve the web UI on 127.0.0.1 and show it in the cmux Dock, or the default browser from tmux
     Ui {
         /// Port to serve on
-        #[arg(long, default_value_t = crate::interfaces::web::DEFAULT_PORT)]
+        #[arg(long, default_value_t = crate::interfaces::web::DEFAULT_PORT, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
         /// Stop after this many minutes without requests
-        #[arg(long, default_value_t = 30)]
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
         idle_minutes: u64,
         /// Do not show the page
         #[arg(long)]
@@ -263,17 +262,23 @@ pub enum ScheduleCommand {
         /// How often: a number and a unit, e.g. 30m, 2h, 1d (at least 1m)
         #[arg(long)]
         interval: String,
+        /// Versions to keep: older ones are deleted after each save (default 50; 0 keeps all)
+        #[arg(long)]
+        keep: Option<u32>,
     },
     /// List automatic snapshots, how often each is saved and how its last save went
     #[command(visible_alias = "ls")]
     List,
-    /// Change how often an automatic snapshot is saved
+    /// Change how often an automatic snapshot is saved, or how many versions it keeps
     Edit {
         /// Automatic snapshot name
         name: String,
         /// How often: a number and a unit, e.g. 30m, 2h, 1d (at least 1m)
         #[arg(long)]
-        interval: String,
+        interval: Option<String>,
+        /// Versions to keep: older ones are deleted after each save (0 keeps all)
+        #[arg(long)]
+        keep: Option<u32>,
     },
     /// Pause an automatic snapshot: no saves until it is started again
     Stop {

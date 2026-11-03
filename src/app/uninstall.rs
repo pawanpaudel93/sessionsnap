@@ -214,7 +214,12 @@ fn remove_data(data: &Path) -> Result<Step> {
     let foreign: Vec<String> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| !DATA_ENTRIES.contains(&n.as_str()) && n != ".DS_Store" && !n.starts_with("sessions.json.bad-"))
+        .filter(|n| {
+            !DATA_ENTRIES.contains(&n.as_str())
+                && n != ".DS_Store"
+                && !n.starts_with("sessions.json.bad-")
+                && !is_write_leftover(n, &["sessions", "schedules"])
+        })
         .collect();
     if !foreign.is_empty() {
         return Ok(step(
@@ -234,6 +239,12 @@ fn remove_data(data: &Path) -> Result<Step> {
     Ok(step(what, "removed", None))
 }
 
+/// `<stem>.tmp-<pid>`: a write of `<stem>.json` interrupted before its rename (`util::json`).
+fn is_write_leftover(name: &str, stems: &[&str]) -> bool {
+    name.split_once(".tmp-")
+        .is_some_and(|(stem, pid)| stems.contains(&stem) && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// True when `snapshots/` holds only folders of `.json` versions and `plans/` only `.json` plans,
 /// as the store writes them (and leftovers of interrupted writes).
 fn looks_like_ours(data: &Path) -> bool {
@@ -242,11 +253,9 @@ fn looks_like_ours(data: &Path) -> bool {
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
     };
     let json_file = |e: &std::fs::DirEntry| {
-        {
-            let name = e.file_name().to_string_lossy().into_owned();
-            // `.tmp-<pid>`: a write interrupted before its rename.
-            e.file_type().is_ok_and(|t| t.is_file()) && (name.ends_with(".json") || name.contains(".tmp-"))
-        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        e.file_type().is_ok_and(|t| t.is_file())
+            && (name.ends_with(".json") || name.contains(".tmp-") || crate::adapters::store::fs::is_leftover(&name))
     };
     only(&data.join("plans"), &json_file)
         && only(&data.join("snapshots"), &|e| e.file_type().is_ok_and(|t| t.is_dir()) && only(&e.path(), &json_file))
@@ -435,6 +444,22 @@ mod tests {
         assert!(r.steps[2].note.as_deref().unwrap().contains("symlink"));
         assert!(link.exists());
         assert!(d.path().join(".sessionsnap/snapshots/work/0001.json").exists());
+    }
+
+    #[test]
+    fn what_a_crashed_save_left_behind_is_removed_with_the_data() {
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        for f in ["snapshots/work/0002.claim", "snapshots/work/.0002-20260101T000000.123-0.tmp", "sessions.tmp-4242"] {
+            std::fs::write(p.data.join(f), "").unwrap();
+        }
+        assert_eq!(run(&p, false).unwrap().steps[2].status, "removed");
+        assert!(!p.data.exists());
+        // A name that only looks like one is still someone else's.
+        let d = tempfile::tempdir().unwrap();
+        let p = installed(d.path());
+        std::fs::write(p.data.join("notes.tmp-x"), "mine").unwrap();
+        assert_eq!(run(&p, false).unwrap().steps[2].status, "left");
     }
 
     #[test]

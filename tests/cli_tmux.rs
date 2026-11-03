@@ -108,3 +108,63 @@ fn saving_some_workspaces_notes_only_their_own_tabs() {
     let notes = one["warnings"].to_string();
     assert!(notes.contains("one › a") && !notes.contains("two › b"), "{notes}");
 }
+
+/// tmux split windows: saved with the workspace, recreated as panes when the whole workspace is
+/// restored, unchanged by a resize, and dropped by an edit that moves its tabs.
+#[test]
+fn split_windows_are_saved_and_restored_as_panes() {
+    use sessionsnap::domain::model::Window;
+    let window = |tabs: usize, layout: &str| Window { tabs, layout: layout.into() };
+    let env = setup();
+    env.fake.name.set("tmux");
+    env.fake.state.borrow_mut().workspaces[0].windows = vec![window(2, "aaaa,80x24,0,0{40x24,0,0,1,39x24,41,0,2}")];
+    env.fake.state.borrow_mut().workspaces[1].windows = vec![window(1, "bbbb,80x24,0,0,3")];
+    env.run(&["save", "s"]).unwrap();
+    let shown = env.run(&["show", "s", "--json"]).unwrap().json;
+    assert_eq!(shown["version"]["workspaces"][0]["windows"][0]["tabs"], 2);
+    assert!(shown["version"]["workspaces"][1].get("windows").is_none(), "no split, nothing saved");
+
+    // Dragging the divider changes only the sizes: not a new version.
+    env.fake.state.borrow_mut().workspaces[0].windows = vec![window(2, "cccc,80x24,0,0{20x24,0,0,1,59x24,21,0,2}")];
+    assert_eq!(env.run(&["save", "s"]).unwrap().exit, Exit::NothingToDo);
+
+    env.fake.state.borrow_mut().workspaces.remove(0);
+    let plan = env.run(&["restore", "s", "--plan"]).unwrap().json;
+    assert_eq!(plan["plan"]["actions"][0]["windows"][0]["tabs"], 2, "{plan}");
+    env.run(&["apply", plan["plan"]["planId"].as_str().unwrap()]).unwrap();
+    let launched: Vec<(bool, Option<String>)> =
+        env.fake.launched.borrow().iter().map(|t| (t.split, t.layout.clone())).collect();
+    assert_eq!(launched, [(false, None), (true, Some("aaaa,80x24,0,0{40x24,0,0,1,39x24,41,0,2}".into()))]);
+
+    // Moving a tab out leaves the window's panes unknown: one window per tab again.
+    env.run(&["tab", "s", "Alpha#1", "--move", "Beta"]).unwrap();
+    let shown = env.run(&["show", "s", "--json"]).unwrap().json;
+    assert!(shown["version"]["workspaces"].as_array().unwrap().iter().all(|w| w.get("windows").is_none()));
+}
+
+/// A window whose panes changed places (side by side to stacked) is a change; a window count that
+/// can't be right (an edited file) restores one window per tab instead of failing.
+#[test]
+fn a_rearranged_split_is_saved_and_a_bad_window_count_is_ignored() {
+    use sessionsnap::domain::model::Window;
+    let env = setup();
+    env.fake.name.set("tmux");
+    let side = r#"{"V":2,"L":{"t":"h","w":160,"h":48,"x":0,"y":0,"c":[{"t":"p","w":80,"h":48,"x":0,"y":0,"i":0},{"t":"p","w":79,"h":48,"x":81,"y":0,"i":1}]}}"#;
+    let stacked = side.replace(r#""t":"h""#, r#""t":"v""#);
+    env.fake.state.borrow_mut().workspaces[0].windows = vec![Window { tabs: 2, layout: side.into() }];
+    env.run(&["save", "s"]).unwrap();
+    env.fake.state.borrow_mut().workspaces[0].windows = vec![Window { tabs: 2, layout: stacked.clone() }];
+    assert_eq!(env.run(&["save", "s"]).unwrap().json["version"], 2, "orientation changed");
+    let shown = env.run(&["show", "s", "--json"]).unwrap().json;
+    assert_eq!(shown["version"]["workspaces"][0]["windows"][0]["layout"], stacked.as_str());
+
+    // A count that overflows when added up.
+    env.fake.state.borrow_mut().workspaces[0].windows =
+        vec![Window { tabs: usize::MAX, layout: side.into() }, Window { tabs: 3, layout: side.into() }];
+    env.run(&["save", "s"]).unwrap();
+    env.fake.state.borrow_mut().workspaces.remove(0);
+    let plan = env.run(&["restore", "s", "--plan"]).unwrap().json;
+    assert!(plan["plan"]["actions"][0].get("windows").is_none(), "{plan}");
+    env.run(&["apply", plan["plan"]["planId"].as_str().unwrap()]).unwrap();
+    assert!(env.fake.launched.borrow().iter().all(|t| !t.split && t.layout.is_none()));
+}

@@ -171,6 +171,7 @@ mod tests {
             *left_out = Some(reason.to_string());
         }
         let mut ws = vec![Workspace {
+            windows: vec![],
             name: "W".into(),
             color: None,
             cwd: "/w".into(),
@@ -189,6 +190,7 @@ mod tests {
     #[test]
     fn uuid_session_ids_load_in_lowercase() {
         let mut ws = vec![Workspace {
+            windows: vec![],
             name: "W".into(),
             color: None,
             cwd: "/w".into(),
