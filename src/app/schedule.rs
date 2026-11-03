@@ -25,7 +25,7 @@ fn not_scheduled(name: &str) -> anyhow::Error {
 
 /// Starts saving `name` every `interval` (e.g. "10m"), then saves it once now. A name that holds
 /// versions saved by hand is refused (exit 4): automatic snapshots are kept apart.
-pub fn add(ctx: &Ctx, name: &str, interval: &str) -> Result<(Schedule, Result<Commit>)> {
+pub fn add(ctx: &Ctx, name: &str, interval: &str, keep: Option<u32>) -> Result<(Schedule, Result<Commit>)> {
     validate_new_name(name)?;
     let interval = parse_interval(interval)?;
     {
@@ -54,6 +54,7 @@ pub fn add(ctx: &Ctx, name: &str, interval: &str) -> Result<(Schedule, Result<Co
                 stopped: false,
                 last_run: None,
                 terminal: Some(ctx.terminal.kind()).filter(|&t| t != TerminalKind::Cmux),
+                keep: Some(keep.unwrap_or(crate::domain::schedule::DEFAULT_KEEP)),
             },
         );
         ctx.scheduler.install(&name, &all[&name])?;
@@ -82,19 +83,32 @@ fn has_manual_versions(ctx: &Ctx, name: &str) -> Result<bool> {
     Ok(false)
 }
 
-/// Changes how often `name` is saved (a stopped one stays stopped); returns its stored name and
-/// schedule.
-pub fn edit(ctx: &Ctx, name: &str, interval: &str) -> Result<(String, Schedule)> {
+/// Changes how often `name` is saved and how many versions it keeps (a stopped one stays
+/// stopped); returns its stored name and schedule.
+pub fn edit(ctx: &Ctx, name: &str, interval: Option<&str>, keep: Option<u32>) -> Result<(String, Schedule)> {
     validate_name(name)?;
-    let interval = parse_interval(interval)?;
+    if interval.is_none() && keep.is_none() {
+        return Err(failure(Exit::Error, "nothing to change: pass --interval, --keep or both"));
+    }
+    let interval = interval.map(parse_interval).transpose()?;
     let lock = ctx.store.lock_schedules()?;
     let mut all = ctx.store.read_schedules()?;
     let key = find(&all, name).ok_or_else(|| not_scheduled(name))?;
     let schedule = all.get_mut(&key).expect("found above");
-    schedule.interval = interval;
+    if let Some(interval) = interval {
+        schedule.interval = interval;
+    }
+    if keep.is_some() {
+        schedule.keep = keep;
+    }
     let schedule = schedule.clone();
-    if !schedule.stopped {
-        ctx.scheduler.install(&key, &schedule)?;
+    if !schedule.stopped
+        && let Err(e) = ctx.scheduler.install(&key, &schedule)
+    {
+        // The OS dropped the old schedule too: record it stopped, so `schedule list` says so.
+        all.get_mut(&key).expect("found above").stopped = true;
+        ctx.store.write_schedules(&lock, &all)?;
+        return Err(e.context(format!("'{key}' is stopped; start it again with: sessionsnap schedule start {key}")));
     }
     ctx.store.write_schedules(&lock, &all)?;
     Ok((key, schedule))
@@ -161,7 +175,7 @@ pub fn run(ctx: &Ctx, name: &str) -> Result<Commit> {
     // launchd agent with no --terminal, or a run by hand inside the other) is skipped.
     let wanted = all[&key].terminal.unwrap_or_default();
     let result = if ctx.terminal.kind() == wanted {
-        super::snapshots::save_scheduled(ctx, &key)
+        super::snapshots::save_scheduled(ctx, &key).map(|commit| prune_after(ctx, &key, all[&key].keep(), commit))
     } else {
         Err(failure(
             Exit::NothingToDo,
@@ -181,6 +195,29 @@ pub fn run(ctx: &Ctx, name: &str) -> Result<Commit> {
         ctx.store.write_schedules(&lock, &all)?;
     }
     result
+}
+
+/// Deletes all but the newest `keep` versions after a save (none when `keep` is 0). The record of
+/// sessions is completed first, and nothing is deleted while an update of it is still running:
+/// it may need those versions to learn a session's newest launch. A failed prune is a warning:
+/// the save itself went through.
+fn prune_after(ctx: &Ctx, name: &str, keep: u32, mut commit: Commit) -> Commit {
+    if keep == 0 {
+        return commit;
+    }
+    let pruned = super::known::load(&ctx.store, &ctx.agents).and_then(|_| {
+        if ctx.store.pending().is_empty() {
+            super::snapshots::prune(ctx, name, keep as usize).map(|_| ())
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(e) = pruned
+        && let Commit::Saved { warnings, .. } = &mut commit
+    {
+        warnings.push(format!("could not delete versions older than the newest {keep}: {e:#}"));
+    }
+    commit
 }
 
 fn last_run(result: &str, version: Option<u32>, reason: Option<String>) -> LastRun {

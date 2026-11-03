@@ -8,6 +8,7 @@ use anyhow::Result;
 
 use super::procs::{Proc, Processes, System};
 use crate::adapters::process::{Output, ProcessRunner, Runner};
+use crate::domain::model::Window;
 use crate::domain::terminal::TerminalKind;
 use crate::error::{Exit, failure};
 use crate::ports::{LaunchTab, OpenState, OpenTab, OpenWorkspace, Shown, TabProcess, Terminal};
@@ -47,6 +48,8 @@ struct Pane {
     session_id: String,
     name: String,
     window_name: String,
+    window_id: String,
+    window_layout: String,
     pane_id: String,
     pid: u32,
     cwd: String,
@@ -99,6 +102,8 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
             "#{pane_id}",
             "#{pane_pid}",
             "#{pane_current_path}",
+            "#{window_id}",
+            "#{window_layout}",
         ];
         let out = self.tmux(&["list-panes", "-a", "-F", &fields.join(&SEP.to_string())])?;
         if !out.success {
@@ -147,6 +152,26 @@ impl<R: Runner, P: Processes> Tmux<R, P> {
             .unwrap_or_else(|| name.to_string())
     }
 
+    /// Opens `tab` in a new window of session `session` and types its command; returns the window.
+    fn new_window(&self, session: &str, tab: &LaunchTab) -> Result<String> {
+        let (target, cwd, title) = (format!("{session}:"), literal(&tab.cwd), literal(&tab.title));
+        let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", &cwd];
+        if !title.is_empty() {
+            args.extend(["-n", &title]);
+        }
+        let window = self.tmux_ok(&args)?;
+        self.type_command(&window, tab)?;
+        Ok(window)
+    }
+
+    /// Arranges `window`'s panes by the layout `tab` carries (the window's last tab). A layout
+    /// that isn't tmux's own form is left out, and so is one that no longer fits: the panes stay.
+    fn arrange(&self, window: &str, tab: &LaunchTab) {
+        if let Some(layout) = tab.layout.as_deref().filter(|l| is_layout(l)) {
+            let _ = self.tmux(&["select-layout", "-t", window, layout]);
+        }
+    }
+
     /// Types `command` into the pane `target` and presses Enter, so the shell stays when it exits.
     fn type_command(&self, target: &str, tab: &LaunchTab) -> Result<()> {
         if let Some(command) = &tab.command {
@@ -184,6 +209,8 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
             })
         };
         let mut workspaces: Vec<OpenWorkspace> = vec![];
+        // The window of each workspace's last pane: tmux lists a window's panes together.
+        let mut last_window: HashMap<String, String> = HashMap::new();
         for pane in &panes {
             let tab = OpenTab {
                 reference: Some(pane.pane_id.clone()),
@@ -192,9 +219,19 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
                 agent: None,
                 processes: processes.remove(&pane.pid).unwrap_or_default(),
             };
+            let window = Window { tabs: 1, layout: pane.window_layout.clone() };
+            let same_window =
+                last_window.insert(pane.workspace_id.clone(), pane.window_id.clone()) == Some(pane.window_id.clone());
             match workspaces.iter_mut().find(|w| w.id == pane.workspace_id) {
-                Some(w) => w.tabs.push(tab),
+                Some(w) => {
+                    w.tabs.push(tab);
+                    match w.windows.last_mut() {
+                        Some(last) if same_window => last.tabs += 1,
+                        _ => w.windows.push(window),
+                    }
+                }
                 None => workspaces.push(OpenWorkspace {
+                    windows: vec![window],
                     id: pane.workspace_id.clone(),
                     reference: Some(pane.session_id.clone()),
                     name: pane.name.clone(),
@@ -221,30 +258,44 @@ impl<R: Runner, P: Processes> Terminal for Tmux<R, P> {
             args.extend(["-n", title]);
         }
         let out = self.tmux_ok(&args)?;
-        let Some((session, window)) = out.split_once(' ') else {
+        let Some((session, first_window)) = out.split_once(' ') else {
             return Err(failure(Exit::Error, format!("tmux new-session printed no session: {out}")));
         };
         // Option values are not formats, so these go as they are.
         self.tmux_ok(&["set-option", "-t", session, NAME_OPTION, name])?;
         self.tmux_ok(&["set-option", "-t", session, AS_OPTION, &tmux_name])?;
+        let mut window = first_window.to_string();
+        // The pane the next split goes beside: a new window's only pane, then each split's own, so
+        // the panes keep their saved order (the layout fills its places in that order).
+        let mut last_pane = window.clone();
         if let Some(t) = first {
-            self.type_command(window, t)?;
+            self.type_command(&window, t)?;
+            self.arrange(&window, t);
         }
         for t in tabs.iter().skip(1) {
-            self.add_tab(session, t)?;
+            if t.split {
+                // A pane beside the previous tab, in its window.
+                let cwd = literal(&t.cwd);
+                let args = ["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", &last_pane, "-c", &cwd];
+                last_pane = self.tmux_ok(&args)?;
+                // Each split halves the last pane: spread them out, in order, so a new 80x24
+                // session has room for the next one (the saved layout replaces this at the end).
+                let _ = self.tmux(&["select-layout", "-t", &window, "tiled"]);
+                self.type_command(&last_pane, t)?;
+            } else {
+                window = self.new_window(session, t)?;
+                last_pane.clone_from(&window);
+            }
+            self.arrange(&window, t);
         }
         Ok(session.to_string())
     }
 
+    /// Into an open session each tab gets a window of its own: its saved neighbours may be
+    /// arranged differently now.
     fn add_tab(&self, workspace_ref: &str, tab: &LaunchTab) -> Result<()> {
         check_command(tab)?;
-        let (target, cwd, title) = (format!("{workspace_ref}:"), literal(&tab.cwd), literal(&tab.title));
-        let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", &cwd];
-        if !title.is_empty() {
-            args.extend(["-n", &title]);
-        }
-        let window = self.tmux_ok(&args)?;
-        self.type_command(&window, tab)
+        self.new_window(workspace_ref, tab).map(|_| ())
     }
 
     /// tmux has no browser: the default browser shows the page (`browser_open`).
@@ -286,7 +337,9 @@ fn parse_pane(line: &str) -> Option<Pane> {
     // tmux before 3.5 writes the separator, a control character, as the text `\037`.
     let line = line.replace("\\037", &SEP.to_string());
     let f: Vec<&str> = line.split(SEP).collect();
-    let [started, session_id, session_name, kept_name, kept_as, window_name, pane_id, pid, cwd] = f[..] else {
+    let [started, session_id, session_name, kept_name, kept_as, window_name, pane_id, pid, cwd, window_id, layout] =
+        f[..]
+    else {
         return None;
     };
     // The kept name holds only while the session still has the tmux name it was made with.
@@ -296,6 +349,8 @@ fn parse_pane(line: &str) -> Option<Pane> {
         session_id: session_id.into(),
         name: if kept { kept_name } else { session_name }.into(),
         window_name: window_name.into(),
+        window_id: window_id.into(),
+        window_layout: layout.into(),
         pane_id: pane_id.into(),
         pid: pid.parse().ok()?,
         cwd: cwd.into(),
@@ -311,6 +366,16 @@ fn literal(value: &str) -> String {
 /// tmux turns `.` and `:` in session names into `_`; the real name goes in `NAME_OPTION`.
 fn session_name(name: &str) -> String {
     name.replace(['.', ':'], "_")
+}
+
+/// tmux's `window_layout`: a checksum and sizes in `{}`/`[]` groups, or (tmux 3.8) the same as
+/// JSON. Nothing else reaches `select-layout`: no `#`, spaces or control characters.
+fn is_layout(layout: &str) -> bool {
+    !layout.is_empty()
+        && layout.len() <= 16_384
+        && layout.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ',' | '{' | '}' | '[' | ']' | '"' | ':' | '%' | '-' | '.')
+        })
 }
 
 /// A command with a control character is never typed into a pane.
@@ -361,6 +426,7 @@ mod tests {
                 },
                 "new-session" => ok("$7 @20\n"),
                 "new-window" => ok("@21\n"),
+                "split-window" => ok("%30\n"),
                 _ => ok(""),
             }
         }
@@ -382,10 +448,14 @@ mod tests {
     }
 
     /// A `list-panes` line of a server started at 1700; a kept name is kept for tmux name `name`.
+    /// Panes with the same window name share a window (`@<window>`).
     fn line(session: &str, name: &str, kept: &str, window: &str, pane: &str, pid: u32, cwd: &str) -> String {
         let kept_as = if kept.is_empty() { "" } else { name };
-        ["1700", session, name, kept, kept_as, window, pane, &pid.to_string(), cwd].join(&SEP.to_string())
+        let (id, layout) = (format!("@{window}"), format!("{LAYOUT}-{window}"));
+        ["1700", session, name, kept, kept_as, window, pane, &pid.to_string(), cwd, &id, &layout].join(&SEP.to_string())
     }
+
+    const LAYOUT: &str = "b25d,80x24,0,0{40x24,0,0,1,39x24,41,0,2}";
 
     /// Processes (pid, ppid, argv), all started at the epoch.
     fn procs(list: &[(u32, u32, &[&str])]) -> FakeProcs {
@@ -424,6 +494,76 @@ mod tests {
             ("logs", "/w/api/logs", Some("%2"))
         );
         assert_eq!(open.workspaces[0].reference.as_deref(), Some("$1"));
+    }
+
+    #[test]
+    fn panes_in_one_window_are_grouped_with_its_layout() {
+        let t = tmux(
+            &[
+                line("$1", "api", "", "edit", "%1", 100, "/w/api"),
+                line("$1", "api", "", "edit", "%2", 101, "/w/api"),
+                line("$1", "api", "", "logs", "%3", 102, "/w/logs"),
+                line("$2", "web", "", "edit", "%4", 103, "/w/web"),
+            ],
+            FakeProcs::default(),
+        );
+        let open = t.read_open_state().unwrap();
+        let windows = |w: usize| -> Vec<(usize, String)> {
+            open.workspaces[w].windows.iter().map(|x| (x.tabs, x.layout.clone())).collect()
+        };
+        assert_eq!(windows(0), [(2, format!("{LAYOUT}-edit")), (1, format!("{LAYOUT}-logs"))]);
+        assert_eq!(windows(1), [(1, format!("{LAYOUT}-edit"))], "another session's window of the same name");
+    }
+
+    #[test]
+    fn split_tabs_open_as_panes_and_their_window_takes_the_layout() {
+        let t = tmux(&[], FakeProcs::default());
+        let tab = |title: &str, split: bool, layout: Option<&str>| LaunchTab {
+            split,
+            layout: layout.map(str::to_string),
+            title: title.into(),
+            cwd: "/w/b".into(),
+            command: Some("make".into()),
+        };
+        let tabs = [
+            tab("edit", false, None),
+            tab("edit", true, None),
+            tab("edit", true, Some(LAYOUT)),
+            tab("logs", false, None),
+        ];
+        t.create_workspace("w", "/w", &tabs).unwrap();
+        let calls = t.runner.calls.borrow();
+        let at =
+            |c: &[&str]| calls.iter().position(|x| x == &strings(c)).unwrap_or_else(|| panic!("{c:?} in {calls:?}"));
+        let split = at(&["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", "@20", "-c", "/w/b"]);
+        let typed = at(&["send-keys", "-t", "%30", "-l", "--", "make"]);
+        at(&["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", "%30", "-c", "/w/b"]);
+        assert!(at(&["select-layout", "-t", "@20", "tiled"]) < at(&["send-keys", "-t", "%30", "-l", "--", "make"]));
+        let arranged = at(&["select-layout", "-t", "@20", LAYOUT]);
+        let logs = calls.iter().position(|c| c[0] == "new-window").unwrap();
+        assert!(split < typed && typed < arranged && arranged < logs, "{calls:?}");
+    }
+
+    #[test]
+    fn a_layout_not_in_tmux_form_is_never_passed() {
+        let t = tmux(&[], FakeProcs::default());
+        for hostile in ["#(touch /tmp/x)", "a;b", "80x24 0", ""] {
+            let tabs = [
+                LaunchTab { split: false, layout: None, title: "a".into(), cwd: "/w".into(), command: None },
+                LaunchTab {
+                    split: true,
+                    layout: Some(hostile.into()),
+                    title: "a".into(),
+                    cwd: "/w".into(),
+                    command: None,
+                },
+            ];
+            t.create_workspace("w", "/w", &tabs).unwrap();
+        }
+        // Only the spreading between splits; no saved layout reaches tmux.
+        assert!(t.runner.calls.borrow().iter().filter(|c| c[0] == "select-layout").all(|c| c[3] == "tiled"));
+        let json = r#"{"V":2,"L":{"t":"h","w":160,"h":48,"x":0,"y":0,"c":[{"t":"p","w":80,"I":"%0"}]}}"#;
+        assert!(is_layout(LAYOUT) && is_layout(json), "both forms tmux prints");
     }
 
     #[test]
@@ -469,8 +609,14 @@ mod tests {
     fn creates_a_session_per_workspace_and_types_each_command() {
         let t = tmux(&[], FakeProcs::default());
         let tabs = [
-            LaunchTab { title: "fix".into(), cwd: "/w/a".into(), command: Some(format!("claude --resume {A}")) },
-            LaunchTab { title: "shell".into(), cwd: "/w/b".into(), command: None },
+            LaunchTab {
+                split: false,
+                layout: None,
+                title: "fix".into(),
+                cwd: "/w/a".into(),
+                command: Some(format!("claude --resume {A}")),
+            },
+            LaunchTab { split: false, layout: None, title: "shell".into(), cwd: "/w/b".into(), command: None },
         ];
         assert_eq!(t.create_workspace("my.app", "/w", &tabs).unwrap(), "$7");
         let calls = t.runner.calls.borrow();
@@ -490,7 +636,13 @@ mod tests {
     #[test]
     fn a_hash_in_a_name_folder_or_title_reaches_tmux_escaped() {
         let t = tmux(&[], FakeProcs::default());
-        let tab = LaunchTab { title: "#(touch /tmp/t)".into(), cwd: "/w/#(id)".into(), command: None };
+        let tab = LaunchTab {
+            split: false,
+            layout: None,
+            title: "#(touch /tmp/t)".into(),
+            cwd: "/w/#(id)".into(),
+            command: None,
+        };
         t.create_workspace("ws#(id)", "/w", std::slice::from_ref(&tab)).unwrap();
         t.add_tab("$7", &tab).unwrap();
         let calls = t.runner.calls.borrow();
@@ -520,7 +672,8 @@ mod tests {
 
     #[test]
     fn a_renamed_session_drops_its_stale_kept_name_and_ids_carry_the_server_start() {
-        let renamed = ["1700", "$2", "work", "my.app", "my_app", "edit", "%3", "102", "/w"].join(&SEP.to_string());
+        let renamed =
+            ["1700", "$2", "work", "my.app", "my_app", "edit", "%3", "102", "/w", "@1", LAYOUT].join(&SEP.to_string());
         let t = tmux(&[renamed, line("$3", "my_app", "my.app", "x", "%4", 103, "/w")], FakeProcs::default());
         let open = t.read_open_state().unwrap();
         let names: Vec<_> = open.workspaces.iter().map(|w| (w.name.as_str(), w.id.as_str())).collect();
@@ -531,7 +684,13 @@ mod tests {
     #[test]
     fn a_hostile_command_is_never_typed() {
         let t = tmux(&[], FakeProcs::default());
-        let tab = LaunchTab { title: "x".into(), cwd: "/w".into(), command: Some("claude\nrm -rf ~".into()) };
+        let tab = LaunchTab {
+            split: false,
+            layout: None,
+            title: "x".into(),
+            cwd: "/w".into(),
+            command: Some("claude\nrm -rf ~".into()),
+        };
         assert!(t.add_tab("$1", &tab).is_err());
         assert!(t.create_workspace("w", "/w", &[tab]).is_err());
         assert!(t.runner.calls.borrow().is_empty());

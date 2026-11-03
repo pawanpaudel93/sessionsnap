@@ -363,6 +363,9 @@ mod tests {
         ));
         let cli = Cli::try_parse_from(["sessionsnap", "--terminal", "cmux", "ui", "--browser"]).unwrap();
         assert!(matches!(cli.command, crate::interfaces::cli::Command::Ui { browser: true, .. }));
+        // Port 0 would serve on a port nobody is told; idle 0 would stop before the page loads.
+        assert!(Cli::try_parse_from(["sessionsnap", "ui", "--port", "0"]).is_err());
+        assert!(Cli::try_parse_from(["sessionsnap", "ui", "--idle-minutes", "0"]).is_err());
     }
 
     fn test_ctx_maker(dir: &std::path::Path) -> impl Fn(&Cli, Option<String>) -> Result<Ctx> + Send + Sync + '_ {

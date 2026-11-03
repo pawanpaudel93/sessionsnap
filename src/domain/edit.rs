@@ -223,6 +223,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
         Op::TabRemove { tab } => {
             let (w, t) = tab_at(ws, tab)?;
             ws[w].tabs.remove(t);
+            ws[w].windows.clear();
         }
         Op::TabRename { tab, to } => {
             let (w, t) = tab_at(ws, tab)?;
@@ -233,12 +234,15 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             let item = ws[w].tabs.remove(t);
             let to = index.saturating_sub(1).min(ws[w].tabs.len());
             ws[w].tabs.insert(to, item);
+            ws[w].windows.clear();
         }
         Op::TabMove { tab, to } => {
             let (w, t) = tab_at(ws, tab)?;
             let dest = find_ws(ws, to)?;
             let item = ws[w].tabs.remove(t);
             ws[dest].tabs.push(item);
+            ws[w].windows.clear();
+            ws[dest].windows.clear();
         }
         Op::TabAddSession { ws: w, session_id, agent, title } => {
             clean("session ID", session_id)?;
@@ -259,6 +263,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             let launch = ctx.known.launch(&SessionRef::new(&kind, session_id), ctx.open, ctx.agents);
             let title = title.clone().unwrap_or(label);
             let note = (!launch.known).then(|| format!("{} › {title}: {UNKNOWN_FLAGS}", ws[i].name));
+            ws[i].windows.clear();
             ws[i].tabs.push(Tab::Agent {
                 title,
                 cwd,
@@ -274,6 +279,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             clean("folder", cwd)?;
             clean("command", command.as_deref().unwrap_or(""))?;
             let i = find_ws(ws, w)?;
+            ws[i].windows.clear();
             ws[i].tabs.push(Tab::Terminal {
                 title: title.clone().unwrap_or_else(|| folder_name(cwd)),
                 cwd: cwd.clone(),
@@ -388,6 +394,7 @@ mod tests {
         let history = agents(vec![FakeHistory::with(&[(A, "/w/a", "one"), (B, "/w/b", "two"), (C, "/w/c", "three")])]);
         let ws = vec![
             Workspace {
+                windows: vec![],
                 name: "Alpha".into(),
                 color: None,
                 cwd: "/w/a".into(),
@@ -400,6 +407,7 @@ mod tests {
                 ],
             },
             Workspace {
+                windows: vec![],
                 name: "Beta".into(),
                 color: None,
                 cwd: "/w/b".into(),
@@ -607,6 +615,7 @@ mod tests {
             message: "m".into(),
             source: Default::default(),
             workspaces: vec![Workspace {
+                windows: vec![],
                 name: "Gamma".into(),
                 color: None,
                 cwd: "/w/c".into(),

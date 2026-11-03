@@ -174,13 +174,17 @@ no workspaces, and a run from another terminal (`schedule run` by hand inside th
 skipped too. cmux, in its default socket mode, only answers programs started inside it, so a
 scheduled run (started by launchd) saves from the state cmux writes every few seconds, and says so.
 `list` shows automatic snapshots under their own heading, and only their schedule saves to them: copy a version
-out with `sessionsnap save <name> --from <auto>@<v>` to keep it.
+out with `sessionsnap save <name> --from <auto>@<v>` to keep it. A new automatic snapshot keeps the
+newest 50 versions, deleting older ones after each save; `--keep N` changes that, `--keep 0` keeps
+every version, and one added before `--keep` existed keeps every version. Lowering `--keep` below
+the versions it holds asks first (`--yes` answers).
 
 ```sh
 sessionsnap schedule add work --interval 30m   # new automatic snapshot; saves once now
 sessionsnap schedule add daily --interval 1d   # as many as you like, each with its own interval
 sessionsnap schedule list                      # interval, running/stopped, latest version, last run
 sessionsnap schedule edit work --interval 2h
+sessionsnap schedule edit work --keep 200      # keep more versions (0 keeps all)
 sessionsnap schedule stop work                 # pause; `schedule start work` resumes
 sessionsnap schedule run work                  # save it now
 sessionsnap schedule remove work               # make it a normal snapshot (versions kept)
@@ -199,18 +203,22 @@ shell with the new one, or remove the schedule and add it again.
 sessionsnap works out which terminal it runs in: inside tmux it uses tmux (even tmux in a cmux tab),
 inside cmux it uses cmux, and from anywhere else (another terminal app) the one that is running:
 cmux, else a tmux with sessions. `--terminal tmux` or `--terminal cmux` picks one. Each tmux
-session is a workspace and each pane a tab; a restore opens each tab in its own window (splits are
-not saved) and types the agent's resume command into its shell. A name tmux can't hold (`.` or
+session is a workspace and each pane a tab. A window split into panes is saved with its layout:
+restoring the whole session splits it again the same way, while tabs added to a session that is
+still open each get a window of their own. Resizing panes alone is not a change. A restore types
+the agent's resume command into its tab's shell. A name tmux can't hold (`.` or
 `:`) is kept in the session option `@sessionsnap_name`, and a name another session has gets a
 number (`work-2`). With no tmux server running, `save` writes nothing and exits 3.
 
 tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell for an
 agent's process and reads its arguments exactly (`/proc` on Linux, the kernel on macOS). Its session
 is the one the arguments name (`--resume <id>`, `codex resume <id>`); else, for Claude Code and
-Codex, the one session in that folder changed since the agent started. Nothing is guessed: when
-several sessions there changed since (one may be another terminal's), or several panes run the
+Codex, the one session in that folder changed since the agent started, or the newest when the
+others stopped before it began (`/clear` starts a new session). Nothing is guessed: when several
+sessions there changed at the same time (one may be another terminal's), or several panes run the
 same agent in one folder with no ID in their command, those panes are saved as plain tabs, and
-`save` says so. Each version records the terminal it came from, and an automatic
+`save` says so; it also warns when a pane's command names a session but a newer one started in its
+folder since. Each version records the terminal it came from, and an automatic
 snapshot keeps saving from the terminal it was added in. The palette is cmux's; the web UI works
 with both (see [Web UI](#web-ui)).
 
@@ -468,8 +476,8 @@ and the site's nav badge and JSON-LD `version` (examples in the text are left al
 x86_64 and arm64 (musl, in the pinned `rust:1.99.0-alpine` Docker image; `RELEASE_RUST_IMAGE` overrides
 it), and writes to `dist/` one
 `sessionsnap-X.Y.Z-<target>.tar.gz` plus `.sha256` per target (`universal-apple-darwin`,
-`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes from the
-Conventional Commit subjects since the last tag). Then it asks, commits `chore: release vX.Y.Z`,
+`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) and `NOTES.md` (release notes: the version's
+`CHANGELOG.md` section, or the Conventional Commit subjects since the last tag when it is empty). Then it asks, commits `chore: release vX.Y.Z`,
 tags, turns `CHANGELOG.md`'s `## [Unreleased]` section into the version's, dated (and refuses a
 version with no section),
 pushes `main` and the tag, and creates the GitHub Release. `-y` skips the question;

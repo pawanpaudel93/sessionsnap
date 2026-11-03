@@ -198,6 +198,8 @@ pub fn replace(new: &Path, exe: &Path) -> Result<()> {
         let copied = std::fs::File::open(new)
             .and_then(|mut src| std::io::copy(&mut src, &mut out))
             .and_then(|_| out.set_permissions(std::fs::Permissions::from_mode(0o755)))
+            // On disk before it takes the old one's name: a crash never leaves an empty binary.
+            .and_then(|()| out.sync_all())
             .and_then(|()| std::fs::rename(&tmp, exe));
         if copied.is_err() {
             let _ = std::fs::remove_file(&tmp);

@@ -230,6 +230,9 @@ pub fn commit(
     let previous = base.previous;
     let mut workspaces = workspaces;
     crate::domain::agents::normalize_tabs(&mut workspaces, &ctx.agents);
+    if let Some(p) = previous {
+        crate::domain::model::keep_layouts(&p.workspaces, &mut workspaces);
+    }
     if let Some(p) = previous
         && !force
         && p.workspaces == workspaces

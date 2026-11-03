@@ -50,6 +50,65 @@ pub struct Workspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmux_workspace_id: Option<String>,
     pub tabs: Vec<Tab>,
+    /// tmux: the windows its tabs sat in, in order, when one held several panes. Each takes the
+    /// next `tabs` tabs and arranges them by `layout`. Empty: one window per tab.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<Window>,
+}
+
+/// Gives each workspace in `new` the layouts it had in `old` when they differ only in sizes, so
+/// resizing a pane is not a change (a scheduled save would write a version for every drag).
+pub fn keep_layouts(old: &[Workspace], new: &mut [Workspace]) {
+    for w in new.iter_mut() {
+        let Some(o) = old.iter().find(|o| o.name == w.name && o.tabs == w.tabs) else { continue };
+        let shape = |ws: &[Window]| ws.iter().map(|x| (x.tabs, shape(&x.layout))).collect::<Vec<_>>();
+        if shape(&o.windows) == shape(&w.windows) {
+            w.windows.clone_from(&o.windows);
+        }
+    }
+}
+
+/// A layout without its sizes: the checksum before the first `,` dropped, every number made 0,
+/// and (tmux 3.8) without which pane has focus (`"a"`) or had it last (`"l"`). Side by side
+/// (`{`, `"t":"h"`) and stacked (`[`, `"t":"v"`) stay apart.
+fn shape(layout: &str) -> String {
+    let body = if layout.starts_with('{') { layout } else { layout.split_once(',').map_or(layout, |(_, b)| b) };
+    let (mut out, mut in_number) = (String::new(), false);
+    for c in body.chars() {
+        let digit = c.is_ascii_digit();
+        if !digit {
+            out.push(c);
+        } else if !in_number {
+            out.push('0');
+        }
+        in_number = digit;
+    }
+    out.replace(r#","a":true"#, "").replace(r#","l":0"#, "")
+}
+
+/// True when `windows` hold exactly `tabs` tabs, each at least one (counts in an edited file may
+/// be anything, so the sum must not overflow).
+pub fn covers(windows: &[Window], tabs: usize) -> bool {
+    windows.iter().all(|w| w.tabs > 0)
+        && windows.iter().try_fold(0usize, |sum, w| sum.checked_add(w.tabs)) == Some(tabs)
+}
+
+/// A tmux window holding `tabs` of a workspace's tabs as panes, arranged by `layout` (tmux's
+/// `window_layout`, e.g. "b25d,80x24,0,0{40x24,0,0,1,39x24,41,0,2}").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Window {
+    pub tabs: usize,
+    pub layout: String,
+}
+
+impl Workspace {
+    /// Its windows when they cover its tabs exactly; None otherwise (an edit changed its tabs,
+    /// or it has no split windows), and then each tab opens in a window of its own.
+    pub fn split_windows(&self) -> Option<&[Window]> {
+        (covers(&self.windows, self.tabs.len()) && self.windows.iter().any(|w| w.tabs > 1))
+            .then_some(self.windows.as_slice())
+    }
 }
 
 /// A saved tab: a plain terminal (optionally running a command) or a coding agent's session.
@@ -280,12 +339,35 @@ pub fn parse_ref(s: &str) -> Result<(String, Option<u32>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_layout_shape_ignores_sizes_but_not_orientation() {
+        assert_eq!(
+            shape("b25d,80x24,0,0{40x24,0,0,1,39x24,41,0,2}"),
+            shape("c3f1,80x24,0,0{20x24,0,0,1,59x24,21,0,2}")
+        );
+        assert_ne!(
+            shape("b25d,80x24,0,0{40x24,0,0,1,39x24,41,0,2}"),
+            shape("b25d,80x24,0,0[80x12,0,0,1,80x11,0,13,2]")
+        );
+        assert_eq!(shape(r#"{"t":"h","w":160}"#), r#"{"t":"h","w":0}"#);
+        // tmux 3.8 after `select-pane`: only the focus marks moved.
+        let before = r#"{"V":2,"L":{"t":"h","w":160,"h":48,"x":0,"y":0,"c":[{"t":"p","w":80,"h":48,"x":0,"y":0,"l":1,"i":0,"I":"%0"},{"t":"p","w":79,"h":48,"x":81,"y":0,"a":true,"i":1,"I":"%1"}]}}"#;
+        let after = r#"{"V":2,"L":{"t":"h","w":160,"h":48,"x":0,"y":0,"c":[{"t":"p","w":80,"h":48,"x":0,"y":0,"a":true,"i":0,"I":"%0"},{"t":"p","w":79,"h":48,"x":81,"y":0,"l":1,"i":1,"I":"%1"}]}}"#;
+        assert_eq!(shape(before), shape(after));
+        assert!(!covers(
+            &[Window { tabs: usize::MAX, layout: String::new() }, Window { tabs: 2, layout: String::new() }],
+            1
+        ));
+        assert!(!covers(&[Window { tabs: 0, layout: String::new() }], 0) && covers(&[], 0));
+    }
     use crate::error::{Exit, exit_of};
 
     #[test]
     fn folders_move_on_path_boundaries_only() {
         let tab = |cwd: &str| Tab::Terminal { title: "t".into(), cwd: cwd.into(), command: None };
         let mut ws = vec![Workspace {
+            windows: vec![],
             name: "w".into(),
             color: None,
             cwd: "/Users/a/code".into(),

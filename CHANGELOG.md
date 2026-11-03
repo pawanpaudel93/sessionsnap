@@ -13,6 +13,21 @@ All notable changes to sessionsnap are listed here. The format follows
 - Web UI from cmux: a page without its key (an address pasted into a browser) offers **Open in
   cmux** and **Open in browser** instead of only Reconnect into cmux.
 - Web UI: the sessionsnap logo as the page's icon.
+- tmux: a window split into panes is saved with its layout, and restoring the whole session splits
+  it again the same way (before, each pane came back as a window of its own). Resizing panes alone
+  is not a change.
+- Automatic snapshots keep their newest versions: `schedule add` and `schedule edit` take
+  `--keep N` (default 50 for a new one; `--keep 0` keeps every version), and older versions are
+  deleted after each save. Schedules added before keep every version. Lowering `--keep` below the
+  versions a snapshot holds asks first, as `prune` does. Nothing is deleted while the record of
+  sessions is still being updated from those versions.
+
+### Changed
+
+- Release notes are the version's `CHANGELOG.md` section rather than commit subjects.
+- tmux: after `/clear` in a pane started without a session ID, the new session is saved (before,
+  the pane was saved as a plain tab); a pane whose command names a session that was left for a
+  newer one is saved with a warning. Agent histories are read once per save, not once per tab.
 
 ### Fixed
 
@@ -20,6 +35,16 @@ All notable changes to sessionsnap are listed here. The format follows
   ref" (cmux now prints the new tab's UUID instead of its ref).
 - When cmux refuses to hand the web UI its key (it lets only processes started inside cmux use its
   socket), the message says so instead of "answered something other than JSON".
+- `schedule edit` that launchd failed to load again left the schedule shown as running while
+  nothing ran: loading is retried, and a schedule that still can't be loaded is recorded as
+  stopped.
+- `uninstall` kept the whole data folder after a save had crashed, taking the files it left behind
+  for someone else's.
+- `update` now writes the new binary to disk before it replaces the old one, so a crash right after
+  can't leave an empty `sessionsnap`.
+- `ui --port 0` and `ui --idle-minutes 0` are refused instead of serving a page nobody could open.
+- `install-cmux` and `uninstall` replaced a symlinked `cmux.json` with a plain file; they now write
+  the file it points to and keep its permissions.
 
 ## [0.1.1] - 2026-10-31
 

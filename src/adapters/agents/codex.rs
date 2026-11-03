@@ -67,7 +67,8 @@ impl Codex {
 
     /// Reads a rollout's session_meta (ID, folder, how it was started) and its first real prompt.
     pub fn info(&self, path: &Path) -> Result<SessionInfo> {
-        let modified_at = fs::metadata(path)?.modified()?;
+        let meta = fs::metadata(path)?;
+        let (modified_at, created_at) = (meta.modified()?, meta.created().ok());
         let mut session_id = rollout_id(path).unwrap_or_default().to_string();
         let (mut cwd, mut first, mut scripted) = (None, None, false);
         for line in BufReader::new(fs::File::open(path)?).lines() {
@@ -110,6 +111,7 @@ impl Codex {
             first_prompt: first.as_deref().map(|t| one_line(t, 120)),
             modified,
             modified_at,
+            created_at,
             recoverable: !scripted && !internal,
         })
     }

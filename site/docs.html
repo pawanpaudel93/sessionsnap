@@ -249,7 +249,11 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               from the ones you save, and only their schedule saves to them; to keep a version for
               good, copy it out with <code translate="no">sessionsnap save &lt;name&gt; --from &lt;auto&gt;@&lt;v&gt;</code>.
               Intervals are a number and a unit: <code translate="no">30m</code>, <code translate="no">2h</code>,
-              <code translate="no">1d</code> (at least <code translate="no">1m</code>).
+              <code translate="no">1d</code> (at least <code translate="no">1m</code>). A new automatic snapshot keeps
+              the newest 50 versions, deleting older ones after each save; <code translate="no">--keep N</code>
+              changes that, <code translate="no">--keep 0</code> keeps every version, and one added before
+              <code translate="no">--keep</code> existed keeps every version. Lowering
+              <code translate="no">--keep</code> below the versions it holds asks first.
               A schedule runs with the <code translate="no">PATH</code>, <code translate="no">TMUX_TMPDIR</code>
               and <code translate="no">SESSIONSNAP_*</code> variables of the shell that last added, edited
               or started it: after moving tools off that <code translate="no">PATH</code>, run
@@ -265,6 +269,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td><code translate="no">sessionsnap schedule add &lt;name&gt; --interval &lt;30m&gt;</code></td><td>Start a new automatic snapshot and save it once now. Several can run, each with its own interval.</td></tr>
                   <tr><td><code translate="no">sessionsnap schedule list</code></td><td>Each automatic snapshot: interval, running or stopped, latest version and how its last run went. Alias: <code translate="no">ls</code>.</td></tr>
                   <tr><td><code translate="no">sessionsnap schedule edit &lt;name&gt; --interval &lt;2h&gt;</code></td><td>Change how often it is saved.</td></tr>
+                  <tr><td><code translate="no">sessionsnap schedule edit &lt;name&gt; --keep &lt;200&gt;</code></td><td>Change how many versions it keeps (default 50; 0 keeps all).</td></tr>
                   <tr><td><code translate="no">sessionsnap schedule stop &lt;name&gt;</code></td><td>Pause it: no saves until it is started again.</td></tr>
                   <tr><td><code translate="no">sessionsnap schedule start &lt;name&gt;</code></td><td>Resume a stopped one.</td></tr>
                   <tr><td><code translate="no">sessionsnap schedule run &lt;name&gt;</code></td><td>Save it now, as its schedule does (exits 3 when nothing changed or the run was skipped).</td></tr>
@@ -281,8 +286,10 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               a cmux tab), inside cmux it uses cmux, and from anywhere else the one that is running:
               cmux, else a tmux with sessions. <code translate="no">--terminal tmux</code> or
               <code translate="no">--terminal cmux</code> picks one. Each tmux session is a workspace and
-              each pane a tab. A restore opens each tab in its own window (splits are not saved) and
-              types the agent's resume command into its shell; a name tmux can't hold
+              each pane a tab. A window split into panes is saved with its layout: restoring the whole
+              session splits it again the same way, while tabs added to a session that is still open each
+              get a window of their own. A restore types the agent's resume command into its tab's
+              shell; a name tmux can't hold
               (<code translate="no">.</code> or <code translate="no">:</code>) is kept in the session
               option <code translate="no">@sessionsnap_name</code>, and a name another session has gets
               a number (<code translate="no">work-2</code>). With no tmux server running,
@@ -293,8 +300,9 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               for an agent's process and reads its arguments exactly. The session is the one they name
               (<code translate="no">--resume &lt;id&gt;</code>, <code translate="no">codex resume &lt;id&gt;</code>);
               else, for Claude Code and Codex, the one session in that folder changed since the agent
-              started. Nothing is guessed: when several sessions there changed since (one may be
-              another terminal's), or several panes run the same agent in one folder with no ID in
+              started, or the newest when the others stopped before it began (<code translate="no">/clear</code>
+              starts a new session). Nothing is guessed: when several sessions there changed at the same
+              time (one may be another terminal's), or several panes run the same agent in one folder with no ID in
               their command, those panes are saved as plain tabs, and <code translate="no">save</code>
               says so. Each version records the terminal it came from,
               and an automatic snapshot keeps saving from the terminal it was added in. The palette is

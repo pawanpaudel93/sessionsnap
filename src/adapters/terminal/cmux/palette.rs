@@ -117,9 +117,13 @@ fn write_with_backup(config: &Path, text: &str) -> Result<PathBuf> {
     };
     std::io::copy(&mut std::fs::File::open(config)?, &mut out)
         .with_context(|| format!("backing up {}", config.display()))?;
-    let tmp = config.with_extension("json.tmp");
+    // A cmux.json that links into a dotfiles folder: write the file it points to and keep the
+    // link, with the file's own permissions.
+    let real = std::fs::canonicalize(config).with_context(|| format!("resolving {}", config.display()))?;
+    let tmp = real.with_extension("json.tmp");
     std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, config)?;
+    std::fs::set_permissions(&tmp, std::fs::metadata(&real)?.permissions())?;
+    std::fs::rename(&tmp, &real)?;
     Ok(backup)
 }
 
@@ -410,6 +414,22 @@ mod tests {
         assert!(!text.contains("sessionsnap:"), "{text}");
         let root: Value = serde_json::from_str(&strip_jsonc(&text)).unwrap();
         assert_eq!(root["commands"], json!([{"name": "Mine", "command": "ls"}]));
+    }
+
+    #[test]
+    fn a_symlinked_config_keeps_its_link_and_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("dotfiles/cmux.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "{}").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = d.path().join("cmux.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        write_with_backup(&link, "{\"a\": 1}").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "still a link");
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "{\"a\": 1}");
+        assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[test]

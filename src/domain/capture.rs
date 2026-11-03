@@ -27,6 +27,7 @@ pub fn capture(open: &OpenState, agents: &dyn AgentCatalog, only: &[String]) -> 
                 .map(|t| to_tab(t, agents, &mut |n| notes.push(format!("{name} › {}: {n}", t.title))))
                 .collect();
             Workspace {
+                windows: if w.windows.iter().any(|x| x.tabs > 1) { w.windows.clone() } else { vec![] },
                 name,
                 color: None,
                 cwd: w.cwd.clone(),
@@ -116,6 +117,7 @@ pub fn seen(open: &OpenState, agents: &dyn AgentCatalog, captured: &[Workspace])
     let mut out = captured.to_vec();
     if !tabs.is_empty() {
         out.push(Workspace {
+            windows: vec![],
             name: String::new(),
             color: None,
             cwd: String::new(),

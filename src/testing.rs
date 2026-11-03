@@ -129,6 +129,7 @@ pub fn write_rollout(codex_root: &Path, cwd: &str, id: &str, prompt: &str) -> Pa
 /// is "<agent>:<id>", or a bare ID for Claude Code.
 pub fn open_ws(id: &str, name: &str, cwd: &str, tabs: &[(&str, &str, Option<&str>)]) -> OpenWorkspace {
     OpenWorkspace {
+        windows: vec![],
         id: id.to_string(),
         reference: Some(format!("workspace:{id}")),
         name: name.to_string(),
@@ -297,6 +298,7 @@ pub fn session_info(id: &str, cwd: &str, title: &str) -> SessionInfo {
         first_prompt: Some(format!("start {title}")),
         modified: String::new(),
         modified_at: std::time::SystemTime::UNIX_EPOCH,
+        created_at: None,
         recoverable: true,
     }
 }

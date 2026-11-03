@@ -228,3 +228,82 @@ fn stop_and_start_keep_it_automatic() {
     assert_eq!(env.run(&["schedule", "start", "job"]).unwrap().exit, Exit::NothingToDo);
     assert!(env.run(&["schedule", "list"]).unwrap().text.contains("running"));
 }
+
+/// Each scheduled save keeps the newest `--keep` versions (50 when not set; 0 keeps all).
+#[test]
+fn scheduled_saves_keep_only_the_newest_versions() {
+    let env = setup();
+    let o = env.run(&["schedule", "add", "work", "--interval", "10m", "--keep", "2"]).unwrap();
+    assert_eq!(o.json["schedule"]["keep"], 2);
+    let versions = || -> Vec<u64> {
+        let h = env.run(&["history", "work"]).unwrap().json;
+        h["versions"].as_array().unwrap().iter().map(|v| v["version"].as_u64().unwrap()).collect()
+    };
+    let beta = env.fake.state.borrow_mut().workspaces.pop().unwrap();
+    assert_eq!(env.run(&["schedule", "run", "work"]).unwrap().json["version"], 2);
+    env.fake.state.borrow_mut().workspaces[0].tabs.pop();
+    assert_eq!(env.run(&["schedule", "run", "work"]).unwrap().json["version"], 3);
+    assert_eq!(versions(), [2, 3]);
+    // Editing only --keep leaves the interval alone; 0 keeps every version from then on.
+    let o = env.run(&["schedule", "edit", "work", "--keep", "0"]).unwrap();
+    assert_eq!((o.json["schedule"]["keep"].clone(), o.json["schedule"]["interval"].clone()), (0.into(), "10m".into()));
+    env.fake.state.borrow_mut().workspaces.push(beta);
+    env.run(&["schedule", "run", "work"]).unwrap();
+    assert_eq!(versions(), [2, 3, 4]);
+    // Without --keep a schedule keeps 50; edit needs something to change.
+    let o = env.run(&["schedule", "add", "daily", "--interval", "1d"]).unwrap();
+    assert_eq!(o.json["schedule"]["keep"], 50);
+    assert_eq!(exit_of(&env.run(&["schedule", "edit", "daily"]).unwrap_err()), Exit::Error);
+}
+
+/// Lowering --keep under the versions a snapshot holds asks first (exit 4 without --yes), as
+/// `prune` does; a schedule saved before --keep existed keeps every version.
+#[test]
+fn a_lower_keep_asks_first_and_old_schedules_keep_everything() {
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m", "--keep", "0"]).unwrap();
+    for _ in 0..2 {
+        env.fake.state.borrow_mut().workspaces[0].tabs.pop();
+        env.run(&["schedule", "run", "work"]).unwrap();
+    }
+    let e = env.run(&["schedule", "edit", "work", "--keep", "1"]).unwrap_err();
+    assert_eq!(exit_of(&e), Exit::Refused, "{e:#}");
+    assert!(env.run(&["schedule", "edit", "work", "--keep", "5"]).is_ok(), "above the count: nothing to ask");
+    assert!(env.run(&["--yes", "schedule", "edit", "work", "--keep", "1"]).is_ok());
+
+    // A schedule written before --keep (no "keep" in schedules.json) keeps all its versions.
+    let old: sessionsnap::domain::schedule::Schedule =
+        serde_json::from_str(r#"{"interval":600,"createdAt":"t"}"#).unwrap();
+    assert_eq!(old.keep(), 0);
+}
+
+/// An edit the OS refuses leaves the schedule recorded as stopped, not running at its old interval.
+#[test]
+fn an_edit_the_os_refuses_records_the_schedule_stopped() {
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m"]).unwrap();
+    std::fs::write(env.dir.path().join("scheduler.fail"), "").unwrap();
+    let e = env.run(&["schedule", "edit", "work", "--interval", "1h"]).unwrap_err();
+    assert!(format!("{e:#}").contains("schedule start work"), "{e:#}");
+    assert_eq!(env.run(&["schedule", "list"]).unwrap().json["schedules"][0]["running"], false);
+}
+
+/// While an update of the record of sessions is still running (a fresh mark), a scheduled save
+/// deletes no versions: the update may still need them. The next save does.
+#[test]
+fn no_version_is_pruned_while_the_record_of_sessions_is_being_updated() {
+    let env = setup();
+    env.run(&["schedule", "add", "work", "--interval", "10m", "--keep", "1"]).unwrap();
+    let marks = env.dir.path().join("store/sessions.pending");
+    std::fs::create_dir_all(&marks).unwrap();
+    let mark = marks.join("2026-01-01T00:00:00Z.1-0");
+    std::fs::write(&mark, "").unwrap();
+    env.fake.state.borrow_mut().workspaces.pop();
+    env.run(&["schedule", "run", "work"]).unwrap();
+    let count = || env.run(&["history", "work"]).unwrap().json["versions"].as_array().unwrap().len();
+    assert_eq!(count(), 2, "kept while the mark is there");
+    std::fs::remove_file(&mark).unwrap();
+    env.fake.state.borrow_mut().workspaces[0].tabs.pop();
+    env.run(&["schedule", "run", "work"]).unwrap();
+    assert_eq!(count(), 1);
+}

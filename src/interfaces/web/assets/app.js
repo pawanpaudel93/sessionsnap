@@ -627,7 +627,8 @@ function schedulePanel(s) {
   return h("div", { class: "schedule-panel" },
     h("div", { class: "meta" },
       h("span", { class: `pill ${s.running ? "accent" : "warn"}` }, s.running ? "Running" : "Stopped"),
-      h("span", { class: "muted small" }, `Saved automatically every ${s.interval}`),
+      h("span", { class: "muted small" }, `Saved automatically every ${s.interval}, ` +
+        (s.keep === 0 ? "keeping every version" : `keeping the newest ${s.keep} versions`)),
       h("span", { class: "grow" }),
       h("span", { class: last && last.result === "failed" ? "error small" : "muted small" }, lastText,
         last ? " · " : null, last ? time(last.at) : null)),

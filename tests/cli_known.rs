@@ -121,6 +121,7 @@ fn copied_workspaces_get_known_flags() {
         left_out_unsure: false,
     };
     let ws = Workspace {
+        windows: vec![],
         name: "Old".into(),
         color: None,
         cwd: "/w/a".into(),

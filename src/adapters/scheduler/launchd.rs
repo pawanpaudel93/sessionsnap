@@ -25,6 +25,9 @@ pub struct Launchd {
     pub env: Vec<(String, String)>,
 }
 
+/// Loads of an agent tried before giving up.
+const BOOTSTRAP_TRIES: usize = 4;
+
 impl Launchd {
     pub fn open_default() -> Result<Self> {
         let env = super::run_env();
@@ -84,7 +87,17 @@ impl Scheduler for Launchd {
         std::fs::write(&path, plist(&label, &self.program, name, schedule, &self.env))
             .with_context(|| format!("writing {}", path.display()))?;
         self.bootout(&label)?;
-        let out = self.launchctl(&["bootstrap", &Self::domain()?, &path.to_string_lossy()])?;
+        // `bootout` returns before launchd lets go of the label, so loading it again at once can
+        // fail ("Bootstrap failed: 5"): try a few times.
+        let (domain, path_arg) = (Self::domain()?, path.to_string_lossy());
+        let mut out = self.launchctl(&["bootstrap", &domain, &path_arg])?;
+        for _ in 1..BOOTSTRAP_TRIES {
+            if out.success {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            out = self.launchctl(&["bootstrap", &domain, &path_arg])?;
+        }
         if !out.success {
             let _ = std::fs::remove_file(&path);
             return Err(failure(Exit::Error, format!("launchctl could not load {label}: {}", out.stderr.trim())));
@@ -165,8 +178,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_load_refused_right_after_unloading_is_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = fake(dir.path(), false);
+        // A launchctl that refuses the first bootstrap only, as launchd does while still unloading.
+        let first = dir.path().join("refused-once");
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\nif [ \"$1\" = bootstrap ] && [ ! -e '{}' ]; then : > '{}'; exit 5; fi\nexit 0\n",
+            dir.path().join("log").display(),
+            first.display(),
+            first.display()
+        );
+        std::fs::write(&l.launchctl, script).unwrap();
+        l.install("work", &every(600)).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert_eq!(log.lines().filter(|c| c.starts_with("bootstrap")).count(), 2, "{log}");
+        assert!(l.plist_path("work").exists());
+    }
+
     fn every(interval: u64) -> Schedule {
-        Schedule { interval, created_at: "t".into(), stopped: false, last_run: None, terminal: None }
+        Schedule { interval, created_at: "t".into(), stopped: false, last_run: None, terminal: None, keep: None }
     }
 
     fn log(dir: &Path) -> String {
