@@ -114,7 +114,7 @@
               <p>
                 <strong>On Linux</strong>, sessionsnap saves and restores tmux sessions. cmux on Linux
                 is a different app with a different command line, not supported yet. On macOS,
-                sessionsnap is verified with cmux 0.64.22.
+                sessionsnap is verified with cmux 0.64.22 and 0.65.2.
               </p>
             </div>
             <p>One command installs the latest release:</p>
@@ -299,7 +299,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell
               for an agent's process and reads its arguments exactly. The session is the one they name
               (<code translate="no">--resume &lt;id&gt;</code>, <code translate="no">codex resume &lt;id&gt;</code>);
-              else, for Claude Code and Codex, the one session in that folder changed since the agent
+              else, for Claude Code, Codex and Pi, the one session in that folder changed since the agent
               started, or the newest when the others stopped before it began (<code translate="no">/clear</code>
               starts a new session). Nothing is guessed: when several sessions there changed at the same
               time (one may be another terminal's), or several panes run the same agent in one folder with no ID in
@@ -710,7 +710,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <h2>Security</h2>
             <p>Snapshots are user-editable files whose contents end up as commands in a shell, so:</p>
             <ul>
-              <li>Every word of a restore command is shell-quoted, and session IDs are validated first (UUIDs for Claude Code and Codex).</li>
+              <li>Every word of a restore command is shell-quoted, and session IDs are validated first (UUIDs for Claude Code, Codex and Pi).</li>
               <li>A tab whose flags, ID, folder or command hold a control character (newline, ^C, ESC …) is never run, and an agent record with one is not saved. A resume command with a backslash is not typed into an already open workspace.</li>
               <li>Environment variables from cmux's state are never stored. Of an agent's flags, only those on its allow-list are saved; every other known flag (<code translate="no">--append-system-prompt</code>, <code translate="no">-c mcp_servers…</code>, …) is left out, and <code translate="no">save</code> names what it left out. A flag sessionsnap doesn't know (<code translate="no">--api-key</code>, <code translate="no">--header</code>, …) leaves out the whole agent session. Kept values are checked for their kind (inline JSON is not a path) and for known credential formats (see <a href="#restoring">How flags are restored</a>). A password typed inside a permission rule or other free text is not detected; recognised are token formats, auth headers and URLs with a password. A flag that limits the agent (deny rules, sandbox, permission mode, settings) that can't be saved exactly as given leaves out the whole agent session rather than resume it with fewer limits; so does any flag of an agent whose flags are untested. Restore filters older snapshots through the same rules.</li>
               <li>Snapshot files are readable only by you (folder 0700, files 0600), and so are exported files.</li>
@@ -759,6 +759,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <ul>
               <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay (if its <code translate="no">"commands"</code> array holds comments, this step is skipped and you remove those entries by hand);</li>
               <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>, only if sessionsnap wrote it;</li>
+              <li>the Pi extension at <code translate="no">~/.pi/agent/extensions/sessionsnap.ts</code>, only if sessionsnap wrote it;</li>
               <li>every automatic snapshot's launchd agent (<code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.*</code>, macOS) or systemd timer (<code translate="no">~/.config/systemd/user/sessionsnap-schedule-*</code>, Linux), even with <code translate="no">--keep-data</code>, which keeps the snapshots and <code translate="no">schedules.json</code>;</li>
               <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a symlink, or a folder holding files sessionsnap did not make, is left alone;</li>
               <li>the <code translate="no">sessionsnap</code> binary. One installed with cargo is left; run <code translate="no">cargo uninstall sessionsnap</code> afterwards.</li>

@@ -16,7 +16,7 @@ domain/       pure logic        model (snapshot format), capture, flags, diff, e
      │  depends only on
 ports.rs      interfaces        Terminal, SessionHistory, AgentCatalog, Snapshots, Releases, Scheduler
      ▲  implemented by
-adapters/     the outside       terminal/{cmux,tmux,procs}, agents/{registry,claude,codex}, store/fs,
+adapters/     the outside       terminal/{cmux,tmux,procs}, agents/{registry,claude,codex,pi}, store/fs,
                                 releases, scheduler/{launchd,systemd}, process (runs programs)
 ```
 
@@ -43,9 +43,12 @@ The web UI speaks the CLI's command protocol on purpose (`POST /api/run` runs an
   (`OpenTab::processes`, exact arguments from `adapters/terminal/procs`), and `domain::running` finds
   the agent and its session in them through `AgentCatalog`, so terminals still never see agents.
 - **`SessionHistory`**: one agent's session history: `find`, `title_for`, `scan` (recent sessions).
-  Each adapter decides which of its sessions are *recoverable* (interactive, not scripted).
-  Implemented by `adapters/agents/claude.rs` and `codex.rs`; a shared contract test
-  (`adapters/agents/contract.rs`) runs against both.
+  Each adapter decides which of its sessions are *recoverable* (interactive, not scripted). An agent
+  that hides its launch flags from the terminal (Pi renames its process) keeps its own record of
+  them: `records_launches`, `launch_args`, and `recorder_installed` for what writes that record
+  (Pi's extension, from `install-pi`); `app::read_open` uses it instead of the terminal's arguments.
+  Implemented by `adapters/agents/claude.rs`, `codex.rs` and `pi.rs`; a shared contract test
+  (`adapters/agents/contract.rs`) runs against all three.
 - **`AgentCatalog`**: the agent registry seen from the core: canonical kind, display name, session-id
   validation, histories, and which saved flags are kept (`check_flags`, the same at save and
   restore).
@@ -91,7 +94,8 @@ word is shell-quoted. Keep it that way.
 4. For **full** support (titles, `sessions`, `recent`, search, adding sessions by ID): implement
    `SessionHistory` in `src/adapters/agents/<agent>.rs`, register it in `Agents::open_default`
    (`adapters/agents/mod.rs`), set `support: Support::Full` and its `ids`/`flags` rules, and add it to
-   the contract test.
+   the contract test. If the agent hides its arguments (check `ps` while it runs), its flags need its
+   own record of them: implement `launch_args` as `pi.rs` does.
 5. Add it to the supported-agents table in the README (with the flags it restores).
 
 ### Add a terminal
