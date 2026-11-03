@@ -28,8 +28,8 @@ is saved as a plain tab, and `save` says so.
 - When some steps fail, `apply`/`restore` exit 1 with the normal result JSON (`failed: n`,
   `steps[].error`), not the `{"error": …}` shape; so does `uninstall` (a step with `status: "failed"`).
   A mistyped command exits 1 with `{"error": {"code": "usage", …}}`.
-- Never pass `--yes` to `delete`, `prune`, `install-cmux` or `uninstall` unless the user asked for that
-  exact action. An error with code `needs-confirmation` means: ask the user; never rerun with `--yes`
+- Never pass `--yes` to `delete`, `prune`, `schedule … --keep`, `install-cmux` or `uninstall` unless
+  the user asked for that exact action. An error with code `needs-confirmation` means: ask the user; never rerun with `--yes`
   on your own.
 - `install-cmux` (the cmux palette) is macOS-only; on Linux it exits 4 and changes nothing.
 - Run `update` (it replaces the sessionsnap binary) or `uninstall` only when the user asks; `update --check` is safe.

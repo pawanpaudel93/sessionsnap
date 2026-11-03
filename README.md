@@ -61,7 +61,7 @@ you ask for.
 | Requirement | Details |
 | --- | --- |
 | OS | macOS (tested on macOS 15), or Linux (x86_64, arm64) with tmux. cmux on Linux is a different app with a different command line, not supported yet |
-| Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22), or tmux |
+| Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22 and 0.65.2), or tmux (tested on 3.8) |
 | Agents | The agents you want to restore, on your `PATH` (`sessionsnap agents` checks) |
 | Build (from source only) | Rust 1.96 or newer |
 
@@ -151,8 +151,8 @@ sessionsnap update                    # install it over this binary
 ```
 
 Every command takes `--json` (for scripts and agents: one compact line when piped, indented at a
-terminal) and `--yes` (skip the confirmations of `delete`, `prune`, `restore`, `recent --restore`,
-`install-cmux` and `uninstall`). A tab whose folder is gone (a removed git worktree) is restored as
+terminal) and `--yes` (skip the confirmations of `delete`, `prune`, a lower `schedule … --keep`, `restore`,
+`recent --restore`, `install-cmux` and `uninstall`). A tab whose folder is gone (a removed git worktree) is restored as
 a plain shell in your home folder, with a warning.
 
 | Exit code | Meaning |
@@ -213,8 +213,8 @@ number (`work-2`). With no tmux server running, `save` writes nothing and exits 
 
 tmux doesn't say which agent runs in a pane, so sessionsnap looks under the pane's shell for an
 agent's process and reads its arguments exactly (`/proc` on Linux, the kernel on macOS). Its session
-is the one the arguments name (`--resume <id>`, `codex resume <id>`); else, for Claude Code and
-Codex, the one session in that folder changed since the agent started, or the newest when the
+is the one the arguments name (`--resume <id>`, `codex resume <id>`, `pi --session <id>`); else,
+for Claude Code, Codex and Pi, the one session in that folder changed since the agent started, or the newest when the
 others stopped before it began (`/clear` starts a new session). Nothing is guessed: when several
 sessions there changed at the same time (one may be another terminal's), or several panes run the
 same agent in one folder with no ID in their command, those panes are saved as plain tabs, and
@@ -451,7 +451,8 @@ sessionsnap uninstall --keep-data   # keep your snapshots and schedules.json in 
 This removes the `"sessionsnap: …"` palette commands from cmux's `cmux.json` (after backing it
 up next to itself; your other commands and comments stay; if its `"commands"` array holds
 comments, the step is skipped and you remove those entries by hand), the Claude Code skill
-(`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), every automatic snapshot's launchd
+(`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), the Pi extension
+(`~/.pi/agent/extensions/sessionsnap.ts`, only if sessionsnap wrote it), every automatic snapshot's launchd
 agent (macOS) or systemd timer (Linux; removed even with `--keep-data`, which keeps the snapshots and `schedules.json`),
 `~/.sessionsnap` (or `SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap
 did not make), and the `sessionsnap` binary. Anything already gone is

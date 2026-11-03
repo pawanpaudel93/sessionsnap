@@ -17,8 +17,8 @@ yet.
   `{"error": {"code", "exit", "message"}}`.
 - Restoring is two steps: `sessionsnap restore <name> --plan --json`, show the user what the plan
   opens, skips and warns about, then `sessionsnap apply <planId> --json` once they agree.
-- Pass `--yes` only for an action the user asked for by name (`delete`, `prune`, `install-cmux`,
-  `uninstall`). Without it, a command that would ask exits 4 with code `needs-confirmation`
+- Pass `--yes` only for an action the user asked for by name (`delete`, `prune`, a lower
+  `schedule … --keep`, `install-cmux`, `uninstall`). Without it, a command that would ask exits 4 with code `needs-confirmation`
   instead of prompting: ask the user; never add `--yes` on your own.
 - `save` only reads the terminal; with no changes, or no tmux server running, it writes nothing
   and exits 3.
@@ -40,7 +40,8 @@ yet.
 
 Maintenance: `sessionsnap update --check` reports a newer release, `sessionsnap update` installs
 it, `sessionsnap uninstall [--keep-data]` removes sessionsnap (asks first). The cmux palette
-(`install-cmux`) is macOS-only; on Linux it refuses with exit 4.
+(`install-cmux`) is macOS-only; on Linux it refuses with exit 4. `install-pi` writes a Pi
+extension (Pi hides its launch flags; the extension records them): run it only when asked.
 
 ## Working on this repo
 
