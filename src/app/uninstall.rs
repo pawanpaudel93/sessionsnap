@@ -15,6 +15,8 @@ use crate::adapters::terminal::cmux::palette::uninstall_cmux;
 pub struct Paths {
     pub cmux_config: PathBuf,
     pub skills_dir: PathBuf,
+    /// Pi's extensions folder, where `install-pi` writes its extension.
+    pub pi_extensions: PathBuf,
     pub data: PathBuf,
     /// This binary, canonical.
     pub exe: PathBuf,
@@ -38,6 +40,7 @@ pub fn paths(data: &Path) -> Result<Paths> {
     Ok(Paths {
         cmux_config: super::install::cmux_config_path()?,
         skills_dir: crate::adapters::agents::claude::skills_dir()?,
+        pi_extensions: crate::adapters::agents::pi::extensions_dir()?,
         data: data.to_path_buf(),
         exe: exe_as_run.canonicalize().context("find this binary")?,
         exe_as_run,
@@ -92,6 +95,7 @@ pub fn preview(p: &Paths, keep_data: bool) -> Vec<String> {
     let mut lines = vec![
         format!("the \"sessionsnap: …\" palette commands in {} (backed up first)", p.cmux_config.display()),
         format!("the Claude Code skill in {}", p.skills_dir.join("sessionsnap").display()),
+        format!("the Pi extension {}", p.pi_extensions.join("sessionsnap.ts").display()),
     ];
     if p.launch_agents.is_some() {
         lines.push("every automatic snapshot's schedule (its launchd agent)".into());
@@ -186,6 +190,14 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => step(exe, "already gone", None),
             Err(e) => failed(exe.clone(), anyhow::Error::new(e).context(format!("remove {exe}"))),
         }
+    });
+
+    let ext = p.pi_extensions.join("sessionsnap.ts").display().to_string();
+    steps.push(match crate::adapters::agents::pi::uninstall_extension(&p.pi_extensions) {
+        Ok(SkillRemoval::Removed) => step(ext, "removed", None),
+        Ok(SkillRemoval::Missing) => step(ext, "already gone", None),
+        Ok(SkillRemoval::NotOurs) => step(ext, "left", Some("sessionsnap did not write it".into())),
+        Err(e) => failed(ext, e),
     });
 
     Ok(Report { steps, left: leftovers(p) })
@@ -289,6 +301,7 @@ mod tests {
         let p = Paths {
             cmux_config: dir.join(".config/cmux/cmux.json"),
             skills_dir: dir.join(".claude/skills"),
+            pi_extensions: dir.join(".pi/agent/extensions"),
             data: dir.join(".sessionsnap"),
             exe: dir.join(".local/bin/sessionsnap"),
             exe_as_run: dir.join(".local/bin/sessionsnap"),
@@ -301,6 +314,7 @@ mod tests {
         std::fs::write(&p.cmux_config, r#"{"commands": [{"name": "Mine", "command": "ls"}]}"#).unwrap();
         crate::adapters::terminal::cmux::palette::install_cmux(&p.cmux_config, "sessionsnap").unwrap();
         crate::adapters::agents::claude::install_skill(&p.skills_dir).unwrap();
+        crate::adapters::agents::pi::install_extension(&p.pi_extensions).unwrap();
         std::fs::create_dir_all(p.data.join("snapshots/work")).unwrap();
         std::fs::write(p.data.join("snapshots/work/0001.json"), "{}").unwrap();
         // Everything else the store keeps at its root.
@@ -326,7 +340,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         let r = run(&p, false).unwrap();
-        assert_eq!(statuses(&r), ["removed"; 4]);
+        assert_eq!(statuses(&r), ["removed"; 5]);
+        assert!(!p.pi_extensions.join("sessionsnap.ts").exists() && p.pi_extensions.exists());
         let config = std::fs::read_to_string(&p.cmux_config).unwrap();
         assert!(config.contains("\"Mine\"") && !config.contains("sessionsnap:"), "{config}");
         assert!(r.steps[0].note.as_deref().unwrap().starts_with("backup: "));
@@ -356,7 +371,7 @@ mod tests {
         let r = run(&p, false);
         std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let r = r.unwrap();
-        assert_eq!(statuses(&r), ["removed", "removed", "removed", "failed"]);
+        assert_eq!(statuses(&r), ["removed", "removed", "removed", "failed", "removed"]);
         assert!(!p.data.exists());
         let note = r.steps[3].note.as_deref().unwrap();
         assert!(note.contains("remove") && note.contains("ermission denied"), "{note}");
@@ -380,7 +395,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         let r = run(&p, true).unwrap();
-        assert_eq!(statuses(&r), ["removed", "removed", "kept", "removed"]);
+        assert_eq!(statuses(&r), ["removed", "removed", "kept", "removed", "removed"]);
         assert!(p.data.join("snapshots/work/0001.json").exists());
         assert!(preview(&p, true).iter().any(|l| l.contains("keeping")));
     }
@@ -391,7 +406,7 @@ mod tests {
         let p = installed(d.path());
         run(&p, false).unwrap();
         let again = run(&p, false).unwrap();
-        assert_eq!(statuses(&again), ["already gone"; 4]);
+        assert_eq!(statuses(&again), ["already gone"; 5]);
     }
 
     #[test]
@@ -427,7 +442,7 @@ mod tests {
         let text = std::fs::read_to_string(&p.cmux_config).unwrap().replacen('[', "[ // mine\n", 1);
         std::fs::write(&p.cmux_config, &text).unwrap();
         let r = run(&p, false).unwrap();
-        assert_eq!(statuses(&r), ["left", "removed", "removed", "removed"]);
+        assert_eq!(statuses(&r), ["left", "removed", "removed", "removed", "removed"]);
         assert!(r.steps[0].note.as_deref().unwrap().contains("by hand"), "{:?}", r.steps[0]);
         assert_eq!(std::fs::read_to_string(&p.cmux_config).unwrap(), text);
     }

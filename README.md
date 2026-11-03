@@ -105,6 +105,7 @@ Optional integrations:
 ```sh
 sessionsnap install-cmux     # palette commands in cmux on macOS (asks first, backs up cmux.json)
 sessionsnap install-skill    # teaches Claude Code to use sessionsnap
+sessionsnap install-pi       # lets Pi sessions resume with the flags they were started with
 ```
 
 Shell completions and the man page:
@@ -230,7 +231,7 @@ with both (see [Web UI](#web-ui)).
 | Codex | Full (tested) | `codex resume <id>` | [listed below](#how-flags-are-restored) |
 | Grok | Resume only (untested) | `grok -r <id>` | only launches without flags |
 | OpenCode | Resume only (untested) | `opencode --session <id>` | only launches without flags |
-| Pi | Resume only (untested) | `pi --session <id>` | only launches without flags |
+| Pi | Full (tested with Pi 1.5.0 in cmux and tmux) | `pi --session <id>` | [listed below](#how-flags-are-restored) (with `install-pi`) |
 | omp | Resume only (untested) | `omp --session <id>` | only launches without flags |
 | Campfire | Resume only (untested) | `campfire --session <id>` | only launches without flags |
 | Amp | Resume only (untested) | `amp threads continue <id>` | only launches without flags |
@@ -266,6 +267,7 @@ resume the agent with fewer limits.
 |---|---|---|
 | Claude Code | `--model`, `--fallback-model`, `--effort`, `--betas`; `--allowedTools`/`--allowed-tools`; `--add-dir`, `--mcp-config`, `--append-system-prompt-file`, `--system-prompt-file` (paths only); `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--ide`, `--verbose`, `--chrome`, `--no-chrome` | `--permission-mode`, `--agent`, `--setting-sources`, `--max-budget-usd`, `--disallowedTools`/`--disallowed-tools`, `--tools`; `--settings`, `--agents`, `--plugin-dir` (paths only: inline JSON leaves out the session); `--strict-mcp-config`, `--restricted`, `--safe-mode`, `--disable-slash-commands`, `--bare` |
 | Codex | `--model`/`-m`, `--cd`/`-C`, `--add-dir`, `--dangerously-bypass-approvals-and-sandbox`, `--search`, `--oss`; `-c`/`--config` for `model`, `model_provider`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity` | `--sandbox`/`-s`, `--ask-for-approval`/`-a`, `--profile`/`-p`, `--enable`, `--disable`, `--approve-for-me`; `-c`/`--config` for `approval_policy`, `sandbox_mode`, `profile`, `sandbox_workspace_write.*`, `features.*`, `shell_environment_policy.inherit`/`.exclude`/`.include_only`/`.ignore_default_excludes` |
+| Pi | `--provider`, `--model`, `--models`, `--thinking`, `--use-theme`, `--tui-mode`, `--approve`/`-a`, `--no-skills`, `--no-prompt-templates`, `--no-themes`, `--no-context-files`, `--verbose`; `--session-dir`, `--skill`, `--prompt-template`, `--theme` (paths only) | `--tools`/`-t`, `--exclude-tools`/`-xt`, `--no-tools`, `--no-builtin-tools`, `--no-mcp`, `--no-extensions`, `--no-approve`, `--offline`, `--extension`/`-e`; a flag an extension adds (`--plan`) leaves out the session |
 | Every other agent | none: a session started with any flag is left out | every flag |
 
 Kept values are checked too: a name is one word, a path can't be inline JSON, and no value may hold
@@ -281,6 +283,13 @@ file are not restored. Resume such sessions by hand, or pass the restrictions wi
 (`--disallowedTools`, `--permission-mode`). When the merge can't run, cmux records your
 `--settings` as given, and the rules above apply. Other cmux versions are unverified. Codex launches
 are recorded as you typed them.
+
+**Pi:** Pi renames its process, which hides the flags it was started with from cmux, tmux and every
+other program. `sessionsnap install-pi` adds a small Pi extension
+(`~/.pi/agent/extensions/sessionsnap.ts`) that records them in the session itself (never
+`--api-key`); sessionsnap reads that record in both cmux and tmux, and leaves out the extension
+cmux's own `pi` wrapper adds. A Pi session started without it has no record: it resumes without
+flags, and `save` says so. `uninstall` removes the extension.
 
 Want another agent supported? See [Add an agent](ARCHITECTURE.md#add-an-agent).
 
@@ -312,7 +321,7 @@ printed in the terminal running `sessionsnap ui`.
 - **History:** compare two versions; restore an older one.
 - **Restore:** tick workspaces and tabs, see what would open (with the command each terminal tab
   runs), then restore. Each tab in the Workspaces view also has a **Restore this tab** button.
-- **Recent:** agent sessions (Claude Code, Codex) from the last days that are not open in the
+- **Recent:** agent sessions (Claude Code, Codex, Pi) from the last days that are not open in the
   terminal.
 
 A full restore adds only missing agent tabs to a workspace that is already open (a shell might be
@@ -356,6 +365,8 @@ Details:
 | cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
 | cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | Claude Code skill (`install-skill`) | `~/.claude/skills/sessionsnap/SKILL.md` | `SESSIONSNAP_SKILLS_DIR` (instead of `~/.claude/skills`) |
+| Pi extension (`install-pi`) | `~/.pi/agent/extensions/sessionsnap.ts` | `PI_CODING_AGENT_DIR` (Pi's own, instead of `~/.pi/agent`) |
+| Pi sessions (read) | `~/.pi/agent/sessions` | `PI_CODING_AGENT_SESSION_DIR`, else `PI_CODING_AGENT_DIR/sessions` (Pi's own) |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
 
 sessionsnap also reads cmux's state file and `cmux --json --id-format both tree --all`, and matches open tabs to the state file by surface ID (by tty, with a warning, on a cmux that reports no IDs).
@@ -416,6 +427,13 @@ Verified with cmux 0.64.22 on macOS:
 - `install-cmux` added the palette commands to cmux's commented `cmux.json`; ⌘⇧P shows them.
 - "sessionsnap: Open UI" showed the UI in the Dock; running it again pointed the open page at the
   new key.
+
+Verified with cmux 0.65.2 and tmux 3.8 on macOS, each agent run against a local stand-in model:
+Claude Code 2.1.317, Codex 0.163.0 and Pi 1.5.0 were saved with their sessions and flags, closed, and
+restored in both terminals, resuming the same conversation with the same flags (Claude Code
+`--permission-mode plan --disallowedTools Bash`, Codex `--sandbox read-only --ask-for-approval
+on-request`, Pi `--offline --tools read,grep` through `install-pi`). Flag lists checked against
+Claude Code 2.1.317 and Codex 0.166.0.
 
 Not yet checked:
 

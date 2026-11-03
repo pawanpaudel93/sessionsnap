@@ -416,7 +416,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               every other flag the agent's command line knows is left out when you save, and
               <code translate="no">save</code> names the flags it left out (never their values). A
               flag sessionsnap doesn't know at all (not in <code translate="no">claude --help</code>
-              or <code translate="no">codex --help</code> as of Claude Code 2.1.296 and Codex 0.160.0)
+              or <code translate="no">codex --help</code> as of Claude Code 2.1.317 and Codex 0.166.0)
               leaves out the session, since what follows it can't be read for certain. Short flags may
               be grouped (<code translate="no">-vs read-only</code>) as the agents allow. A Codex
               <code translate="no">-c</code> key on neither list below also leaves out the session,
@@ -511,7 +511,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr>
                     <td><code translate="no">sessionsnap sessions</code></td>
                     <td>
-                      List agent sessions on disk (agents with a readable history: Claude Code, Codex).
+                      List agent sessions on disk (agents with a readable history: Claude Code, Codex, Pi).
                       <code translate="no">--search &lt;text&gt;</code> in titles, prompts, folders or IDs;
                       <code translate="no">--cwd &lt;dir&gt;</code> (or below); <code translate="no">--days &lt;n&gt;</code>
                       (default 30); <code translate="no">--agent &lt;kind&gt;</code>. A <code translate="no">●</code>
@@ -533,7 +533,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               </table>
             </div>
             <p>
-              Claude Code and Codex are fully supported and tested; 15 more agents are resume-only and
+              Claude Code and Codex are fully supported and tested, Pi fully supported (its flags with <code translate="no">install-pi</code>); 14 more agents are resume-only and
               untested. See the <a href="/#agents">supported agents table</a>.
             </p>
           </section>
@@ -599,7 +599,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <li><strong>Workspaces:</strong> rename (double-click), reorder, remove, drag tabs to reorder or move them (or use each tab's Move up, Move down and “Move to…” buttons), add an agent session or a shell tab, add a workspace from what is open in the terminal or from another snapshot. Edits are previewed and saved together as one version. Hover an agent tab's icon for the flags it resumes with.</li>
               <li><strong>History:</strong> compare two versions; restore an older one.</li>
               <li><strong>Restore:</strong> tick workspaces and tabs, see what would open (with the command each terminal tab runs), then restore. Each tab in the Workspaces view also has a <strong>Restore this tab</strong> button.</li>
-              <li><strong>Recent:</strong> agent sessions (Claude Code, Codex) from the last days that are not open in the terminal.</li>
+              <li><strong>Recent:</strong> agent sessions (Claude Code, Codex, Pi) from the last days that are not open in the terminal.</li>
             </ul>
             <p>
               It runs while its terminal is open and stops after 30 minutes without use; nothing starts
@@ -628,7 +628,8 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <h2>Palette and skill</h2>
             <div class="code-panel">
               <pre><code translate="no"><span class="prompt">$ </span>sessionsnap install-cmux     <span class="comment"># palette commands in cmux (asks first, backs up cmux.json)</span>
-<span class="prompt">$ </span>sessionsnap install-skill    <span class="comment"># teaches Claude Code to use sessionsnap</span></code></pre>
+<span class="prompt">$ </span>sessionsnap install-skill    <span class="comment"># teaches Claude Code to use sessionsnap</span>
+<span class="prompt">$ </span>sessionsnap install-pi       <span class="comment"># lets Pi sessions resume with their flags</span></code></pre>
             </div>
             <p>
               <code translate="no">install-cmux</code> adds these commands to
@@ -648,6 +649,13 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <code translate="no">~/.claude/skills/sessionsnap</code>. It tells Claude to use
               <code translate="no">--json</code>, to show you a restore plan before applying it, and never
               to start an automatic snapshot on its own.
+            </p>
+            <p>
+              <code translate="no">install-pi</code> adds a Pi extension at
+              <code translate="no">~/.pi/agent/extensions/sessionsnap.ts</code>. Pi renames its process, which
+              hides the flags it was started with from cmux and tmux; the extension records them in the
+              session (never <code translate="no">--api-key</code>), so a restore resumes Pi with them. A Pi
+              session started without it resumes without flags, and <code translate="no">save</code> says so.
             </p>
             <div class="code-panel">
               <pre><code translate="no"><span class="prompt">$ </span>sessionsnap completions zsh > "${fpath[1]}/_sessionsnap"   <span class="comment"># or bash, fish, elvish, powershell</span>
@@ -682,6 +690,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>cmux socket (web UI)</td><td><code translate="no">$CMUX_SOCKET_PATH</code> (or its older name <code translate="no">$CMUX_SOCKET</code>), else the path in <code translate="no">~/Library/Application Support/cmux/last-socket-path</code>; <code translate="no">SESSIONSNAP_CMUX_SOCKET</code></td></tr>
                   <tr><td>cmux palette config</td><td><code translate="no">~/.config/cmux/cmux.json</code> (on Linux, <code translate="no">$XDG_CONFIG_HOME/cmux/cmux.json</code> when that is set); <code translate="no">SESSIONSNAP_CMUX_CONFIG</code></td></tr>
                   <tr><td>Claude Code skill (written by <code translate="no">install-skill</code>)</td><td><code translate="no">~/.claude/skills/sessionsnap</code>; <code translate="no">SESSIONSNAP_SKILLS_DIR</code> (another skills folder)</td></tr>
+                  <tr><td>Pi extension (written by <code translate="no">install-pi</code>)</td><td><code translate="no">~/.pi/agent/extensions/sessionsnap.ts</code>; <code translate="no">PI_CODING_AGENT_DIR</code> (Pi's own)</td></tr>
                 </tbody>
               </table>
             </div>

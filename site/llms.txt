@@ -6,7 +6,7 @@ sessionsnap saves named, versioned snapshots of cmux workspaces (or tmux session
 
 It needs macOS with cmux 0.64 or newer, or tmux on macOS or Linux: sessionsnap uses the terminal it runs in (tmux first; outside both, the one running), and `--terminal cmux|tmux` picks one. cmux on Linux is a different app with a different command line, not supported yet.
 
-Claude Code and Codex are fully supported and tested (their session histories are read). 15 more agents (Grok, OpenCode, Pi, omp, Campfire, Amp, Cursor Agent, Gemini CLI, Antigravity, Rovo Dev, Hermes Agent, GitHub Copilot CLI, CodeBuddy, Factory Droid, Qoder CLI) are resumed with the command cmux documents for them, and are untested.
+Claude Code, Codex and Pi are fully supported and tested (their session histories are read; Pi's launch flags need `sessionsnap install-pi`). 14 more agents (Grok, OpenCode, omp, Campfire, Amp, Cursor Agent, Gemini CLI, Antigravity, Rovo Dev, Hermes Agent, GitHub Copilot CLI, CodeBuddy, Factory Droid, Qoder CLI) are resumed with the command cmux documents for them, and are untested.
 
 ## For agents driving sessionsnap
 
@@ -17,7 +17,7 @@ Claude Code and Codex are fully supported and tested (their session histories ar
 
 ## Commands
 
-`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `rename`, `export`, `import`, `schedule`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `completions`, `man`, `update`, `uninstall`. Every command has `--help`.
+`save`, `list`, `open`, `show`, `history`, `diff`, `prune`, `delete`, `rename`, `export`, `import`, `schedule`, `ws`, `tab`, `edit`, `restore`, `apply`, `sessions`, `recent`, `agents`, `ui`, `install-cmux`, `install-skill`, `install-pi`, `completions`, `man`, `update`, `uninstall`. Every command has `--help`.
 
 ## Links
 

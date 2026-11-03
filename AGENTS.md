@@ -2,8 +2,9 @@
 
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces (or tmux
 sessions) and the coding-agent sessions in their tabs, and later reopens only what is missing, with each agent tab
-resumed with its original flags (those on the agent's allow-list). Claude Code and Codex are fully
-supported (their session histories are read); 15 more agents are resume-only and untested, and
+resumed with its original flags (those on the agent's allow-list). Claude Code, Codex and Pi are fully
+supported (their session histories are read; Pi's launch flags need `sessionsnap install-pi`); 14 more agents
+are resume-only and untested, and
 resume only sessions started without flags. It is one Rust binary: a CLI
 with `--json`, a web UI in the cmux Dock or the browser from tmux, cmux palette commands, and a Claude Code skill. It runs
 on macOS with cmux 0.64+, and with tmux on macOS and Linux. It uses the terminal it runs in (tmux first;

@@ -7,8 +7,8 @@ description: Save, edit and restore named, versioned snapshots of cmux workspace
 
 `sessionsnap` saves what is open in cmux or tmux (workspaces, tabs, and the agent session in each tab, with
 the flags the agent was started with that are on its allow-list) as named snapshots with versions,
-and reopens only what is missing. Claude Code and Codex are fully supported (their session
-histories are read); 15 more agents are resumed with cmux's documented commands, only when started
+and reopens only what is missing. Claude Code, Codex and Pi are fully supported (their session
+histories are read); 14 more agents are resumed with cmux's documented commands, only when started
 without flags (`sessionsnap agents --json` lists them). Inside tmux it saves and restores tmux
 sessions instead (it uses the terminal it runs in; `--terminal cmux|tmux` picks one); there, a pane whose agent session can't be told
 is saved as a plain tab, and `save` says so.
@@ -75,6 +75,7 @@ is saved as a plain tab, and `save` says so.
 | Preview edits without saving | `sessionsnap edit <name> --batch - --dry-run --json` (ops on stdin); save them with `--base <baseVersion>` from the preview, which exits 6 if the snapshot changed since |
 | Newer release? | `sessionsnap update --check --json` (`updateAvailable`) |
 | Install the latest release | `sessionsnap update --json` |
+| Keep Pi's launch flags (Pi hides them; only when the user asks) | `sessionsnap install-pi --json` |
 | Remove sessionsnap | `sessionsnap uninstall [--keep-data] --yes --json` (lists each step's `status`) |
 
 Tabs are `<workspace>#<position>` (1-based) or `<workspace>:"<part of the title>"`.

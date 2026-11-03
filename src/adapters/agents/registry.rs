@@ -119,7 +119,19 @@ pub const AGENTS: &[AgentSpec] = &[
     },
     agent("grok", &[], "Grok", "grok", &["-r"], &["-r", "--resume"], &[]),
     agent("opencode", &[], "OpenCode", "opencode", &["--session"], &["--session", "-s"], &["--continue", "-c"]),
-    agent("pi", &[], "Pi", "pi", &["--session"], &["--session"], &[]),
+    AgentSpec {
+        kind: "pi",
+        aliases: &[],
+        display: "Pi",
+        program: "pi",
+        resume: &["--session"],
+        resume_flags: &["--session", "--session-id"],
+        continue_flags: &["--continue", "-c", "--resume", "-r"],
+        ids: Ids::Uuid,
+        flags: Flags::Others,
+        saved: PI_FLAGS,
+        support: Support::Full,
+    },
     agent("omp", &[], "omp", "omp", &["--session"], &["--session"], &[]),
     agent("campfire", &[], "Campfire", "campfire", &["--session"], &["--session"], &[]),
     agent("amp", &[], "Amp", "amp", &["threads", "continue"], &[], &[]),
@@ -134,8 +146,8 @@ pub const AGENTS: &[AgentSpec] = &[
     agent("qoder", &[], "Qoder CLI", "qodercli", &["--resume"], &["--resume", "-r"], &[]),
 ];
 
-// The flags Claude Code and Codex resume with, checked against `claude --help` (2.1.296) and
-// `codex --help` / `codex resume --help` (0.160.0). Arities and the launches that are not sessions
+// The flags Claude Code and Codex resume with, checked against `claude --help` (2.1.317) and
+// `codex --help` / `codex resume --help` (0.166.0). Arities and the launches that are not sessions
 // follow cmux's `AgentLaunchSanitizer` policies. Each table lists every flag of the agent's command
 // line (`dropped` and `skip` lines are known but not restored); a flag missing from it leaves out the
 // session, since what follows it can't be read for certain. To restore another flag, add or change
@@ -266,6 +278,9 @@ const CODEX_NEUTRAL_KEYS: &[&str] = &[
     // A provider's definition may hold its credentials (`experimental_bearer_token`, `http_headers`,
     // `query_params`): never saved. A resume that picks the provider then fails, loudly.
     "model_providers.",
+    // The computer-use MCP server cmux's `codex` wrapper adds (tmux inside cmux sees it in the
+    // launch): another tool, no limit; cmux adds it again.
+    "mcp_servers.cmux-cua.",
 ];
 
 /// The `-c` keys that limit Codex, also restored; one that can't be kept loses the session. A key
@@ -281,6 +296,64 @@ const CODEX_RESTRICTING_KEYS: &[&str] = &[
     "shell_environment_policy.include_only",
     "shell_environment_policy.ignore_default_excludes",
 ];
+
+// Pi's flags, checked against `pi --help` (1.5.0). Its session words (`--session`, `--session-id`,
+// `--continue`, `--resume`) are taken out before this table is read. Flags an extension registers
+// (`--plan`) are not listed, so a launch with one is left out.
+const PI_FLAGS: Policy = Policy {
+    flags: &[
+        Flag::word(&["--provider"]),
+        Flag::word(&["--model"]),
+        Flag::word(&["--models"]),
+        Flag::word(&["--thinking"]),
+        Flag::word(&["--use-theme"]),
+        Flag::word(&["--tui-mode"]),
+        Flag::rules(&["--tools", "-t"]).restricting(),
+        Flag::rules(&["--exclude-tools", "-xt"]).restricting(),
+        Flag::switch(&["--no-tools", "-nt"]).restricting(),
+        Flag::switch(&["--no-builtin-tools", "-nbt"]).restricting(),
+        Flag::switch(&["--no-mcp"]).restricting(),
+        Flag::switch(&["--no-extensions", "-ne"]).restricting(),
+        Flag::switch(&["--no-approve", "-na"]).restricting(),
+        Flag::switch(&["--offline"]).restricting(),
+        Flag::switch(&["--approve", "-a"]),
+        Flag::switch(&["--no-skills", "-ns"]),
+        Flag::switch(&["--no-prompt-templates", "-np"]),
+        Flag::switch(&["--no-themes"]),
+        Flag::switch(&["--no-context-files", "-nc"]),
+        Flag::switch(&["--verbose"]),
+        Flag::path(&["--session-dir"]),
+        Flag::paths(&["--extension", "-e"]).restricting(),
+        Flag::paths(&["--skill"]),
+        Flag::paths(&["--prompt-template"]),
+        Flag::paths(&["--theme"]),
+        Flag::skip(&["--api-key"]),
+        Flag::skip(&["--system-prompt"]),
+        Flag::skip_many(&["--append-system-prompt"]),
+        Flag::skip(&["--name", "-n"]),
+        Flag::skip(&["--fork"]),
+        Flag::dropped(&["--print", "-p"]),
+        Flag::dropped(&["--no-session"]),
+        Flag::dropped(&["--help", "-h"]),
+        Flag::dropped(&["--version", "-v"]),
+    ],
+    // `pi --help`'s commands: none is a session.
+    commands: &["install", "remove", "uninstall", "update", "list", "config", "auth", "mcp"],
+    // One-shot or not a session at all.
+    rejects: &[
+        "--print",
+        "-p",
+        "--no-session",
+        "--mode",
+        "--export",
+        "--list-models",
+        "--help",
+        "-h",
+        "--version",
+        "-v",
+    ],
+    ..Policy::BASE
+};
 
 const CODEX_FLAGS: Policy = Policy {
     flags: &[
@@ -334,6 +407,7 @@ const CODEX_FLAGS: Policy = Policy {
         "logout",
         "mcp",
         "mcp-server",
+        "migrate-nfs-db",
         "migrate-rollouts",
         "plugin",
         "queue",
@@ -590,7 +664,7 @@ mod tests {
             assert_eq!(cmd, usage.replace("<id>", id), "{kind}");
         }
         let full: Vec<&str> = AGENTS.iter().filter(|a| a.support == Support::Full).map(|a| a.kind).collect();
-        assert_eq!(full, ["claude", "codex"]);
+        assert_eq!(full, ["claude", "codex", "pi"]);
     }
 
     #[test]
@@ -822,6 +896,24 @@ mod tests {
         }
         // A prompt is not a subcommand.
         assert!(codex.resume_command(A, &strings(&["-s", "read-only", "fix the exec path"])).is_some());
+        // What cmux's wrapper adds to a Codex launch in tmux inside cmux: its computer-use server is
+        // left out with a note, and the session is kept with the user's own flags.
+        let wrapped = strings(&[
+            "--sandbox",
+            "read-only",
+            "--disable",
+            "computer_use",
+            "-c",
+            "mcp_servers.cmux-cua.command=\"/Applications/cmux.app/cmux-cua\"",
+            "-c",
+            "mcp_servers.cmux-cua.args=[\"mcp\",\"--socket\",\"/tmp/cmux-cua.sock\"]",
+            "-c",
+            "mcp_servers.cmux-cua.env.CMUX_CUA_MCP_FORCE_PROXY=\"1\"",
+        ]);
+        assert_eq!(
+            codex.resume_command(A, &wrapped).unwrap(),
+            format!("codex resume {A} --sandbox read-only --disable computer_use")
+        );
         // cmux's injected hook flags are not stripped (0.65 records the user's own argv, and older
         // values can't be matched exactly): `hooks.*` is on no list, so the session is left out,
         // whether the value is cmux's, a user's, or cmux's with one value changed.
@@ -873,6 +965,7 @@ mod tests {
             let keep: &[&str] = match spec.kind {
                 "claude" => &["--verbose"],
                 "codex" => &["--search"],
+                "pi" => &["--offline"],
                 _ => &[],
             };
             let mut args = strings(keep);
@@ -889,7 +982,7 @@ mod tests {
     /// unknown flag such as gemini's `--sandbox` may limit the agent), and nothing else changes.
     #[test]
     fn resume_only_agents_resume_only_launches_without_flags() {
-        for spec in AGENTS.iter().filter(|s| s.flags == Flags::Others) {
+        for spec in AGENTS.iter().filter(|s| s.support == Support::ResumeOnly) {
             for args in [strings(&["--sandbox"]), strings(&["--model", "m"]), strings(&["-x"])] {
                 assert_eq!(spec.check_args(&args).lost, Some(flags::Lost::UntestedFlags), "{}", spec.kind);
                 assert_eq!(spec.resume_command("s-1", &args), None, "{}", spec.kind);
@@ -904,7 +997,23 @@ mod tests {
                 spec.kind
             );
         }
-        assert_eq!(AGENTS.iter().filter(|s| s.flags == Flags::Others).count(), 15);
+        assert_eq!(AGENTS.iter().filter(|s| s.support == Support::ResumeOnly).count(), 14);
+    }
+
+    /// Pi keeps the flags its `--help` lists; a restricting one it can't keep loses the session,
+    /// and a print run or one with an extension's flag is not a session to resume.
+    #[test]
+    fn pi_keeps_its_flags_and_leaves_out_what_it_cannot() {
+        let pi = find("pi").unwrap();
+        let args = strings(&["--model", "sonnet", "-t", "read,grep", "--no-mcp", "--session", A, "--api-key", "k"]);
+        assert_eq!(
+            pi.resume_command(B, &args).unwrap(),
+            format!("pi --session {B} --model sonnet -t read,grep --no-mcp")
+        );
+        assert_eq!(pi.session_in_args(&strings(&["--session-id", A])), Some(A.to_string()));
+        for lost in [&["-p", "hi"][..], &["--no-session"], &["--plan"], &["--mode", "rpc"]] {
+            assert_eq!(pi.resume_command(B, &strings(lost)), None, "{lost:?}");
+        }
     }
 
     /// An old snapshot may hold flags saved before the allow-list: restore filters them the same way.

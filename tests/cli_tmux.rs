@@ -168,3 +168,40 @@ fn a_rearranged_split_is_saved_and_a_bad_window_count_is_ignored() {
     env.run(&["apply", plan["plan"]["planId"].as_str().unwrap()]).unwrap();
     assert!(env.fake.launched.borrow().iter().all(|t| !t.split && t.layout.is_none()));
 }
+
+/// Pi hides its flags from the terminal: they come from the record its sessionsnap extension adds
+/// to the session, and without a record the session is saved without flags, with a warning.
+#[test]
+fn pi_flags_come_from_its_own_record() {
+    use sessionsnap::ports::{AgentRef, OpenTab};
+    use sessionsnap::testing::{A, B, write_pi_session};
+    let env = setup();
+    let recorded = write_pi_session(&env.dir.path().join("pi"), "/w/p", A, "first");
+    write_pi_session(&env.dir.path().join("pi"), "/w/q", B, "second");
+    let mut text = std::fs::read_to_string(&recorded).unwrap();
+    text.push_str(r#"{"type":"custom","id":"c1","customType":"sessionsnap.launch","data":{"args":["--tools","read","--offline"]}}"#);
+    text.push('\n');
+    std::fs::write(&recorded, text).unwrap();
+    let pi_tab = |id: &str| OpenTab {
+        reference: None,
+        title: "pi".into(),
+        cwd: "/w/p".into(),
+        // What a terminal reports for Pi: no flags (or the wrong ones).
+        agent: Some(AgentRef { kind: "pi".into(), session_id: id.into(), args: vec![], alt_session_id: None }),
+        processes: vec![],
+    };
+    env.fake.state.borrow_mut().workspaces[1].tabs = vec![pi_tab(A), pi_tab(B)];
+    let saved = env.run(&["save", "s"]).unwrap();
+    let warnings = saved.json["warnings"].to_string();
+    assert!(warnings.contains("install-pi") && !warnings.contains(A), "{warnings}");
+    let shown = env.run(&["show", "s", "--json"]).unwrap().json;
+    let tabs = &shown["version"]["workspaces"][1]["tabs"];
+    assert_eq!(tabs[0]["args"], serde_json::json!(["--tools", "read", "--offline"]));
+    assert!(tabs[1].get("args").is_none(), "{}", tabs[1]);
+    env.fake.state.borrow_mut().workspaces.remove(1);
+    let plan = env.run(&["restore", "s", "--plan"]).unwrap().json;
+    env.run(&["apply", plan["plan"]["planId"].as_str().unwrap()]).unwrap();
+    let commands: Vec<Option<String>> = env.fake.launched.borrow().iter().map(|t| t.command.clone()).collect();
+    assert!(commands.contains(&Some(format!("pi --session {A} --tools read --offline"))), "{commands:?}");
+    assert!(commands.contains(&Some(format!("pi --session {B}"))), "{commands:?}");
+}

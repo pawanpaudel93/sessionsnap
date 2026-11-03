@@ -34,7 +34,8 @@ fn agents_lists_the_registry() {
                            "resume": "codex resume <id>", "support": "full", "onPath": false})
     );
     let resume_only = agents.iter().filter(|a| a["support"] == "resume-only").count();
-    assert_eq!(resume_only, 15);
+    assert_eq!(resume_only, 14);
+    assert_eq!(agents.iter().find(|a| a["kind"] == "pi").unwrap()["support"], "full");
     assert_eq!(agents[8]["aliases"], serde_json::json!(["cursor-agent"]));
     assert!(o.text.lines().any(|l| l.starts_with("rovodev") && l.contains("acli rovodev run --restore <id>")));
 }
