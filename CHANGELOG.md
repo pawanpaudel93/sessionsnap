@@ -21,6 +21,12 @@ All notable changes to sessionsnap are listed here. The format follows
   deleted after each save. Schedules added before keep every version. Lowering `--keep` below the
   versions a snapshot holds asks first, as `prune` does. Nothing is deleted while the record of
   sessions is still being updated from those versions.
+- Pi is fully supported in cmux and tmux (tested with Pi 1.5.0): its sessions
+  (`~/.pi/agent/sessions`, `PI_CODING_AGENT_SESSION_DIR` or `PI_CODING_AGENT_DIR`) are read for
+  titles, `sessions`, `recent` and tmux. Pi hides the flags it was started with, so
+  `sessionsnap install-pi` adds a Pi extension that records them in the session (never
+  `--api-key`); restore resumes Pi with the flags in `pi --help` (the ones that limit it fail
+  closed). A session started without the extension resumes without flags, with a warning.
 
 ### Changed
 
@@ -42,6 +48,8 @@ All notable changes to sessionsnap are listed here. The format follows
   for someone else's.
 - `update` now writes the new binary to disk before it replaces the old one, so a crash right after
   can't leave an empty `sessionsnap`.
+- tmux inside cmux: a Codex launch through cmux's wrapper (which adds its computer-use MCP server)
+  was saved as a plain tab; that server is now left out with a note and the session kept.
 - `ui --port 0` and `ui --idle-minutes 0` are refused instead of serving a page nobody could open.
 - `install-cmux` and `uninstall` replaced a symlinked `cmux.json` with a plain file; they now write
   the file it points to and keep its permissions.

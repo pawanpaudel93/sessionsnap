@@ -202,10 +202,11 @@ pub fn load_normalized(
 pub fn read_open(terminal: &dyn Terminal, agents: &Agents) -> anyhow::Result<OpenState> {
     let mut open = terminal.read_open_state()?;
     crate::domain::running::identify(&mut open, agents, std::time::SystemTime::now());
-    for tab in open.workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()) {
-        if let Some(a) = &mut tab.agent
-            && let Some(spec) = Agents::spec(&a.kind)
-        {
+    let mut warnings = vec![];
+    for w in open.workspaces.iter_mut() {
+        for tab in w.tabs.iter_mut() {
+            let Some(a) = &mut tab.agent else { continue };
+            let Some(spec) = Agents::spec(&a.kind) else { continue };
             a.kind = spec.kind.to_string();
             // The terminal's other record of the session, when its first one is no valid ID.
             if !spec.valid_id(&a.session_id)
@@ -215,8 +216,27 @@ pub fn read_open(terminal: &dyn Terminal, agents: &Agents) -> anyhow::Result<Ope
             }
             // Compared with saved sessions, which hold UUIDs in lowercase.
             a.session_id = crate::domain::model::canonical_id(&a.session_id);
+            // An agent that hides its flags from the terminal (Pi): they come from its own record
+            // of the launch, which the terminal's (empty or wrong) arguments never replace.
+            if let Some(history) =
+                crate::ports::AgentCatalog::history(agents, spec.kind).filter(|h| h.records_launches())
+            {
+                match history.launch_args(&a.session_id) {
+                    Some(args) => a.args = args,
+                    None => {
+                        a.args.clear();
+                        let message = format!(
+                            "{} › {}: {} hides the flags it was started with, and this session has no record of \
+                             them, so it resumes without them; run `sessionsnap install-pi` and start {} again to keep them",
+                            w.name, tab.title, spec.display, spec.display
+                        );
+                        warnings.push(crate::ports::OpenWarning { workspace: Some(w.name.clone()), message });
+                    }
+                }
+            }
         }
     }
+    open.warnings.extend(warnings);
     Ok(open)
 }
 

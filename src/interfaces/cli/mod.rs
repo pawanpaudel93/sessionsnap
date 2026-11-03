@@ -168,7 +168,7 @@ pub enum Command {
         /// The planId a plan printed
         plan_id: String,
     },
-    /// List agent sessions on disk (agents with a readable history: Claude Code, Codex)
+    /// List agent sessions on disk (agents with a readable history: Claude Code, Codex, Pi)
     Sessions {
         /// Text to find in titles, prompts, folders or IDs
         #[arg(long)]
@@ -232,6 +232,9 @@ pub enum Command {
     },
     /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
     InstallSkill,
+    /// Install the Pi extension that records Pi's launch flags, so restore resumes Pi with them
+    /// (~/.pi/agent/extensions/sessionsnap.ts)
+    InstallPi,
     /// Print shell completions, e.g. `sessionsnap completions zsh > ~/.zfunc/_sessionsnap`
     Completions {
         /// bash, zsh, fish, elvish or powershell

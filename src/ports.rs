@@ -196,6 +196,15 @@ pub trait SessionHistory {
     fn title_for(&self, cwd: &str, session_id: &str) -> Option<String>;
     /// Sessions changed within `within` (all when None), newest first.
     fn scan(&self, within: Option<Duration>) -> Result<Vec<SessionInfo>>;
+    /// The flags the session's agent was last started with, as the agent itself recorded them, for
+    /// an agent that hides them from the terminal (Pi); None when it recorded none.
+    fn launch_args(&self, _session_id: &str) -> Option<Vec<String>> {
+        None
+    }
+    /// True for an agent whose launch flags only its own record holds (`launch_args`).
+    fn records_launches(&self) -> bool {
+        false
+    }
 }
 
 /// What the domain needs to know about coding agents: their names, what their session IDs look

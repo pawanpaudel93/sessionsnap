@@ -8,6 +8,7 @@ pub mod claude;
 pub mod codex;
 #[cfg(test)]
 mod contract;
+pub mod pi;
 pub mod registry;
 
 use std::path::{Path, PathBuf};
@@ -39,7 +40,9 @@ impl Agents {
     pub fn open_default(cache: &Path) -> Result<Self> {
         let path = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
         let claude = Claude::open_default()?.cached(cache.join("claude-transcripts.json"));
-        Ok(Agents::new(vec![Box::new(claude), Box::new(Codex::open_default()?)], path))
+        let histories: Vec<Box<dyn SessionHistory>> =
+            vec![Box::new(claude), Box::new(Codex::open_default()?), Box::new(pi::Pi::open_default()?)];
+        Ok(Agents::new(histories, path))
     }
 
     /// The registry entry for an agent name, alias or program.

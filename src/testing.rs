@@ -31,14 +31,18 @@ pub fn write_transcript(claude_root: &Path, cwd: &str, id: &str, title: &str) ->
     path
 }
 
-/// A context on a store under `dir/store`, Claude Code and Codex data under `dir/claude` and
-/// `dir/codex`, and `terminal`, as the binary would build it for these flags. No program is on the
+/// A context on a store under `dir/store`, Claude Code, Codex and Pi data under `dir/claude`,
+/// `dir/codex` and `dir/pi`, and `terminal`, as the binary would build it for these flags. No program is on the
 /// search path.
 pub fn ctx(dir: &Path, terminal: FakeTerminal, json: bool, yes: bool, input: Option<String>) -> Ctx {
     Ctx {
         store: Store::new(dir.join("store")),
         agents: Agents::new(
-            vec![Box::new(Claude::new(dir.join("claude"))), Box::new(Codex::new(dir.join("codex")))],
+            vec![
+                Box::new(Claude::new(dir.join("claude"))),
+                Box::new(Codex::new(dir.join("codex"))),
+                Box::new(crate::adapters::agents::pi::Pi::new(dir.join("pi"))),
+            ],
             vec![],
         ),
         terminal: Box::new(terminal),
@@ -120,6 +124,20 @@ pub fn write_rollout(codex_root: &Path, cwd: &str, id: &str, prompt: &str) -> Pa
                            "source": "cli", "originator": "codex_cli_rs", "cli_version": "0.50.0"}}),
         user("<environment_context>\n  <cwd>/w</cwd>\n</environment_context>"),
         user(prompt),
+    ];
+    std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    path
+}
+
+/// A Pi session (format 3) in `cwd` whose first prompt is `prompt`, as Pi names its file.
+pub fn write_pi_session(pi_root: &Path, cwd: &str, id: &str, prompt: &str) -> PathBuf {
+    let dir = pi_root.join(format!("--{}--", cwd.trim_start_matches('/').replace(['/', '\\', ':'], "-")));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("2026-10-11T09-30-00-000Z_{id}.jsonl"));
+    let lines = [
+        serde_json::json!({"type": "session", "version": 3, "id": id, "timestamp": "2026-10-11T09:30:00.000Z", "cwd": cwd}),
+        serde_json::json!({"type": "message", "id": "m1", "parentId": null, "timestamp": "2026-10-11T09:30:01.000Z",
+                           "message": {"role": "user", "content": prompt, "timestamp": 1_791_000_000_000_u64}}),
     ];
     std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
     path

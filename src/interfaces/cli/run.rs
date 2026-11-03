@@ -86,6 +86,16 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
                 format!("Installed the sessionsnap skill at {}", path.display()),
             ))
         }
+        Command::InstallPi => {
+            let path = crate::adapters::agents::pi::install_extension(&crate::adapters::agents::pi::extensions_dir()?)?;
+            Ok(Outcome::ok(
+                json!({"installed": path}),
+                format!(
+                    "Installed the Pi extension at {}; Pi sessions started from now on keep their flags",
+                    path.display()
+                ),
+            ))
+        }
         Command::Update { check } => Ok(updated(app::update::run(check)?)),
         Command::Uninstall { keep_data } => uninstall(ctx, keep_data),
     }
