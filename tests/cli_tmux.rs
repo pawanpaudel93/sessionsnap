@@ -193,7 +193,11 @@ fn pi_flags_come_from_its_own_record() {
     env.fake.state.borrow_mut().workspaces[1].tabs = vec![pi_tab(A), pi_tab(B)];
     let saved = env.run(&["save", "s"]).unwrap();
     let warnings = saved.json["warnings"].to_string();
-    assert!(warnings.contains("install-pi") && !warnings.contains(A), "{warnings}");
+    assert!(warnings.contains("run `sessionsnap install-pi`") && !warnings.contains(A), "{warnings}");
+    // With the extension installed, the fix is to restart Pi, not to install it again.
+    sessionsnap::adapters::agents::pi::install_extension(&env.dir.path().join("extensions")).unwrap();
+    let again = env.run(&["save", "s2"]).unwrap().json["warnings"].to_string();
+    assert!(again.contains("restart Pi") && !again.contains("install-pi"), "{again}");
     let shown = env.run(&["show", "s", "--json"]).unwrap().json;
     let tabs = &shown["version"]["workspaces"][1]["tabs"];
     assert_eq!(tabs[0]["args"], serde_json::json!(["--tools", "read", "--offline"]));

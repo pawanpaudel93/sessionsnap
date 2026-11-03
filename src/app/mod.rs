@@ -225,11 +225,19 @@ pub fn read_open(terminal: &dyn Terminal, agents: &Agents) -> anyhow::Result<Ope
                     Some(args) => a.args = args,
                     None => {
                         a.args.clear();
-                        let message = format!(
-                            "{} › {}: {} hides the flags it was started with, and this session has no record of \
-                             them, so it resumes without them; run `sessionsnap install-pi` and start {} again to keep them",
-                            w.name, tab.title, spec.display, spec.display
-                        );
+                        let (name, agent) = (format!("{} › {}", w.name, tab.title), spec.display);
+                        // The fix depends on whether the extension that records the flags is there.
+                        let message = if history.recorder_installed() {
+                            format!(
+                                "{name}: {agent} started before its sessionsnap extension was installed, so this \
+                                 session resumes without its flags; restart {agent} to keep them"
+                            )
+                        } else {
+                            format!(
+                                "{name}: {agent} hides the flags it was started with, so this session resumes \
+                                 without them; run `sessionsnap install-pi`, then restart {agent}, to keep them"
+                            )
+                        };
                         warnings.push(crate::ports::OpenWarning { workspace: Some(w.name.clone()), message });
                     }
                 }

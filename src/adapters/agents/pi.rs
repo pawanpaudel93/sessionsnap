@@ -74,13 +74,19 @@ fn is_ours(path: &Path) -> bool {
 /// Pi's sessions folder.
 pub struct Pi {
     root: PathBuf,
+    /// Pi's extensions folder, where `install-pi` puts the extension that records launches.
+    extensions: PathBuf,
     /// Session ID (lowercase) → session file, read once on first lookup.
     index: OnceCell<HashMap<String, PathBuf>>,
 }
 
 impl Pi {
+    /// Sessions in `root`, with the extensions folder beside it (`<agent dir>/sessions` and
+    /// `<agent dir>/extensions`, as Pi lays them out).
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Pi { root: root.into(), index: OnceCell::new() }
+        let root = root.into();
+        let extensions = root.parent().unwrap_or(&root).join("extensions");
+        Pi { root, extensions, index: OnceCell::new() }
     }
 
     /// Where Pi keeps sessions, as Pi decides it: `$PI_CODING_AGENT_SESSION_DIR`, else
@@ -88,13 +94,12 @@ impl Pi {
     /// is not read: that file may hold credentials.
     pub fn open_default() -> Result<Self> {
         let var = |name| std::env::var_os(name).filter(|p| !p.is_empty()).map(PathBuf::from);
-        if let Some(p) = var("PI_CODING_AGENT_SESSION_DIR") {
-            return Ok(Pi::new(p));
-        }
-        if let Some(p) = var("PI_CODING_AGENT_DIR") {
-            return Ok(Pi::new(p.join("sessions")));
-        }
-        Ok(Pi::new(home_dir()?.join(".pi/agent/sessions")))
+        let root = match (var("PI_CODING_AGENT_SESSION_DIR"), var("PI_CODING_AGENT_DIR")) {
+            (Some(p), _) => p,
+            (None, Some(p)) => p.join("sessions"),
+            (None, None) => home_dir()?.join(".pi/agent/sessions"),
+        };
+        Ok(Pi { extensions: extensions_dir()?, ..Pi::new(root) })
     }
 
     /// Every session file, with the session ID its name ends with.
@@ -216,6 +221,10 @@ impl SessionHistory for Pi {
 
     fn records_launches(&self) -> bool {
         true
+    }
+
+    fn recorder_installed(&self) -> bool {
+        is_ours(&self.extensions.join(EXTENSION_FILE))
     }
 
     /// `pi --session <id>` finds the session from any folder, so `cwd` does not matter.
