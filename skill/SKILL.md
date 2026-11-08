@@ -68,7 +68,7 @@ is saved as a plain tab, and `save` says so.
 | Rename a snapshot | `sessionsnap rename <old> <new> --json` |
 | Move a snapshot to another machine | `sessionsnap export <name>[@v] -o <file> --json`, there `sessionsnap import <file> [--as <name>] [--map <old>=<new>] --json` (only the snapshot; show the user the plan's tab commands before restoring a file from someone else) |
 | Save automatically every interval (launchd on macOS, systemd on Linux) | `sessionsnap schedule add <name> --interval 30m --json` (a new name; saves once now) |
-| Automatic snapshots | `sessionsnap schedule list --json` (`running`, `lastRun`); `list --json` rows of automatic ones have `schedule` |
+| Automatic snapshots | `sessionsnap schedule list --json` (`running`; `lastRun.result` is `saved` or `unchanged` with its `version`, or `skipped` or `failed` with its `reason`); `list --json` rows of automatic ones have `schedule` |
 | Pause / resume / change one | `sessionsnap schedule stop\|start <name> --json`, `sessionsnap schedule edit <name> --interval 2h --json`; versions kept: `--keep N` on `add` or `edit` (default 50, 0 keeps all) |
 | Save one now | `sessionsnap schedule run <name> --json` |
 | Make it a normal snapshot | `sessionsnap schedule remove <name> --json` (versions kept; `save` to an automatic one is refused, exit 4) |
@@ -103,5 +103,6 @@ wrote to disk and may be out of date. Output is one compact JSON line when stdou
 `0` ok · `1` error (`usage` for a mistyped command) · `2` terminal not reachable
 (`terminal-unreachable`: cmux not running and no saved state, tmux not installed) · `3` nothing to do ·
 `4` refused (`needs-confirmation`: ask the user; or `refused`: workspace name already exists,
-session has no recorded folder, cmux.json is not plain JSON) · `5` unknown cmux state or snapshot format (snapshots must be format 2) · `6` plan
-stale (make a new one) · `7` not found. With `--json`, errors print `{"error": {code, exit, message}}`.
+session has no recorded folder, cmux.json is not plain JSON) · `5` unknown cmux state or snapshot format (snapshots must be format 2) · `6` stale:
+what you previewed changed since (code `plan-stale`; make the plan again with `restore … --plan`, or
+preview the edits again with `edit … --dry-run` and save with its new `baseVersion`) · `7` not found. With `--json`, errors print `{"error": {code, exit, message}}`.

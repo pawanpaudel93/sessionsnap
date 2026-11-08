@@ -44,15 +44,51 @@ pub struct Known {
     pub unsure_since: Option<String>,
 }
 
-/// How a session is launched when an edit or a plan puts it in a tab.
+/// How a session is launched when an edit or a plan puts it in a tab: exactly one of these.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Launch {
-    pub args: Vec<String>,
-    pub left_out: Option<String>,
-    /// False when nothing is known of the session's flags (it resumes with the agent's defaults).
-    pub known: bool,
-    /// `left_out` only says the flags are undecided (see `Known::unsure`).
-    pub unsure: bool,
+pub enum Launch {
+    /// Nothing is known of the session's flags: it resumes with the agent's defaults.
+    #[default]
+    Unknown,
+    /// It resumes with these flags (already checked against the agent's allow-list).
+    Flags(Vec<String>),
+    /// Left out for good (why): it is resumed by hand, never with fewer limits.
+    LeftOut(String),
+    /// Left out until a live reading decides its flags (why; see `Known::unsure`).
+    Undecided(String),
+}
+
+impl Launch {
+    /// False when nothing is known of the session's flags.
+    pub fn is_known(&self) -> bool {
+        !matches!(self, Launch::Unknown)
+    }
+
+    /// The flags it resumes with; none when it is left out or unknown.
+    pub fn args(&self) -> &[String] {
+        match self {
+            Launch::Flags(args) => args,
+            _ => &[],
+        }
+    }
+
+    /// Why it is left out, for good or until decided.
+    pub fn left_out(&self) -> Option<&str> {
+        match self {
+            Launch::LeftOut(why) | Launch::Undecided(why) => Some(why),
+            Launch::Unknown | Launch::Flags(_) => None,
+        }
+    }
+
+    /// As a saved agent tab holds it: (`args`, `left_out`, `left_out_unsure`).
+    pub fn into_tab_fields(self) -> (Vec<String>, Option<String>, bool) {
+        match self {
+            Launch::Unknown => (vec![], None, false),
+            Launch::Flags(args) => (args, None, false),
+            Launch::LeftOut(why) => (vec![], Some(why), false),
+            Launch::Undecided(why) => (vec![], Some(why), true),
+        }
+    }
 }
 
 /// What a plan or an edit says about a session whose flags are unknown.
@@ -301,7 +337,7 @@ impl KnownSessions {
         if let Some(k) = saved.filter(|k| !k.unsure)
             && let Some(why) = &k.left_out
         {
-            return Launch { args: vec![], left_out: Some(why.clone()), known: true, unsure: false };
+            return Launch::LeftOut(why.clone());
         }
         let live = open.into_iter().flat_map(|o| &o.workspaces).flat_map(|w| &w.tabs).find_map(|t| {
             t.agent.as_ref().filter(|a| a.kind == s.agent && a.session_id.eq_ignore_ascii_case(&s.session_id))
@@ -309,20 +345,18 @@ impl KnownSessions {
         if let Some(a) = live {
             if a.args.iter().any(|x| has_control(x)) {
                 let why = "its flags have control characters; resume it by hand".to_string();
-                return Launch { args: vec![], left_out: Some(why), known: true, unsure: false };
+                return Launch::LeftOut(why);
             }
             let check = agents.check_flags(&a.kind, &a.args);
             return match check.lost_reason(&agents.display_name(&a.kind)) {
-                Some(why) => Launch { args: vec![], left_out: Some(why), known: true, unsure: false },
-                None => Launch { args: check.kept, left_out: None, known: true, unsure: false },
+                Some(why) => Launch::LeftOut(why),
+                None => Launch::Flags(check.kept),
             };
         }
-        match saved {
-            _ if undecided.is_some() => Launch { args: vec![], left_out: undecided, known: true, unsure: true },
-            Some(k) if k.observed_at.is_some() => {
-                Launch { args: k.args.clone(), left_out: None, known: true, unsure: false }
-            }
-            _ => Launch::default(),
+        match (undecided, saved) {
+            (Some(why), _) => Launch::Undecided(why),
+            (None, Some(k)) if k.observed_at.is_some() => Launch::Flags(k.args.clone()),
+            _ => Launch::Unknown,
         }
     }
 }
@@ -362,17 +396,16 @@ mod tests {
         let agents = agents(vec![]);
         let s = SessionRef::new("claude", A);
         let mut known = KnownSessions::default();
-        assert_eq!(known.launch(&s, None, &agents), Launch::default());
+        assert_eq!(known.launch(&s, None, &agents), Launch::Unknown);
         assert!(known.record_live(&ws(vec![with(&["--model", "opus"], None)]), T1));
         assert!(!known.record_live(&ws(vec![with(&["--model", "opus"], None)]), T1));
         known.record_live(&ws(vec![with(&["--model", "sonnet"], None)]), T2);
         // An older observation never replaces a newer one.
         known.record_live(&ws(vec![with(&[], None)]), T1);
-        assert_eq!(known.launch(&s, None, &agents).args, ["--model", "sonnet"]);
+        assert_eq!(known.launch(&s, None, &agents), Launch::Flags(vec!["--model".into(), "sonnet".into()]));
         known.record_live(&ws(vec![with(&[], Some("lost"))]), T2);
         known.record_live(&ws(vec![with(&["--model", "opus"], None)]), T2);
-        let l = known.launch(&s, None, &agents);
-        assert_eq!((l.args.len(), l.left_out.as_deref()), (0, Some("lost")));
+        assert_eq!(known.launch(&s, None, &agents), Launch::LeftOut("lost".into()));
         // An uppercase ID is the same session.
         assert!(known.get(&SessionRef::new("claude", A.to_uppercase())).is_some());
     }
@@ -588,10 +621,10 @@ mod tests {
             open.workspaces[0].tabs[0].agent.as_mut().unwrap().args = args.iter().map(|a| a.to_string()).collect();
         };
         set(&mut open, &["--permission-mode", "plan"]);
-        assert_eq!(known.launch(&s, Some(&open), &agents).args, ["--permission-mode", "plan"]);
+        assert_eq!(known.launch(&s, Some(&open), &agents).args(), ["--permission-mode", "plan"]);
         set(&mut open, &["--frobnicate"]);
-        assert!(known.launch(&s, Some(&open), &agents).left_out.is_some());
+        assert!(matches!(known.launch(&s, Some(&open), &agents), Launch::LeftOut(_)));
         set(&mut open, &["--model", "a\nb"]);
-        assert!(known.launch(&s, Some(&open), &agents).left_out.is_some());
+        assert!(matches!(known.launch(&s, Some(&open), &agents), Launch::LeftOut(_)));
     }
 }

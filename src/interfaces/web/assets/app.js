@@ -25,6 +25,7 @@ const main = document.getElementById("main");
 const state = { view: "list", snapshot: null, tab: "edit", version: null, hours: 24 };
 const pending = new Map(); // snapshot name → unsaved edit ops, as `sessionsnap edit --batch` takes them
 const bases = new Map(); // snapshot name → the version its pending edits were last previewed on
+const rebased = new Set(); // snapshot names whose pending edits were moved onto a newer version
 const expanded = new Set(); // "snapshot/workspace" keys whose tabs are shown
 let dragged = null; // the tab being dragged: { ws, pos }
 const opLabels = new WeakMap(); // edit op → what it does, in words, for the save bar
@@ -646,11 +647,17 @@ async function renderEdit(name) {
   const ops = opsOf(name);
   let workspaces;
   let warnings;
+  let moved = null;
+  if (!ops.length) rebased.delete(name);
   if (ops.length) {
     try {
       let baseVersion;
       ({ workspaces, warnings, baseVersion } = (await sessionsnap(["edit", name, "--batch", "-", "--dry-run"], JSON.stringify(ops))).result);
       bases.set(name, baseVersion);
+      if (rebased.has(name)) {
+        moved = h("div", { class: "banner caution" }, icon("warn"), h("span", {},
+          `A newer version of ${name} was saved while you edited, so your edits are now shown on v${baseVersion}. Check them, then save.`));
+      }
     } catch (e) {
       if (e.reconnect) throw e;
       // The snapshot changed outside this page and the queued edits no longer apply.
@@ -669,6 +676,7 @@ async function renderEdit(name) {
   const allOpen = keys.length > 0 && keys.every((k) => expanded.has(k));
   const tabCount = workspaces.reduce((n, w) => n + w.tabs.length, 0);
   return h("div", {},
+    moved,
     warnings.length ? h("ul", { class: "banner caution warnings" }, warnings.map((w) => h("li", {}, w))) : null,
     h("div", { class: "toolbar" },
       h("span", { class: "muted small" }, `${plural(workspaces.length, "workspace")} · ${plural(tabCount, "tab")}`),
@@ -970,8 +978,18 @@ function saveBar(name) {
     // Save only onto the version that was previewed.
     if (bases.has(name)) args.push("--base", String(bases.get(name)));
     if (message.value.trim()) args.push("-m", message.value.trim());
-    const r = await sessionsnap(args, JSON.stringify(ops));
+    let r;
+    try {
+      r = await sessionsnap(args, JSON.stringify(ops));
+    } catch (e) {
+      // Exit 6: a newer version was saved since the preview. Preview the edits on it instead.
+      if (e.exit !== 6) throw e;
+      bases.delete(name);
+      rebased.add(name);
+      return render();
+    }
     pending.delete(name);
+    rebased.delete(name);
     toast(r.exit === 3 ? "No changes to save." : `Saved v${r.result.version}: ${r.result.message}`);
     render();
   }, { class: "primary" });
@@ -1181,8 +1199,7 @@ async function renderRestore(name) {
     if (pick || chosen.length < boxes.length) {
       for (const b of chosen) args.push("--tab", `${b.ws}#${b.pos}`);
     }
-    out.replaceChildren(renderPlan(await sessionsnap(args)));
-    out.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    await showPlan(out, args);
   }, { class: "primary" });
   wsBoxes.forEach((f) => f());
   sync();
@@ -1200,14 +1217,33 @@ async function renderRestore(name) {
     out);
 }
 
-function renderPlan(r) {
+// Shows in `out` the plan `args` make. A plan that has gone stale by the time it is applied (exit 6:
+// what is open changed since) is made again, with `notice` saying so, and nothing opens until the
+// new one is applied.
+async function showPlan(out, args, notice) {
+  const remake = () => showPlan(out, args,
+    `What is open in ${TERMINAL} changed since that plan was made, so here is a new one.`);
+  const plan = renderPlan(await sessionsnap(args), remake);
+  out.replaceChildren(...(notice ? [h("div", { class: "banner caution" }, icon("warn"), h("span", {}, notice))] : []), plan);
+  out.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// `remake` makes a new plan when this one has gone stale.
+function renderPlan(r, remake) {
   const plan = r.result.plan;
   if (r.exit === 3 || plan.actions.length === 0) {
     return h("div", { class: "banner ok" }, icon("check"), "Nothing to restore: everything is already open.");
   }
   const tabs = plan.actions.reduce((n, a) => n + a.tabs.length, 0);
   const apply = actionButton(`Open ${plural(tabs, "tab")}`, async () => {
-    const a = await sessionsnap(["apply", plan.planId]);
+    let a;
+    try {
+      a = await sessionsnap(["apply", plan.planId]);
+    } catch (e) {
+      // Opening it now could add a tab twice or miss one: show the new plan instead.
+      if (e.exit === 6 && remake) return remake();
+      throw e;
+    }
     apply.replaceWith(renderSteps(a.result));
   }, { class: "primary" });
   return h("div", { class: "plan" },
@@ -1255,10 +1291,8 @@ async function viewRecent() {
               h("span", { class: "muted small" }, time(s.modified))),
             h("div", { class: "row" }, h("span", { class: "faint small" }, agentName(s.agent)),
               h("span", { class: "mono muted ellipsis path", title: s.cwd }, pathText(s.cwd))))))),
-        h("div", { class: "footer-actions" }, actionButton(`Preview restoring ${plural(sessions.length, "session")}`, async () => {
-          out.replaceChildren(renderPlan(await sessionsnap(["recent", "--hours", String(hours), "--plan"])));
-          out.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }, { class: "primary" })),
+        h("div", { class: "footer-actions" }, actionButton(`Preview restoring ${plural(sessions.length, "session")}`,
+          () => showPlan(out, ["recent", "--hours", String(hours), "--plan"]), { class: "primary" })),
         out));
 }
 

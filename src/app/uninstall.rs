@@ -69,12 +69,45 @@ pub fn rc_files(home: &Path, zdotdir: Option<PathBuf>, xdg_config: Option<PathBu
     files
 }
 
+/// How one step ended. Serialized as the words the JSON and the text show: "removed",
+/// "already gone", "kept", "left" or "failed".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Removed,
+    #[serde(rename = "already gone")]
+    AlreadyGone,
+    /// Kept as asked (`--keep-data`).
+    Kept,
+    /// Left in place: not sessionsnap's to remove, or not safe to (the note says why).
+    Left,
+    /// It failed (the note has the error); the other steps still ran.
+    Failed,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Removed => "removed",
+            Status::AlreadyGone => "already gone",
+            Status::Kept => "kept",
+            Status::Left => "left",
+            Status::Failed => "failed",
+        }
+    }
+}
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One step's result, e.g. `{what: "~/.sessionsnap", status: "removed"}`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Step {
     pub what: String,
-    /// "removed", "already gone", "kept", "left" or "failed" (the note says why).
-    pub status: &'static str,
+    pub status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
@@ -89,7 +122,7 @@ pub struct Report {
 impl Report {
     /// The steps that failed.
     pub fn failed(&self) -> Vec<&Step> {
-        self.steps.iter().filter(|s| s.status == "failed").collect()
+        self.steps.iter().filter(|s| s.status == Status::Failed).collect()
     }
 }
 
@@ -124,7 +157,7 @@ fn from_cargo(p: &Paths) -> bool {
     p.cargo_bin.as_deref().is_some_and(|bin| p.exe.starts_with(bin))
 }
 
-fn step(what: impl Into<String>, status: &'static str, note: Option<String>) -> Step {
+fn step(what: impl Into<String>, status: Status, note: Option<String>) -> Step {
     Step { what: what.into(), status, note }
 }
 
@@ -133,27 +166,29 @@ fn step(what: impl Into<String>, status: &'static str, note: Option<String>) -> 
 /// its error, and the others still run, so the report always says what was removed.
 pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
     let mut steps = vec![];
-    let failed = |what: String, e: anyhow::Error| step(what, "failed", Some(format!("{e:#}")));
+    let failed = |what: String, e: anyhow::Error| step(what, Status::Failed, Some(format!("{e:#}")));
 
     let config = p.cmux_config.display().to_string();
     steps.push(match uninstall_cmux(&p.cmux_config) {
-        Ok(Some(backup)) => {
-            step(format!("palette commands in {config}"), "removed", Some(format!("backup: {}", backup.display())))
-        }
-        Ok(None) => step(format!("palette commands in {config}"), "already gone", None),
+        Ok(Some(backup)) => step(
+            format!("palette commands in {config}"),
+            Status::Removed,
+            Some(format!("backup: {}", backup.display())),
+        ),
+        Ok(None) => step(format!("palette commands in {config}"), Status::AlreadyGone, None),
         // A file sessionsnap can't edit safely (say, comments inside "commands") must not stop
         // the rest of the uninstall.
         Err(e) if crate::error::exit_of(&e) == crate::error::Exit::Refused => {
-            step(format!("palette commands in {config}"), "left", Some(format!("{e:#}")))
+            step(format!("palette commands in {config}"), Status::Left, Some(format!("{e:#}")))
         }
         Err(e) => failed(format!("palette commands in {config}"), e),
     });
 
     let skill = p.skills_dir.join("sessionsnap").display().to_string();
     steps.push(match uninstall_skill(&p.skills_dir) {
-        Ok(SkillRemoval::Removed) => step(skill, "removed", None),
-        Ok(SkillRemoval::Missing) => step(skill, "already gone", None),
-        Ok(SkillRemoval::NotOurs) => step(skill, "left", Some("it has files sessionsnap did not write".into())),
+        Ok(SkillRemoval::Removed) => step(skill, Status::Removed, None),
+        Ok(SkillRemoval::Missing) => step(skill, Status::AlreadyGone, None),
+        Ok(SkillRemoval::NotOurs) => step(skill, Status::Left, Some("it has files sessionsnap did not write".into())),
         Err(e) => failed(skill, e),
     });
 
@@ -162,8 +197,8 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
             Launchd { agents_dir: dir.clone(), program: p.exe.clone(), launchctl: "launchctl".into(), env: vec![] };
         let what = format!("scheduled saves ({}/{LABEL_PREFIX}*)", dir.display());
         steps.push(match launchd.remove_all() {
-            Ok(labels) if labels.is_empty() => step(what, "already gone", None),
-            Ok(labels) => step(what, "removed", Some(labels.join(", "))),
+            Ok(labels) if labels.is_empty() => step(what, Status::AlreadyGone, None),
+            Ok(labels) => step(what, Status::Removed, Some(labels.join(", "))),
             Err(e) => failed(what, e),
         });
     }
@@ -172,43 +207,43 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
             Systemd { units_dir: dir.clone(), program: p.exe.clone(), systemctl: "systemctl".into(), env: vec![] };
         let what = format!("scheduled saves ({}/{UNIT_PREFIX}*)", dir.display());
         steps.push(match systemd.remove_all() {
-            Ok(units) if units.is_empty() => step(what, "already gone", None),
-            Ok(units) => step(what, "removed", Some(units.join(", "))),
+            Ok(units) if units.is_empty() => step(what, Status::AlreadyGone, None),
+            Ok(units) => step(what, Status::Removed, Some(units.join(", "))),
             Err(e) => failed(what, e),
         });
     }
 
     let data = p.data.display().to_string();
     steps.push(if keep_data {
-        step(data, "kept", Some("--keep-data".into()))
+        step(data, Status::Kept, Some("--keep-data".into()))
     } else {
         remove_data(&p.data).unwrap_or_else(|e| failed(data, e))
     });
 
     let exe = p.exe.display().to_string();
     steps.push(if from_cargo(p) {
-        step(exe, "left", Some("installed with cargo; run: cargo uninstall sessionsnap".into()))
+        step(exe, Status::Left, Some("installed with cargo; run: cargo uninstall sessionsnap".into()))
     } else {
         match std::fs::remove_file(&p.exe) {
-            Ok(()) => step(exe, "removed", None),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => step(exe, "already gone", None),
+            Ok(()) => step(exe, Status::Removed, None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => step(exe, Status::AlreadyGone, None),
             Err(e) => failed(exe.clone(), anyhow::Error::new(e).context(format!("remove {exe}"))),
         }
     });
 
     let ext = p.pi_extensions.join("sessionsnap.ts").display().to_string();
     steps.push(match crate::adapters::agents::pi::uninstall_extension(&p.pi_extensions) {
-        Ok(SkillRemoval::Removed) => step(ext, "removed", None),
-        Ok(SkillRemoval::Missing) => step(ext, "already gone", None),
-        Ok(SkillRemoval::NotOurs) => step(ext, "left", Some("sessionsnap did not write it".into())),
+        Ok(SkillRemoval::Removed) => step(ext, Status::Removed, None),
+        Ok(SkillRemoval::Missing) => step(ext, Status::AlreadyGone, None),
+        Ok(SkillRemoval::NotOurs) => step(ext, Status::Left, Some("sessionsnap did not write it".into())),
         Err(e) => failed(ext, e),
     });
 
     let shared = p.agent_skills_dir.join("sessionsnap").display().to_string();
     steps.push(match uninstall_skill(&p.agent_skills_dir) {
-        Ok(SkillRemoval::Removed) => step(shared, "removed", None),
-        Ok(SkillRemoval::Missing) => step(shared, "already gone", None),
-        Ok(SkillRemoval::NotOurs) => step(shared, "left", Some("it has files sessionsnap did not write".into())),
+        Ok(SkillRemoval::Removed) => step(shared, Status::Removed, None),
+        Ok(SkillRemoval::Missing) => step(shared, Status::AlreadyGone, None),
+        Ok(SkillRemoval::NotOurs) => step(shared, Status::Left, Some("it has files sessionsnap did not write".into())),
         Err(e) => failed(shared, e),
     });
 
@@ -223,16 +258,16 @@ const DATA_ENTRIES: &[&str] =
 fn remove_data(data: &Path) -> Result<Step> {
     let what = data.display().to_string();
     match std::fs::symlink_metadata(data) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(step(what, "already gone", None)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(step(what, Status::AlreadyGone, None)),
         Ok(meta) if meta.file_type().is_symlink() => {
             let target = std::fs::read_link(data).map(|t| t.display().to_string()).unwrap_or_default();
-            return Ok(step(what, "left", Some(format!("it is a symlink to {target}; remove that by hand"))));
+            return Ok(step(what, Status::Left, Some(format!("it is a symlink to {target}; remove that by hand"))));
         }
         _ => {}
     }
     let entries = match std::fs::read_dir(data) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(step(what, "already gone", None)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(step(what, Status::AlreadyGone, None)),
         Err(e) => return Err(anyhow::Error::new(e).context(format!("read {what}"))),
     };
     let foreign: Vec<String> = entries
@@ -248,19 +283,19 @@ fn remove_data(data: &Path) -> Result<Step> {
     if !foreign.is_empty() {
         return Ok(step(
             what,
-            "left",
+            Status::Left,
             Some(format!("it holds files sessionsnap did not make: {}", foreign.join(", "))),
         ));
     }
     if !looks_like_ours(data) {
         return Ok(step(
             what,
-            "left",
+            Status::Left,
             Some("its snapshots or plans folder holds files sessionsnap did not make".into()),
         ));
     }
     std::fs::remove_dir_all(data).map_err(|e| anyhow::Error::new(e).context(format!("remove {what}")))?;
-    Ok(step(what, "removed", None))
+    Ok(step(what, Status::Removed, None))
 }
 
 /// `<stem>.tmp-<pid>`: a write of `<stem>.json` interrupted before its rename (`util::json`).
@@ -345,8 +380,22 @@ mod tests {
         p
     }
 
+    #[test]
+    fn statuses_serialize_as_the_words_scripts_read() {
+        for (status, word) in [
+            (Status::Removed, "removed"),
+            (Status::AlreadyGone, "already gone"),
+            (Status::Kept, "kept"),
+            (Status::Left, "left"),
+            (Status::Failed, "failed"),
+        ] {
+            assert_eq!(serde_json::to_value(status).unwrap(), word);
+            assert_eq!(status.to_string(), word);
+        }
+    }
+
     fn statuses(r: &Report) -> Vec<&'static str> {
-        r.steps.iter().map(|s| s.status).collect()
+        r.steps.iter().map(|s| s.status.as_str()).collect()
     }
 
     #[test]
@@ -433,7 +482,7 @@ mod tests {
         std::fs::create_dir_all(p.exe.parent().unwrap()).unwrap();
         std::fs::write(&p.exe, "binary").unwrap();
         let r = run(&p, false).unwrap();
-        assert_eq!(r.steps[3].status, "left");
+        assert_eq!(r.steps[3].status, Status::Left);
         assert!(r.steps[3].note.as_deref().unwrap().contains("cargo uninstall sessionsnap"));
         assert!(p.exe.exists());
         assert!(preview(&p, false).iter().any(|l| l.contains("cargo uninstall")));
@@ -446,7 +495,7 @@ mod tests {
         // SESSIONSNAP_HOME pointed at a folder with other things in it.
         p.data = d.path().to_path_buf();
         let r = run(&p, false).unwrap();
-        assert_eq!(r.steps[2].status, "left");
+        assert_eq!(r.steps[2].status, Status::Left);
         assert!(d.path().join(".zshrc").exists());
     }
 
@@ -470,7 +519,7 @@ mod tests {
         std::os::unix::fs::symlink(&p.data, &link).unwrap();
         p.data = link.clone();
         let r = run(&p, false).unwrap();
-        assert_eq!(r.steps[2].status, "left");
+        assert_eq!(r.steps[2].status, Status::Left);
         assert!(r.steps[2].note.as_deref().unwrap().contains("symlink"));
         assert!(link.exists());
         assert!(d.path().join(".sessionsnap/snapshots/work/0001.json").exists());
@@ -483,13 +532,13 @@ mod tests {
         for f in ["snapshots/work/0002.claim", "snapshots/work/.0002-20260101T000000.123-0.tmp", "sessions.tmp-4242"] {
             std::fs::write(p.data.join(f), "").unwrap();
         }
-        assert_eq!(run(&p, false).unwrap().steps[2].status, "removed");
+        assert_eq!(run(&p, false).unwrap().steps[2].status, Status::Removed);
         assert!(!p.data.exists());
         // A name that only looks like one is still someone else's.
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         std::fs::write(p.data.join("notes.tmp-x"), "mine").unwrap();
-        assert_eq!(run(&p, false).unwrap().steps[2].status, "left");
+        assert_eq!(run(&p, false).unwrap().steps[2].status, Status::Left);
     }
 
     #[test]
@@ -497,13 +546,13 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         std::fs::write(p.data.join("snapshots/work/holiday.jpg"), "mine").unwrap();
-        assert_eq!(run(&p, false).unwrap().steps[2].status, "left");
+        assert_eq!(run(&p, false).unwrap().steps[2].status, Status::Left);
         assert!(p.data.join("snapshots/work/holiday.jpg").exists());
 
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         std::fs::write(p.data.join("snapshots/notes.txt"), "mine").unwrap();
-        assert_eq!(run(&p, false).unwrap().steps[2].status, "left");
+        assert_eq!(run(&p, false).unwrap().steps[2].status, Status::Left);
     }
 
     #[test]
@@ -532,7 +581,7 @@ mod tests {
         let p = installed(d.path());
         std::fs::write(p.skills_dir.join("sessionsnap/extra.md"), "mine").unwrap();
         let r = run(&p, false).unwrap();
-        assert_eq!(r.steps[1].status, "left");
+        assert_eq!(r.steps[1].status, Status::Left);
         assert!(p.skills_dir.join("sessionsnap/extra.md").exists());
     }
 }

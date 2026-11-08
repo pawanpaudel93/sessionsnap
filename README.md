@@ -217,7 +217,7 @@ other agents the rules and the full command table ([`skill/SKILL.md`](skill/SKIL
 | 3 | nothing to do |
 | 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
 | 5 | unknown cmux state or snapshot format |
-| 6 | plan stale |
+| 6 | stale: what was previewed changed since (a restore plan, or edits saved with `--base`); preview again |
 | 7 | not found |
 
 ### tmux
