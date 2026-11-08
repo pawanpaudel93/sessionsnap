@@ -76,6 +76,7 @@ is saved as a plain tab, and `save` says so.
 | Newer release? | `sessionsnap update --check --json` (`updateAvailable`) |
 | Install the latest release | `sessionsnap update --json` |
 | Keep Pi's launch flags (Pi hides them; only when the user asks) | `sessionsnap install-pi --json` |
+| Install this skill for Claude Code and for Pi and other agents (`~/.claude/skills`, `~/.agents/skills`) | `sessionsnap install-skill --json` (`installed` lists both paths) |
 | Remove sessionsnap | `sessionsnap uninstall [--keep-data] --yes --json` (lists each step's `status`) |
 
 Tabs are `<workspace>#<position>` (1-based) or `<workspace>:"<part of the title>"`.
