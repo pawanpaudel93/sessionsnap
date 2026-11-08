@@ -33,9 +33,16 @@ All notable changes to sessionsnap are listed here. The format follows
 - tmux: after `/clear` in a pane started without a session ID, the new session is saved (before,
   the pane was saved as a plain tab); a pane whose command names a session that was left for a
   newer one is saved with a warning. Agent histories are read once per save, not once per tab.
+- Web UI: a cleaner look. Content sits in a centred column on wide windows, with cards on a soft
+  background and the logo in the header. Warnings are amber and stacked one per line; red is kept
+  for errors. Folders are cut at the start so the project folder stays in view. Buttons respond to
+  a press, and motion follows the reduce-motion setting.
 
 ### Fixed
 
+- Opening or closing a second shell in the same folder counted as "no changes": versions now
+  compare tabs one for one, so it shows as +1 or -1 tab. A save where only tab order or a detail
+  changed is labelled "tab order or details changed".
 - cmux 0.65: restoring tabs into an open workspace failed with "cmux new-surface printed no surface
   ref" (cmux now prints the new tab's UUID instead of its ref).
 - When cmux refuses to hand the web UI its key (it lets only processes started inside cmux use its
