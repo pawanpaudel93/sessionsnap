@@ -572,7 +572,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>3</td><td><code translate="no">nothing-to-do</code></td><td>No changes to save, or nothing to restore.</td></tr>
                   <tr><td>4</td><td><code translate="no">needs-confirmation</code>, <code translate="no">refused</code></td><td>A confirmation is needed (ask the user; an agent never adds <code translate="no">--yes</code> on its own), or the command would overwrite something.</td></tr>
                   <tr><td>5</td><td><code translate="no">unknown-format</code></td><td>Unknown cmux state or snapshot format.</td></tr>
-                  <tr><td>6</td><td><code translate="no">plan-stale</code></td><td>The terminal changed since the plan was made.</td></tr>
+                  <tr><td>6</td><td><code translate="no">plan-stale</code></td><td>What was previewed changed since: the terminal, since a restore plan was made (make it again), or the snapshot, since edits were previewed for <code translate="no">--base</code> (preview them again).</td></tr>
                   <tr><td>7</td><td><code translate="no">not-found</code></td><td>No such snapshot, version, workspace, tab or plan.</td></tr>
                 </tbody>
               </table>

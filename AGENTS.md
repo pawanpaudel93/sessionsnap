@@ -35,7 +35,7 @@ yet.
 | 3 | nothing to do |
 | 4 | refused (`needs-confirmation`: ask the user; `refused`: would overwrite something) |
 | 5 | unknown cmux state or snapshot format |
-| 6 | plan stale (make a new one) |
+| 6 | stale: what you previewed changed since (make the plan again, or preview the edits again with `--dry-run`) |
 | 7 | not found |
 
 Maintenance: `sessionsnap update --check` reports a newer release, `sessionsnap update` installs
