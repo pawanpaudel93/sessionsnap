@@ -233,37 +233,53 @@ Restore 3 tabs? [y/N] y
             <code translate="no">sessionsnap agents</code> shows which are on your <code translate="no">PATH</code>.
           </p>
         </div>
+        <h3 class="agents-sub">Fully supported (tested)</h3>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
-              <tr><th scope="col">Agent</th><th scope="col">Support</th><th scope="col">Resumes with</th></tr>
+              <tr><th scope="col">Agent</th><th scope="col">Resumes with</th><th scope="col">Tested with</th></tr>
             </thead>
             <tbody>
-              <tr><td>Claude Code</td><td><span class="badge full">Full (tested)</span></td><td><code translate="no">claude --resume &lt;id&gt;</code></td></tr>
-              <tr><td>Codex</td><td><span class="badge full">Full (tested)</span></td><td><code translate="no">codex resume &lt;id&gt;</code></td></tr>
-              <tr><td>Grok</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">grok -r &lt;id&gt;</code></td></tr>
-              <tr><td>OpenCode</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">opencode --session &lt;id&gt;</code></td></tr>
-              <tr><td>Pi</td><td><span class="badge full">Full (tested)</span></td><td><code translate="no">pi --session &lt;id&gt;</code></td></tr>
-              <tr><td>omp</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">omp --session &lt;id&gt;</code></td></tr>
-              <tr><td>Campfire</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">campfire --session &lt;id&gt;</code></td></tr>
-              <tr><td>Amp</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">amp threads continue &lt;id&gt;</code></td></tr>
-              <tr><td>Cursor Agent</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">cursor-agent --resume &lt;id&gt;</code></td></tr>
-              <tr><td>Gemini CLI</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">gemini --resume &lt;id&gt;</code></td></tr>
-              <tr><td>Antigravity</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">agy --conversation &lt;id&gt;</code></td></tr>
-              <tr><td>Rovo Dev</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">acli rovodev run --restore &lt;id&gt;</code></td></tr>
-              <tr><td>Hermes Agent</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">hermes --resume &lt;id&gt;</code></td></tr>
-              <tr><td>GitHub Copilot CLI</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">copilot --resume &lt;id&gt;</code></td></tr>
-              <tr><td>CodeBuddy</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">codebuddy --resume &lt;id&gt;</code></td></tr>
-              <tr><td>Factory Droid</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">droid --resume &lt;id&gt;</code></td></tr>
-              <tr><td>Qoder CLI</td><td><span class="badge resume">Resume only (untested)</span></td><td><code translate="no">qodercli --resume &lt;id&gt;</code></td></tr>
+              <tr><td>Claude Code</td><td><code translate="no">claude --resume &lt;id&gt;</code></td><td>2.1.317</td></tr>
+              <tr><td>Codex</td><td><code translate="no">codex resume &lt;id&gt;</code></td><td>0.163.0</td></tr>
+              <tr><td>Pi</td><td><code translate="no">pi --session &lt;id&gt;</code></td><td>1.5.0</td></tr>
             </tbody>
           </table>
         </div>
         <p class="requirements">
-          Full support also reads the agent's session history: titles, <code translate="no">sessions</code>,
-          <code translate="no">recent</code>, and checking that a saved session still exists. cmux records
-          which agent runs in a tab; for agents other than Claude Code it does so only after
-          <code translate="no">cmux hooks setup &lt;agent&gt;</code>.
+          sessionsnap reads their session histories (titles, <code translate="no">sessions</code>,
+          <code translate="no">recent</code>, a check that a saved session still exists), and each was
+          saved and restored in both cmux and tmux.
+        </p>
+        <h3 class="agents-sub">Resume only (untested)</h3>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th scope="col">Agent</th><th scope="col">Resumes with</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Grok</td><td><code translate="no">grok -r &lt;id&gt;</code></td></tr>
+              <tr><td>OpenCode</td><td><code translate="no">opencode --session &lt;id&gt;</code></td></tr>
+              <tr><td>omp</td><td><code translate="no">omp --session &lt;id&gt;</code></td></tr>
+              <tr><td>Campfire</td><td><code translate="no">campfire --session &lt;id&gt;</code></td></tr>
+              <tr><td>Amp</td><td><code translate="no">amp threads continue &lt;id&gt;</code></td></tr>
+              <tr><td>Cursor Agent</td><td><code translate="no">cursor-agent --resume &lt;id&gt;</code></td></tr>
+              <tr><td>Gemini CLI</td><td><code translate="no">gemini --resume &lt;id&gt;</code></td></tr>
+              <tr><td>Antigravity</td><td><code translate="no">agy --conversation &lt;id&gt;</code></td></tr>
+              <tr><td>Rovo Dev</td><td><code translate="no">acli rovodev run --restore &lt;id&gt;</code></td></tr>
+              <tr><td>Hermes Agent</td><td><code translate="no">hermes --resume &lt;id&gt;</code></td></tr>
+              <tr><td>GitHub Copilot CLI</td><td><code translate="no">copilot --resume &lt;id&gt;</code></td></tr>
+              <tr><td>CodeBuddy</td><td><code translate="no">codebuddy --resume &lt;id&gt;</code></td></tr>
+              <tr><td>Factory Droid</td><td><code translate="no">droid --resume &lt;id&gt;</code></td></tr>
+              <tr><td>Qoder CLI</td><td><code translate="no">qodercli --resume &lt;id&gt;</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="requirements">
+          Only a session started with no flags is resumed; one started with any flag is left out, with
+          a note to resume it by hand. In cmux, its wrappers tell sessionsnap which agent runs in a tab
+          for Claude Code, Pi, Grok and Antigravity; for the others, run
+          <code translate="no">cmux hooks setup &lt;agent&gt;</code> once. tmux needs nothing.
         </p>
       </section>
 
