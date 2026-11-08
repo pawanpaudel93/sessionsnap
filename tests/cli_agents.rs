@@ -437,3 +437,25 @@ fn a_hand_edited_reason_is_sanitized() {
         assert!(!shown.json.to_string().contains(&ghp));
     }
 }
+
+/// `install-skill` puts the same skill in Claude Code's skills folder and in the shared Agent Skills
+/// folder that Pi reads, and says where.
+#[test]
+fn install_skill_writes_both_skill_folders() {
+    let d = tempfile::tempdir().unwrap();
+    let (claude, shared) = (d.path().join("claude-skills"), d.path().join("agent-skills"));
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_sessionsnap"))
+        .args(["install-skill", "--json"])
+        .env("SESSIONSNAP_SKILLS_DIR", &claude)
+        .env("SESSIONSNAP_AGENT_SKILLS_DIR", &shared)
+        .env("SESSIONSNAP_HOME", d.path().join("store"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["installed"].as_array().unwrap().len(), 2, "{json}");
+    for dir in [&claude, &shared] {
+        let skill = std::fs::read_to_string(dir.join("sessionsnap/SKILL.md")).unwrap();
+        assert!(skill.starts_with("---\nname: sessionsnap\n"), "{}", dir.display());
+    }
+}

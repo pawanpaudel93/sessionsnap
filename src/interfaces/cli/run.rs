@@ -80,10 +80,11 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Outcome> {
             Ok(Outcome::ok(json!({"text": text}), text))
         }
         Command::InstallSkill => {
-            let path = app::install::install_skill()?;
+            let paths = app::install::install_skill()?;
+            let shown: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
             Ok(Outcome::ok(
-                json!({"installed": path}),
-                format!("Installed the sessionsnap skill at {}", path.display()),
+                json!({"installed": paths}),
+                format!("Installed the sessionsnap skill at {}", shown.join(" and ")),
             ))
         }
         Command::InstallPi => {
