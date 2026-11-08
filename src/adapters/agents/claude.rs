@@ -305,6 +305,15 @@ pub fn skills_dir() -> Result<PathBuf> {
     Ok(home_dir()?.join(".claude/skills"))
 }
 
+/// `$SESSIONSNAP_AGENT_SKILLS_DIR`, else `~/.agents/skills`: the shared Agent Skills folder, which
+/// Pi (and other agents that follow the Agent Skills layout) read. The same skill goes there.
+pub fn agent_skills_dir() -> Result<PathBuf> {
+    if let Some(p) = std::env::var_os("SESSIONSNAP_AGENT_SKILLS_DIR") {
+        return Ok(p.into());
+    }
+    Ok(home_dir()?.join(".agents/skills"))
+}
+
 pub fn install_skill(dir: &Path) -> Result<PathBuf> {
     let path = dir.join("sessionsnap").join("SKILL.md");
     std::fs::create_dir_all(dir.join("sessionsnap"))?;

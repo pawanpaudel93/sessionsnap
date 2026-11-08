@@ -628,7 +628,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <h2>Palette, skill and Pi</h2>
             <div class="code-panel">
               <pre><code translate="no"><span class="prompt">$ </span>sessionsnap install-cmux     <span class="comment"># palette commands in cmux (asks first, backs up cmux.json)</span>
-<span class="prompt">$ </span>sessionsnap install-skill    <span class="comment"># teaches Claude Code to use sessionsnap</span>
+<span class="prompt">$ </span>sessionsnap install-skill    <span class="comment"># teaches Claude Code, Pi and other agents to use sessionsnap</span>
 <span class="prompt">$ </span>sessionsnap install-pi       <span class="comment"># lets Pi sessions resume with their flags</span></code></pre>
             </div>
             <p>
@@ -645,8 +645,10 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
               <li>sessionsnap: Open UI</li>
             </ul>
             <p>
-              <code translate="no">install-skill</code> installs a Claude Code skill at
-              <code translate="no">~/.claude/skills/sessionsnap</code>. It tells Claude to use
+              <code translate="no">install-skill</code> installs a skill at
+              <code translate="no">~/.claude/skills/sessionsnap</code> for Claude Code, and the same skill at
+              <code translate="no">~/.agents/skills/sessionsnap</code>, the shared Agent Skills folder that Pi
+              and other agents read. It tells the agent to use
               <code translate="no">--json</code>, to show you a restore plan before applying it, and never
               to start an automatic snapshot on its own.
             </p>
@@ -690,6 +692,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
                   <tr><td>cmux socket (web UI)</td><td><code translate="no">$CMUX_SOCKET_PATH</code> (or its older name <code translate="no">$CMUX_SOCKET</code>), else the path in <code translate="no">~/Library/Application Support/cmux/last-socket-path</code>; <code translate="no">SESSIONSNAP_CMUX_SOCKET</code></td></tr>
                   <tr><td>cmux palette config</td><td><code translate="no">~/.config/cmux/cmux.json</code> (on Linux, <code translate="no">$XDG_CONFIG_HOME/cmux/cmux.json</code> when that is set); <code translate="no">SESSIONSNAP_CMUX_CONFIG</code></td></tr>
                   <tr><td>Claude Code skill (written by <code translate="no">install-skill</code>)</td><td><code translate="no">~/.claude/skills/sessionsnap</code>; <code translate="no">SESSIONSNAP_SKILLS_DIR</code> (another skills folder)</td></tr>
+                  <tr><td>Shared agent skill (written by <code translate="no">install-skill</code>)</td><td><code translate="no">~/.agents/skills/sessionsnap</code>; <code translate="no">SESSIONSNAP_AGENT_SKILLS_DIR</code> (another folder)</td></tr>
                   <tr><td>Pi extension (written by <code translate="no">install-pi</code>)</td><td><code translate="no">~/.pi/agent/extensions/sessionsnap.ts</code>; <code translate="no">PI_CODING_AGENT_DIR</code> (Pi's own)</td></tr>
                 </tbody>
               </table>
@@ -758,7 +761,7 @@ To apply: sessionsnap apply p20261012094107123</code></pre>
             <p>After you confirm (or with <code translate="no">-y</code>), <code translate="no">uninstall</code> removes:</p>
             <ul>
               <li>the “sessionsnap: …” palette commands from cmux's <code translate="no">cmux.json</code>, after backing the file up next to itself; your other commands and comments stay (if its <code translate="no">"commands"</code> array holds comments, this step is skipped and you remove those entries by hand);</li>
-              <li>the Claude Code skill at <code translate="no">~/.claude/skills/sessionsnap</code>, only if sessionsnap wrote it;</li>
+              <li>the skill at <code translate="no">~/.claude/skills/sessionsnap</code> and <code translate="no">~/.agents/skills/sessionsnap</code>, each only if sessionsnap wrote it;</li>
               <li>the Pi extension at <code translate="no">~/.pi/agent/extensions/sessionsnap.ts</code>, only if sessionsnap wrote it;</li>
               <li>every automatic snapshot's launchd agent (<code translate="no">~/Library/LaunchAgents/sessionsnap.schedule.*</code>, macOS) or systemd timer (<code translate="no">~/.config/systemd/user/sessionsnap-schedule-*</code>, Linux), even with <code translate="no">--keep-data</code>, which keeps the snapshots and <code translate="no">schedules.json</code>;</li>
               <li><code translate="no">~/.sessionsnap</code> (or <code translate="no">SESSIONSNAP_HOME</code>) unless you pass <code translate="no">--keep-data</code>; a symlink, or a folder holding files sessionsnap did not make, is left alone;</li>

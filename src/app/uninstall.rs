@@ -15,6 +15,8 @@ use crate::adapters::terminal::cmux::palette::uninstall_cmux;
 pub struct Paths {
     pub cmux_config: PathBuf,
     pub skills_dir: PathBuf,
+    /// The shared Agent Skills folder (`~/.agents/skills`), where `install-skill` puts it too.
+    pub agent_skills_dir: PathBuf,
     /// Pi's extensions folder, where `install-pi` writes its extension.
     pub pi_extensions: PathBuf,
     pub data: PathBuf,
@@ -40,6 +42,7 @@ pub fn paths(data: &Path) -> Result<Paths> {
     Ok(Paths {
         cmux_config: super::install::cmux_config_path()?,
         skills_dir: crate::adapters::agents::claude::skills_dir()?,
+        agent_skills_dir: crate::adapters::agents::claude::agent_skills_dir()?,
         pi_extensions: crate::adapters::agents::pi::extensions_dir()?,
         data: data.to_path_buf(),
         exe: exe_as_run.canonicalize().context("find this binary")?,
@@ -96,6 +99,7 @@ pub fn preview(p: &Paths, keep_data: bool) -> Vec<String> {
         format!("the \"sessionsnap: …\" palette commands in {} (backed up first)", p.cmux_config.display()),
         format!("the Claude Code skill in {}", p.skills_dir.join("sessionsnap").display()),
         format!("the Pi extension {}", p.pi_extensions.join("sessionsnap.ts").display()),
+        format!("the skill in {}", p.agent_skills_dir.join("sessionsnap").display()),
     ];
     if p.launch_agents.is_some() {
         lines.push("every automatic snapshot's schedule (its launchd agent)".into());
@@ -200,6 +204,14 @@ pub fn run(p: &Paths, keep_data: bool) -> Result<Report> {
         Err(e) => failed(ext, e),
     });
 
+    let shared = p.agent_skills_dir.join("sessionsnap").display().to_string();
+    steps.push(match uninstall_skill(&p.agent_skills_dir) {
+        Ok(SkillRemoval::Removed) => step(shared, "removed", None),
+        Ok(SkillRemoval::Missing) => step(shared, "already gone", None),
+        Ok(SkillRemoval::NotOurs) => step(shared, "left", Some("it has files sessionsnap did not write".into())),
+        Err(e) => failed(shared, e),
+    });
+
     Ok(Report { steps, left: leftovers(p) })
 }
 
@@ -301,6 +313,7 @@ mod tests {
         let p = Paths {
             cmux_config: dir.join(".config/cmux/cmux.json"),
             skills_dir: dir.join(".claude/skills"),
+            agent_skills_dir: dir.join(".agents/skills"),
             pi_extensions: dir.join(".pi/agent/extensions"),
             data: dir.join(".sessionsnap"),
             exe: dir.join(".local/bin/sessionsnap"),
@@ -314,6 +327,7 @@ mod tests {
         std::fs::write(&p.cmux_config, r#"{"commands": [{"name": "Mine", "command": "ls"}]}"#).unwrap();
         crate::adapters::terminal::cmux::palette::install_cmux(&p.cmux_config, "sessionsnap").unwrap();
         crate::adapters::agents::claude::install_skill(&p.skills_dir).unwrap();
+        crate::adapters::agents::claude::install_skill(&p.agent_skills_dir).unwrap();
         crate::adapters::agents::pi::install_extension(&p.pi_extensions).unwrap();
         std::fs::create_dir_all(p.data.join("snapshots/work")).unwrap();
         std::fs::write(p.data.join("snapshots/work/0001.json"), "{}").unwrap();
@@ -340,7 +354,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         let r = run(&p, false).unwrap();
-        assert_eq!(statuses(&r), ["removed"; 5]);
+        assert_eq!(statuses(&r), ["removed"; 6]);
+        assert!(!p.agent_skills_dir.join("sessionsnap").exists() && p.agent_skills_dir.exists());
         assert!(!p.pi_extensions.join("sessionsnap.ts").exists() && p.pi_extensions.exists());
         let config = std::fs::read_to_string(&p.cmux_config).unwrap();
         assert!(config.contains("\"Mine\"") && !config.contains("sessionsnap:"), "{config}");
@@ -371,7 +386,7 @@ mod tests {
         let r = run(&p, false);
         std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let r = r.unwrap();
-        assert_eq!(statuses(&r), ["removed", "removed", "removed", "failed", "removed"]);
+        assert_eq!(statuses(&r), ["removed", "removed", "removed", "failed", "removed", "removed"]);
         assert!(!p.data.exists());
         let note = r.steps[3].note.as_deref().unwrap();
         assert!(note.contains("remove") && note.contains("ermission denied"), "{note}");
@@ -395,7 +410,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = installed(d.path());
         let r = run(&p, true).unwrap();
-        assert_eq!(statuses(&r), ["removed", "removed", "kept", "removed", "removed"]);
+        assert_eq!(statuses(&r), ["removed", "removed", "kept", "removed", "removed", "removed"]);
         assert!(p.data.join("snapshots/work/0001.json").exists());
         assert!(preview(&p, true).iter().any(|l| l.contains("keeping")));
     }
@@ -406,7 +421,7 @@ mod tests {
         let p = installed(d.path());
         run(&p, false).unwrap();
         let again = run(&p, false).unwrap();
-        assert_eq!(statuses(&again), ["already gone"; 5]);
+        assert_eq!(statuses(&again), ["already gone"; 6]);
     }
 
     #[test]
@@ -442,7 +457,7 @@ mod tests {
         let text = std::fs::read_to_string(&p.cmux_config).unwrap().replacen('[', "[ // mine\n", 1);
         std::fs::write(&p.cmux_config, &text).unwrap();
         let r = run(&p, false).unwrap();
-        assert_eq!(statuses(&r), ["left", "removed", "removed", "removed", "removed"]);
+        assert_eq!(statuses(&r), ["left", "removed", "removed", "removed", "removed", "removed"]);
         assert!(r.steps[0].note.as_deref().unwrap().contains("by hand"), "{:?}", r.steps[0]);
         assert_eq!(std::fs::read_to_string(&p.cmux_config).unwrap(), text);
     }

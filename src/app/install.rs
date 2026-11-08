@@ -23,10 +23,11 @@ pub fn current_exe() -> Result<String> {
     Ok(std::env::current_exe()?.to_string_lossy().into_owned())
 }
 
-/// Installs the sessionsnap skill for Claude Code; returns its path.
-pub fn install_skill() -> Result<PathBuf> {
-    use crate::adapters::agents::claude::{install_skill, skills_dir};
-    install_skill(&skills_dir()?)
+/// Installs the sessionsnap skill for Claude Code and in the shared Agent Skills folder (Pi and
+/// other agents); returns where it went.
+pub fn install_skill() -> Result<Vec<PathBuf>> {
+    use crate::adapters::agents::claude::{agent_skills_dir, install_skill, skills_dir};
+    Ok(vec![install_skill(&skills_dir()?)?, install_skill(&agent_skills_dir()?)?])
 }
 
 #[cfg(test)]

@@ -27,6 +27,9 @@ All notable changes to sessionsnap are listed here. The format follows
   `sessionsnap install-pi` adds a Pi extension that records them in the session (never
   `--api-key`); restore resumes Pi with the flags in `pi --help` (the ones that limit it fail
   closed). A session started without the extension resumes without flags, with a warning.
+- `install-skill` also installs the skill in `~/.agents/skills`, the shared Agent Skills folder
+  that Pi and other agents read; `uninstall` removes it from both. Its JSON `installed` is now a
+  list of paths.
 
 ### Changed
 

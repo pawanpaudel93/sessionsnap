@@ -230,7 +230,8 @@ pub enum Command {
         #[arg(long)]
         print: bool,
     },
-    /// Install the sessionsnap skill for Claude Code (~/.claude/skills/sessionsnap)
+    /// Install the sessionsnap skill for Claude Code (~/.claude/skills) and for Pi and other agents
+    /// that read the shared Agent Skills folder (~/.agents/skills)
     InstallSkill,
     /// Install the Pi extension that records Pi's launch flags, so restore resumes Pi with them
     /// (~/.pi/agent/extensions/sessionsnap.ts)

@@ -104,7 +104,7 @@ Optional integrations:
 
 ```sh
 sessionsnap install-cmux     # palette commands in cmux on macOS (asks first, backs up cmux.json)
-sessionsnap install-skill    # teaches Claude Code to use sessionsnap
+sessionsnap install-skill    # teaches Claude Code, Pi and other agents to use sessionsnap
 sessionsnap install-pi       # lets Pi sessions resume with the flags they were started with
 ```
 
@@ -365,6 +365,7 @@ Details:
 | cmux state file (read) | macOS: `~/Library/Application Support/cmux/session-com.cmuxterm.app.json`; Linux: `$XDG_STATE_HOME/cmux/` (default `~/.local/state/cmux/`), same name; a placeholder until Linux is supported | `SESSIONSNAP_CMUX_STATE` |
 | cmux socket (web UI) | `$CMUX_SOCKET_PATH` (or its older name `$CMUX_SOCKET`), else the path in `~/Library/Application Support/cmux/last-socket-path` | `SESSIONSNAP_CMUX_SOCKET` |
 | Claude Code skill (`install-skill`) | `~/.claude/skills/sessionsnap/SKILL.md` | `SESSIONSNAP_SKILLS_DIR` (instead of `~/.claude/skills`) |
+| Shared agent skill (`install-skill`; Pi and other agents that read Agent Skills) | `~/.agents/skills/sessionsnap/SKILL.md` | `SESSIONSNAP_AGENT_SKILLS_DIR` (instead of `~/.agents/skills`) |
 | Pi extension (`install-pi`) | `~/.pi/agent/extensions/sessionsnap.ts` | `PI_CODING_AGENT_DIR` (Pi's own, instead of `~/.pi/agent`) |
 | Pi sessions (read) | `~/.pi/agent/sessions` | `PI_CODING_AGENT_SESSION_DIR`, else `PI_CODING_AGENT_DIR/sessions` (Pi's own) |
 | cmux palette config | `~/.config/cmux/cmux.json` (Linux: `$XDG_CONFIG_HOME/cmux/cmux.json` when set) | `SESSIONSNAP_CMUX_CONFIG` |
@@ -450,8 +451,8 @@ sessionsnap uninstall --keep-data   # keep your snapshots and schedules.json in 
 
 This removes the `"sessionsnap: …"` palette commands from cmux's `cmux.json` (after backing it
 up next to itself; your other commands and comments stay; if its `"commands"` array holds
-comments, the step is skipped and you remove those entries by hand), the Claude Code skill
-(`~/.claude/skills/sessionsnap`, only if sessionsnap wrote it), the Pi extension
+comments, the step is skipped and you remove those entries by hand), the skill
+(`~/.claude/skills/sessionsnap` and `~/.agents/skills/sessionsnap`, each only if sessionsnap wrote it), the Pi extension
 (`~/.pi/agent/extensions/sessionsnap.ts`, only if sessionsnap wrote it), every automatic snapshot's launchd
 agent (macOS) or systemd timer (Linux; removed even with `--keep-data`, which keeps the snapshots and `schedules.json`),
 `~/.sessionsnap` (or `SESSIONSNAP_HOME`) unless `--keep-data` (left alone if it is a symlink or holds files sessionsnap

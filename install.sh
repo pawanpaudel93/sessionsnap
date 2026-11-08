@@ -181,7 +181,7 @@ main() {
   if [ "$OS" = "Darwin" ]; then
     NEXT="  sessionsnap save work      # snapshot the cmux workspaces and agent sessions open now
   sessionsnap ui             # the web UI in the cmux Dock
-  sessionsnap install-skill  # teach Claude Code to use sessionsnap (optional)"
+  sessionsnap install-skill  # teach Claude Code, Pi and other agents to use sessionsnap (optional)"
   else
     NEXT="  Inside tmux:
   sessionsnap save work      # save your tmux sessions and their agents

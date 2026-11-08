@@ -1,6 +1,6 @@
 ---
 name: sessionsnap
-description: Save, edit and restore named, versioned snapshots of cmux workspaces (or tmux sessions) and their agent sessions (Claude Code, Codex and other coding agents) with the sessionsnap CLI. Use when the user wants to snapshot what is open in cmux or tmux, bring back lost cmux or tmux tabs or agent sessions, see what a snapshot contains or how it changed, or edit a saved snapshot.
+description: Save, edit and restore named, versioned snapshots of cmux workspaces (or tmux sessions) and their agent sessions (Claude Code, Codex, Pi and other coding agents) with the sessionsnap CLI. Use when the user wants to snapshot what is open in cmux or tmux, bring back lost cmux or tmux tabs or agent sessions, see what a snapshot contains or how it changed, or edit a saved snapshot.
 ---
 
 # sessionsnap
@@ -83,7 +83,7 @@ Edit ops: `ws-rename {ws,to}`, `ws-color {ws,color}`, `ws-index {ws,index}`, `ws
 `ws-add-live {ws}`, `ws-from {from,ws}`, `tab-remove {tab}`, `tab-rename {tab,to}`,
 `tab-index {tab,index}`, `tab-move {tab,to}`, `tab-add-session {ws,sessionId,agent?,title?}`,
 `tab-add-terminal {ws,cwd,command?,title?}`, `tab-set-cwd {tab,cwd}`, `tab-set-session {tab,sessionId,agent?}`.
-Without `agent`, a session ID is looked up in the Claude Code and Codex histories; pass `agent`
+Without `agent`, a session ID is looked up in the Claude Code, Codex and Pi histories; pass `agent`
 (a kind from `sessionsnap agents`) when it is in both, or for other agents.
 
 Saved tabs are `{"type":"terminal",title,cwd,command?}` or
