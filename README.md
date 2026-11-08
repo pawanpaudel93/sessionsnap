@@ -481,9 +481,9 @@ No test runs cmux, an agent or a browser; they use fakes and temp dirs.
 <summary>Releasing (maintainers)</summary>
 
 ```sh
-scripts/release.sh 0.2.0 --dry-run   # build dist/ and show what would be published
-scripts/release.sh 0.2.0             # bump, check, build, commit, tag, push, GitHub release
-scripts/release.sh 0.2.0 --local-ci  # the same, with CI's jobs run here in Docker instead of CI's
+scripts/release.sh 0.3.0 --dry-run   # build dist/ and show what would be published
+scripts/release.sh 0.3.0             # bump, check, build, commit, tag, push, GitHub release
+scripts/release.sh 0.3.0 --local-ci  # the same, with CI's jobs run here in Docker instead of CI's
 scripts/ci-local.sh                  # just CI's jobs, here: check.sh, on Linux too, and the minimum Rust
 ```
 
