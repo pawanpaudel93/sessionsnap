@@ -240,8 +240,13 @@ pub fn commit(
         return Ok(Commit::Unchanged { snapshot: p.snapshot.clone(), version: p.version });
     }
     let changes = diff::diff(previous.map(|p| p.workspaces.as_slice()).unwrap_or(&[]), &workspaces);
-    let message = message
-        .unwrap_or_else(|| if previous.is_some() { diff::summary(&changes) } else { "initial save".to_string() });
+    // A version is written only when something differs; with no tab added, removed, moved or
+    // renamed, it is their order or a detail (a folder's branch, a window's layout).
+    let message = message.unwrap_or_else(|| match previous {
+        None => "initial save".to_string(),
+        Some(_) if changes.is_empty() => "tab order or details changed".to_string(),
+        Some(_) => diff::summary(&changes),
+    });
     let v = ctx.store.save_locked(base.lock, name, base.latest, &message, source, workspaces)?;
     let warnings = [notes, edit::warnings(&v.workspaces, &ctx.agents)].concat();
     Ok(Commit::Saved { version: Box::new(v), changes, warnings })
