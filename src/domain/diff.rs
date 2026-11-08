@@ -91,34 +91,38 @@ pub fn diff(a: &[Workspace], b: &[Workspace]) -> Vec<Change> {
             out.push(Change::WorkspaceChanged { workspace: w.name.clone(), what });
         }
     }
-    let (ia, ib) = (tab_index(a), tab_index(b));
-    let mut seen = HashSet::new();
+    // Tabs match one for one by `Tab::key`: two shells in one folder are two tabs, so adding or
+    // closing one of them is a change.
+    let old_tabs: Vec<(&str, &crate::domain::model::Tab)> =
+        a.iter().flat_map(|w| w.tabs.iter().map(move |t| (w.name.as_str(), t))).collect();
+    let mut by_key: HashMap<String, std::collections::VecDeque<usize>> = HashMap::new();
+    for (i, (_, t)) in old_tabs.iter().enumerate() {
+        by_key.entry(t.key()).or_default().push_back(i);
+    }
+    let mut matched = vec![false; old_tabs.len()];
     for w in b {
         for t in &w.tabs {
-            let key = t.key();
-            if !seen.insert(key.clone()) {
+            let Some(i) = by_key.get_mut(&t.key()).and_then(|q| q.pop_front()) else {
+                out.push(Change::TabAdded { workspace: w.name.clone(), title: t.title().to_string() });
                 continue;
-            }
-            match ia.get(&key) {
-                None => out.push(Change::TabAdded { workspace: w.name.clone(), title: t.title().to_string() }),
+            };
+            matched[i] = true;
+            let (from, old) = (old_tabs[i].0, old_tabs[i].1.title());
+            if renamed.get(&from.to_lowercase()) != Some(&w.name.to_lowercase()) {
                 // A tab of a renamed workspace has not moved.
-                Some((from, _)) if renamed.get(&from.to_lowercase()) != Some(&w.name.to_lowercase()) => {
-                    out.push(Change::TabMoved { title: t.title().to_string(), from: from.clone(), to: w.name.clone() })
-                }
-                Some((_, old)) if old != t.title() => out.push(Change::TabRenamed {
+                out.push(Change::TabMoved { title: t.title().to_string(), from: from.to_string(), to: w.name.clone() });
+            } else if old != t.title() {
+                out.push(Change::TabRenamed {
                     workspace: w.name.clone(),
-                    from: old.clone(),
+                    from: old.to_string(),
                     to: t.title().to_string(),
-                }),
-                Some(_) => {}
+                });
             }
         }
     }
-    for w in a {
-        for t in &w.tabs {
-            if !ib.contains_key(&t.key()) {
-                out.push(Change::TabRemoved { workspace: w.name.clone(), title: t.title().to_string() });
-            }
+    for (i, (from, t)) in old_tabs.iter().enumerate() {
+        if !matched[i] {
+            out.push(Change::TabRemoved { workspace: from.to_string(), title: t.title().to_string() });
         }
     }
     out
@@ -139,17 +143,6 @@ fn same_tabs<'a>(
         .filter(|(shared, o)| shared * 2 > o.tabs.len().max(w.tabs.len()))
         .max_by_key(|(shared, _)| *shared)
         .map(|(_, o)| o)
-}
-
-/// key → (workspace name, title) of the first tab with that key.
-fn tab_index(ws: &[Workspace]) -> HashMap<String, (String, String)> {
-    let mut m = HashMap::new();
-    for w in ws {
-        for t in &w.tabs {
-            m.entry(t.key()).or_insert_with(|| (w.name.clone(), t.title().to_string()));
-        }
-    }
-    m
 }
 
 /// One line such as "+2 tabs, -1 workspace, 1 tab moved".
@@ -194,6 +187,17 @@ mod tests {
             cmux_workspace_id: None,
             tabs,
         }
+    }
+
+    /// Two shells in one folder are two tabs: opening or closing a second one is a change.
+    #[test]
+    fn shells_in_the_same_folder_count_one_by_one() {
+        let shell = |title: &str| Tab::Terminal { title: title.into(), cwd: "/w/docs".into(), command: None };
+        let one = vec![ws("docs", vec![shell("writing")])];
+        let two = vec![ws("docs", vec![shell("writing"), shell("preview")])];
+        assert_eq!(diff(&one, &two), [Change::TabAdded { workspace: "docs".into(), title: "preview".into() }]);
+        assert_eq!(diff(&two, &one), [Change::TabRemoved { workspace: "docs".into(), title: "preview".into() }]);
+        assert!(diff(&two, &two).is_empty());
     }
 
     #[test]

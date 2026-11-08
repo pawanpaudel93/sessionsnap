@@ -270,6 +270,9 @@ function time(iso) { return h("span", { title: when(iso) }, ago(iso)); }
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 // "/Users/me/x" → "~/x"
 function tilde(p) { return (p || "").replace(/^\/Users\/[^/]+(?=\/|$)/, "~"); }
+// A folder for display: `~` for the home folder, cut at the start when it is too long (the `path`
+// class), so the project folder at its end stays in view; the marks keep "~/" at the start.
+function pathText(p) { return `\u200e${tilde(p)}\u200e`; }
 // A tab's folder relative to its workspace's: "" when the same.
 function relPath(cwd, base) {
   if (!cwd || cwd === base) return "";
@@ -666,7 +669,7 @@ async function renderEdit(name) {
   const allOpen = keys.length > 0 && keys.every((k) => expanded.has(k));
   const tabCount = workspaces.reduce((n, w) => n + w.tabs.length, 0);
   return h("div", {},
-    warnings.length ? h("ul", { class: "banner warn warnings" }, warnings.map((w) => h("li", {}, w))) : null,
+    warnings.length ? h("ul", { class: "banner caution warnings" }, warnings.map((w) => h("li", {}, w))) : null,
     h("div", { class: "toolbar" },
       h("span", { class: "muted small" }, `${plural(workspaces.length, "workspace")} · ${plural(tabCount, "tab")}`),
       h("button", { class: "link small", onclick: () => {
@@ -744,7 +747,7 @@ function editWorkspace(name, w, wi, names) {
     h("div", { class: "titles" },
       h("div", { class: "row" }, title, h("span", { class: "pill" }, w.tabs.length)),
       h("div", { class: "sub" },
-        h("span", { class: "mono muted ellipsis", title: w.cwd }, tilde(w.cwd)),
+        h("span", { class: "mono muted ellipsis path", title: w.cwd }, pathText(w.cwd)),
         w.gitBranch ? h("span", { class: "branch mono faint ellipsis", title: `git branch ${w.gitBranch}` }, icon("branch"), w.gitBranch) : null)),
     h("div", { class: "actions" },
       iconButton("pencil", "Rename workspace", () => title.startEdit()),
@@ -789,7 +792,7 @@ function editTab(w, t, pos, names) {
     h("div", { class: "title" }, title,
       agentLabel(t),
       runsLabel(t),
-      where ? h("span", { class: "mono faint ellipsis", title: t.cwd }, where) : null),
+      where ? h("span", { class: "mono faint ellipsis path", title: t.cwd }, `\u200e${where}\u200e`) : null),
     h("div", { class: "actions" },
       iconButton("open", "Restore this tab", () => {
         // Unsaved edits move tabs around; restore reads the saved version.
@@ -1217,7 +1220,7 @@ function renderPlan(r) {
       ? h("details", {}, h("summary", {}, `${plan.skipped.length} already open or skipped`),
         h("ul", { class: "muted small" }, plan.skipped.map((s) => h("li", {}, s))))
       : null,
-    plan.warnings.length ? h("ul", { class: "banner warn warnings" }, plan.warnings.map((w) => h("li", {}, w))) : null,
+    plan.warnings.length ? h("ul", { class: "banner caution warnings" }, plan.warnings.map((w) => h("li", {}, w))) : null,
     h("div", { class: "row" }, h("span", { class: "grow" }), apply));
 }
 
@@ -1251,7 +1254,7 @@ async function viewRecent() {
             h("div", { class: "meta" }, h("span", { class: "ellipsis grow" }, s.title || s.firstPrompt || s.sessionId),
               h("span", { class: "muted small" }, time(s.modified))),
             h("div", { class: "row" }, h("span", { class: "faint small" }, agentName(s.agent)),
-              h("span", { class: "mono muted ellipsis", title: s.cwd }, tilde(s.cwd))))))),
+              h("span", { class: "mono muted ellipsis path", title: s.cwd }, pathText(s.cwd))))))),
         h("div", { class: "footer-actions" }, actionButton(`Preview restoring ${plural(sessions.length, "session")}`, async () => {
           out.replaceChildren(renderPlan(await sessionsnap(["recent", "--hours", String(hours), "--plan"])));
           out.scrollIntoView({ behavior: "smooth", block: "nearest" });
