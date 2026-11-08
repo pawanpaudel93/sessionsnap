@@ -715,24 +715,11 @@ code {
   white-space: nowrap;
 }
 
-.badge {
-  border-radius: 999px;
-  display: inline-block;
-  font-size: 12.5px;
-  font-weight: 700;
-  padding: 2px 9px;
-  white-space: nowrap;
+.agents-sub {
+  font-size: 20px;
+  margin: 28px 0 0;
 }
 
-.badge.full {
-  background: rgba(110, 231, 168, 0.16);
-  color: var(--text);
-}
-
-.badge.resume {
-  background: var(--hover);
-  color: var(--muted);
-}
 
 /* ---- Doc pages ---- */
 
@@ -1131,9 +1118,6 @@ footer a {
   }
 
   /* Lets the agents table fit a phone instead of scrolling sideways. */
-  .badge {
-    white-space: normal;
-  }
 
   .data-table code {
     overflow-wrap: anywhere;

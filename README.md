@@ -12,9 +12,11 @@
 Website: <https://sessionsnap.pawanpaudel.com.np>
 
 sessionsnap takes named, versioned snapshots of [cmux](https://cmux.com) workspaces (or tmux
-sessions) and the agent sessions in their tabs (Claude Code, Codex and more). Save what is open, edit it, and later reopen
-only what is missing, with each agent tab resumed in its own folder with the flags it was started
-with that sessionsnap knows to be safe to pass again. It is a single Rust binary with a CLI, a web UI in the cmux Dock (or the browser from tmux), and cmux palette commands.
+sessions) and the agent sessions in their tabs (Claude Code, Codex, Pi and more). Save what is
+open, edit it, and later reopen only what is missing, with each agent tab resumed in its own
+folder with the flags it was started with that sessionsnap knows to be safe to pass again. It is a
+single Rust binary with a CLI, a web UI in the cmux Dock (or the browser from tmux), cmux palette
+commands, and a skill that teaches coding agents to use it.
 
 Nothing runs in the background unless you add an automatic snapshot: every other snapshot is one
 you ask for.
@@ -53,13 +55,16 @@ you ask for.
 - **Web UI and palette:** a page in the cmux Dock (or the browser from tmux), and commands in the
   cmux command palette.
 - **Automatic snapshots:** `schedule add` saves a snapshot every interval, through launchd on macOS
-  or a systemd user timer on Linux.
-- **tmux too:** inside tmux, sessionsnap saves and restores tmux sessions, on macOS and Linux.
+  or a systemd user timer on Linux, keeping its newest versions (`--keep`).
+- **tmux too:** inside tmux, sessionsnap saves and restores tmux sessions on macOS and Linux,
+  split windows included.
+- **Agent skill:** `install-skill` teaches Claude Code, Pi and other agents to drive sessionsnap
+  safely (plan before restoring, never `--yes` on their own).
 
 ## Requirements
 
 | Requirement | Details |
-| --- | --- |
+|---|---|
 | OS | macOS (tested on macOS 15), or Linux (x86_64, arm64) with tmux. cmux on Linux is a different app with a different command line, not supported yet |
 | Terminal | [cmux](https://cmux.com) 0.64 or newer (tested on 0.64.22 and 0.65.2), or tmux (tested on 3.8) |
 | Agents | The agents you want to restore, on your `PATH` (`sessionsnap agents` checks) |
@@ -84,7 +89,14 @@ The installer:
    palette (`sessionsnap install-cmux`, which asks before changing anything). The palette is
    macOS-only; on Linux the installer skips this step.
 
-Running it again upgrades in place; so does `sessionsnap update`.
+Running it again upgrades in place; so does `sessionsnap update`:
+
+```sh
+sessionsnap update --check            # is there a newer release?
+sessionsnap update                    # install it over this binary
+```
+
+The installer reads these variables:
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -118,24 +130,33 @@ sessionsnap man > ~/.local/share/man/man1/sessionsnap.1
 ## Usage
 
 ```sh
+# Save and look
 sessionsnap save work                 # snapshot everything open (new version if "work" exists)
 sessionsnap save work -w Cascadia     # update only one workspace in the snapshot
+sessionsnap list --cwd .              # snapshots with something in this folder (or below)
 sessionsnap show work                 # workspaces and tabs
 sessionsnap history work              # versions
 sessionsnap diff work@3 work@4
+
+# Restore (a plan first, then only what is missing opens)
 sessionsnap restore work --plan       # what would be reopened
-sessionsnap restore                   # after a reboot: the most recently saved snapshot (plan first)
-sessionsnap list --cwd .              # snapshots with something in this folder (or below)
 sessionsnap restore work              # plan, confirm, reopen what is missing
+sessionsnap restore                   # after a reboot: the most recently saved snapshot
 sessionsnap restore work --tab 'Cascadia#3'   # just that tab, into Cascadia if it is open
+
+# Agent sessions
 sessionsnap recent                    # agent sessions from the last 24h not open in the terminal
 sessionsnap sessions --agent codex    # Codex sessions on disk
+sessionsnap agents                    # supported agents and whether each is on PATH
+
+# Edit
 sessionsnap tab work Cascadia#4 --move "Cascadia Community"
 sessionsnap tab work Cascadia --add-session <session-id>
 sessionsnap tab work Cascadia --add-session <id> --agent opencode
-sessionsnap agents                    # supported agents and whether each is on PATH
 sessionsnap rename work job           # rename a snapshot (and its schedule)
-sessionsnap export work -o work.json  # a version as one file, for another machine
+
+# Another machine
+sessionsnap export work -o work.json  # a version as one file
 sessionsnap import work.json --map /Users/me=/home/me   # save it there, its folders moved
 ```
 
@@ -143,28 +164,8 @@ sessionsnap import work.json --map /Users/me=/home/me   # save it there, its fol
 agent's history of a session. Resuming an agent tab on the other machine needs that session there
 too. An import is checked like any version file when restored, and
 `restore --plan` shows the command each terminal tab will run: read it before restoring a file
-from someone else.
-
-```sh
-sessionsnap update --check            # is there a newer release?
-sessionsnap update                    # install it over this binary
-```
-
-Every command takes `--json` (for scripts and agents: one compact line when piped, indented at a
-terminal) and `--yes` (skip the confirmations of `delete`, `prune`, a lower `schedule … --keep`, `restore`,
-`recent --restore`, `install-cmux` and `uninstall`). A tab whose folder is gone (a removed git worktree) is restored as
-a plain shell in your home folder, with a warning.
-
-| Exit code | Meaning |
-|---|---|
-| 0 | ok |
-| 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
-| 2 | terminal unreachable (cmux not running, or tmux not installed) |
-| 3 | nothing to do |
-| 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
-| 5 | unknown cmux state or snapshot format |
-| 6 | plan stale |
-| 7 | not found |
+from someone else. A tab whose folder is gone (a removed git worktree) is restored as a plain shell
+in your home folder, with a warning.
 
 ### Automatic snapshots
 
@@ -199,6 +200,26 @@ them. A schedule runs with the `PATH`, `TMUX_TMPDIR` and `SESSIONSNAP_*` variabl
 last added, edited or started it: after moving tools off that `PATH`, run `schedule edit` from a
 shell with the new one, or remove the schedule and add it again.
 
+### Scripting and agents
+
+Every command takes `--json` (one compact line when piped, indented at a terminal) and `--yes`
+(skip the confirmations of `delete`, `prune`, a lower `schedule … --keep`, `restore`,
+`recent --restore`, `install-cmux` and `uninstall`). Under `--json` nothing ever prompts: a command
+that would ask exits 4 with `needs-confirmation`, and errors print
+`{"error": {"code", "exit", "message"}}`. `sessionsnap install-skill` gives Claude Code, Pi and
+other agents the rules and the full command table ([`skill/SKILL.md`](skill/SKILL.md)).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | error (also an `apply`, `restore` or `uninstall` where some steps failed: the normal result, listing them) |
+| 2 | terminal unreachable (cmux not running, or tmux not installed) |
+| 3 | nothing to do |
+| 4 | refused (`needs-confirmation`: a confirmation is needed; `refused`: it would overwrite something) |
+| 5 | unknown cmux state or snapshot format |
+| 6 | plan stale |
+| 7 | not found |
+
 ### tmux
 
 sessionsnap works out which terminal it runs in: inside tmux it uses tmux (even tmux in a cmux tab),
@@ -225,35 +246,45 @@ with both (see [Web UI](#web-ui)).
 
 ## Supported agents
 
-| Agent | Support | Resumes with | Flags restored |
-|---|---|---|---|
-| Claude Code | Full (tested) | `claude --resume <id>` | [listed below](#how-flags-are-restored) |
-| Codex | Full (tested) | `codex resume <id>` | [listed below](#how-flags-are-restored) |
-| Grok | Resume only (untested) | `grok -r <id>` | only launches without flags |
-| OpenCode | Resume only (untested) | `opencode --session <id>` | only launches without flags |
-| Pi | Full (tested with Pi 1.5.0 in cmux and tmux) | `pi --session <id>` | [listed below](#how-flags-are-restored) (with `install-pi`) |
-| omp | Resume only (untested) | `omp --session <id>` | only launches without flags |
-| Campfire | Resume only (untested) | `campfire --session <id>` | only launches without flags |
-| Amp | Resume only (untested) | `amp threads continue <id>` | only launches without flags |
-| Cursor Agent | Resume only (untested) | `cursor-agent --resume <id>` | only launches without flags |
-| Gemini CLI | Resume only (untested) | `gemini --resume <id>` | only launches without flags |
-| Antigravity | Resume only (untested) | `agy --conversation <id>` | only launches without flags |
-| Rovo Dev | Resume only (untested) | `acli rovodev run --restore <id>` | only launches without flags |
-| Hermes Agent | Resume only (untested) | `hermes --resume <id>` | only launches without flags |
-| GitHub Copilot CLI | Resume only (untested) | `copilot --resume <id>` | only launches without flags |
-| CodeBuddy | Resume only (untested) | `codebuddy --resume <id>` | only launches without flags |
-| Factory Droid | Resume only (untested) | `droid --resume <id>` | only launches without flags |
-| Qoder CLI | Resume only (untested) | `qodercli --resume <id>` | only launches without flags |
+### Fully supported (tested)
 
-- **Full:** sessionsnap reads the agent's session history (titles, `sessions`, `recent`, checks that
-  a saved session still exists) and resumes it.
-- **Resume only:** sessionsnap saves and resumes the session with the command cmux documents for
-  that agent; it cannot read its history. These have not been tried with sessionsnap yet, so their
-  flags are not known: a session started with no flags resumes, and one started with any flag is
-  left out (an unknown flag may limit the agent, such as a sandbox), with a note to resume it by
-  hand.
-- cmux records which agent runs in a tab. For agents other than Claude Code it does so only after
-  `cmux hooks setup <agent>`.
+sessionsnap reads these agents' session histories (titles, `sessions`, `recent`, a check that a
+saved session still exists) and resumes each session with the flags on the agent's allow-list.
+Each was saved and restored in both cmux and tmux.
+
+| Agent | Resumes with | Flags restored | Tested with |
+|---|---|---|---|
+| Claude Code | `claude --resume <id>` | [listed below](#how-flags-are-restored) | 2.1.317 |
+| Codex | `codex resume <id>` | [listed below](#how-flags-are-restored) | 0.163.0 |
+| Pi | `pi --session <id>` | [listed below](#how-flags-are-restored), with `install-pi` | 1.5.0 |
+
+### Resume only (untested)
+
+sessionsnap saves and resumes these with the command cmux documents for each agent, but it can't
+read their histories, and they haven't been tried with sessionsnap yet. Their flags aren't known,
+so only a session started with no flags is resumed. One started with any flag is left out (an
+unknown flag may limit the agent, such as a sandbox), with a note to resume it by hand.
+
+| Agent | Resumes with |
+|---|---|
+| Grok | `grok -r <id>` |
+| OpenCode | `opencode --session <id>` |
+| omp | `omp --session <id>` |
+| Campfire | `campfire --session <id>` |
+| Amp | `amp threads continue <id>` |
+| Cursor Agent | `cursor-agent --resume <id>` |
+| Gemini CLI | `gemini --resume <id>` |
+| Antigravity | `agy --conversation <id>` |
+| Rovo Dev | `acli rovodev run --restore <id>` |
+| Hermes Agent | `hermes --resume <id>` |
+| GitHub Copilot CLI | `copilot --resume <id>` |
+| CodeBuddy | `codebuddy --resume <id>` |
+| Factory Droid | `droid --resume <id>` |
+| Qoder CLI | `qodercli --resume <id>` |
+
+In cmux, sessionsnap learns which agent runs in a tab from cmux. cmux's wrappers set this up for
+Claude Code, Pi, Grok and Antigravity; for the others, run `cmux hooks setup <agent>` once. tmux
+needs nothing: sessionsnap reads the tab's processes.
 
 ### How flags are restored
 
@@ -388,7 +419,7 @@ exit 6 instead).
 Snapshots are user-editable files whose contents end up as commands in a shell, so:
 
 - Every word of a restore command is shell-quoted, and session IDs are validated first (UUIDs for
-  Claude Code and Codex).
+  Claude Code, Codex and Pi).
 - A tab whose flags, ID, folder or command hold a control character (newline, ^C, ESC …) is never
   run, and an agent record with one is not saved. A resume command with a backslash is not typed
   into an already open workspace (`cmux send` would turn `\n` into Enter).

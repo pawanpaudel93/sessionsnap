@@ -2,6 +2,7 @@
 """Check static-site metadata, structured data, sitemap, local links and command coverage."""
 
 import json
+import html
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -209,17 +210,24 @@ def check():
                 f"{doc} must say cmux on Linux is not supported yet")
         require("tmux" in flat_text, f"{doc} must say sessionsnap works with tmux")
 
-    # Agent support claims match the README: Claude Code and Codex tested, the rest untested.
+    # Agent support claims match the README: the same agents in the tested and the untested group,
+    # each with the same resume command.
     readme = (ROOT / "README.md").read_text()
-    readme_agents = re.findall(r"^\| ([^|]+?) \| (Full \(tested\)|Resume only \(untested\)) \|", readme, re.M)
     index = texts["index.html"]
-    require(len(readme_agents) >= 2, "could not read the README's supported-agents table")
-    for agent, support in readme_agents:
-        row = f"<tr><td>{agent}</td><td>"
-        require(row in index, f"index.html must list {agent}")
-        if row in index:
-            cell = index.split(row, 1)[1].split("</td>", 1)[0]
-            require(support in cell, f"index.html: {agent} must be marked {support}")
+    for group in ("Fully supported (tested)", "Resume only (untested)"):
+        md = readme.split(f"### {group}\n", 1)
+        page = index.split(f'<h3 class="agents-sub">{group}</h3>', 1)
+        require(len(md) == 2, f"README.md must have a '{group}' agents section")
+        require(len(page) == 2, f"index.html must have a '{group}' agents table")
+        if len(md) < 2 or len(page) < 2:
+            continue
+        md_rows = dict(re.findall(r"^\| ([^|`]+?) \| `([^`]+)` \|", md[1].split("\n### ", 1)[0].split("\n## ", 1)[0], re.M))
+        table = page[1].split("</table>", 1)[0]
+        page_rows = {a: html.unescape(c) for a, c in
+                     re.findall(r'<tr><td>([^<]+)</td><td><code translate="no">([^<]+)</code></td>', table)}
+        require(len(md_rows) >= 3, f"could not read the README's '{group}' table")
+        require(md_rows == page_rows,
+                f"index.html '{group}' must match the README: README {sorted(md_rows)}, page {sorted(page_rows)}")
 
     if errors:
         for error in errors:
