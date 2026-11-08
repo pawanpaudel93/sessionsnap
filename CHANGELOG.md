@@ -33,6 +33,7 @@ All notable changes to sessionsnap are listed here. The format follows
 
 ### Changed
 
+- Release binaries are about a third smaller (link-time optimised and stripped), with no change in speed.
 - tmux: after `/clear` in a pane started without a session ID, the new session is saved (before,
   the pane was saved as a plain tab); a pane whose command names a session that was left for a
   newer one is saved with a warning. Agent histories are read once per save, not once per tab.
