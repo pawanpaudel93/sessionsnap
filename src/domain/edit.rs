@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::agents::{Resume, find_session, flags_problem, problem, resume_status};
 use crate::domain::capture;
-use crate::domain::known::{KnownSessions, UNKNOWN_FLAGS};
+use crate::domain::known::{KnownSessions, Launch, UNKNOWN_FLAGS};
 use crate::domain::model::{SessionRef, Tab, Workspace, canonical_id, find_by_name, has_control, parse_ref};
 use crate::error::{Exit, failure};
 use crate::ports::{AgentCatalog, OpenState, Snapshots};
@@ -202,20 +202,18 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
                 let launch = ctx.known.launch(&s, ctx.open, ctx.agents);
                 let Tab::Agent { args, left_out, left_out_unsure, .. } = tab else { continue };
                 let lost = left_out.is_some() && !*left_out_unsure;
-                if launch.left_out.is_some() {
+                match launch {
                     // A tab's own lost launch stays lost.
-                    if !lost {
-                        args.clear();
-                        *left_out = launch.left_out;
-                        *left_out_unsure = launch.unsure;
+                    Launch::LeftOut(_) | Launch::Undecided(_) if lost => {}
+                    Launch::LeftOut(_) | Launch::Undecided(_) => {
+                        (*args, *left_out, *left_out_unsure) = launch.into_tab_fields();
                     }
-                } else if *left_out_unsure && launch.known {
                     // Undecided when copied; the record or cmux has decided since.
-                    *args = launch.args;
-                    *left_out = None;
-                    *left_out_unsure = false;
-                } else if args.is_empty() && left_out.is_none() {
-                    *args = launch.args;
+                    Launch::Flags(flags) if *left_out_unsure => {
+                        (*args, *left_out, *left_out_unsure) = (flags, None, false);
+                    }
+                    Launch::Flags(flags) if args.is_empty() && left_out.is_none() => *args = flags,
+                    Launch::Flags(_) | Launch::Unknown => {}
                 }
             }
             add_workspace(ws, copy)?;
@@ -262,16 +260,17 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             };
             let launch = ctx.known.launch(&SessionRef::new(&kind, session_id), ctx.open, ctx.agents);
             let title = title.clone().unwrap_or(label);
-            let note = (!launch.known).then(|| format!("{} › {title}: {UNKNOWN_FLAGS}", ws[i].name));
+            let note = (!launch.is_known()).then(|| format!("{} › {title}: {UNKNOWN_FLAGS}", ws[i].name));
+            let (args, left_out, left_out_unsure) = launch.into_tab_fields();
             ws[i].windows.clear();
             ws[i].tabs.push(Tab::Agent {
                 title,
                 cwd,
                 agent: kind,
                 session_id: session_id.clone(),
-                args: launch.args,
-                left_out: launch.left_out,
-                left_out_unsure: launch.unsure,
+                args,
+                left_out,
+                left_out_unsure,
             });
             return Ok(note.into_iter().collect());
         }
@@ -302,7 +301,7 @@ fn apply(ws: &mut Vec<Workspace>, op: &Op, ctx: &EditCtx) -> Result<Vec<String>>
             let launch = ctx.known.launch(&SessionRef::new(&kind, session_id), ctx.open, ctx.agents);
             let mut note = None;
             let (args, left_out, left_out_unsure) = match old {
-                _ if launch.known => (launch.args, launch.left_out, launch.unsure),
+                _ if launch.is_known() => launch.into_tab_fields(),
                 // Nothing known of the new session: the launch flags still fit when the agent stays
                 // the same, and so does a reason they were left out.
                 Tab::Agent { agent, args, left_out, left_out_unsure, .. }

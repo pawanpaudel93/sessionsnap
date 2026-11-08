@@ -5,6 +5,7 @@
 use anyhow::Result;
 
 use super::Ctx;
+use super::known::now;
 use super::snapshots::Commit;
 use crate::domain::model::{validate_name, validate_new_name};
 use crate::domain::schedule::{LastRun, Schedule, Schedules, parse_interval};
@@ -183,10 +184,10 @@ pub fn run(ctx: &Ctx, name: &str) -> Result<Commit> {
         ))
     };
     let last = match &result {
-        Ok(Commit::Saved { version, .. }) => last_run("saved", Some(version.version), None),
-        Ok(Commit::Unchanged { version, .. }) => last_run("unchanged", Some(*version), None),
-        Err(e) if exit_of(e) == Exit::NothingToDo => last_run("skipped", None, Some(format!("{e:#}"))),
-        Err(e) => last_run("failed", None, Some(format!("{e:#}"))),
+        Ok(Commit::Saved { version, .. }) => LastRun::saved(now(), version.version),
+        Ok(Commit::Unchanged { version, .. }) => LastRun::unchanged(now(), *version),
+        Err(e) if exit_of(e) == Exit::NothingToDo => LastRun::skipped(now(), format!("{e:#}")),
+        Err(e) => LastRun::failed(now(), format!("{e:#}")),
     };
     let lock = ctx.store.lock_schedules()?;
     let mut all = ctx.store.read_schedules()?;
@@ -218,10 +219,6 @@ fn prune_after(ctx: &Ctx, name: &str, keep: u32, mut commit: Commit) -> Commit {
         warnings.push(format!("could not delete versions older than the newest {keep}: {e:#}"));
     }
     commit
-}
-
-fn last_run(result: &str, version: Option<u32>, reason: Option<String>) -> LastRun {
-    LastRun { at: super::known::now(), result: result.into(), version, reason }
 }
 
 /// After snapshot `old` was renamed to `new`: moves its schedule, if it had one.

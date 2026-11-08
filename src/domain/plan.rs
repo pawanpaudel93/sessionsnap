@@ -153,17 +153,18 @@ pub fn recovered_workspace(
             .find(&s.session_id)?
             .ok_or_else(|| unknown_session(&s.session_id))?;
         let launch = known.launch(s, None, agents);
-        if !launch.known {
+        if !launch.is_known() {
             warnings.push(format!("Recovered sessions › {}: {UNKNOWN_FLAGS}", info.label()));
         }
+        let (args, left_out, left_out_unsure) = launch.into_tab_fields();
         tabs.push(Tab::Agent {
             title: info.label(),
             cwd: info.cwd.clone().unwrap_or_default(),
             agent: s.agent.clone(),
             session_id: s.session_id.clone(),
-            args: launch.args,
-            left_out: launch.left_out,
-            left_out_unsure: launch.unsure,
+            args,
+            left_out,
+            left_out_unsure,
         });
     }
     let cwd = tabs.first().map(|t| t.cwd().to_string()).unwrap_or_default();
