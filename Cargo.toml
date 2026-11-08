@@ -43,3 +43,10 @@ testing = []
 tempfile = "3"
 # The integration tests use the crate's test helpers.
 sessionsnap = { path = ".", features = ["testing"] }
+
+# Smaller release binaries (about a third) at no cost to speed. Unwinding stays on: the web UI's
+# server answers a request that panics with a 500 and keeps serving.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

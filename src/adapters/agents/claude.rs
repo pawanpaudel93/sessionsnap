@@ -12,6 +12,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::one_line;
 use crate::adapters::home_dir;
 use crate::domain::model::is_session_id;
 use crate::ports::{SessionHistory, SessionInfo};
@@ -355,12 +356,6 @@ pub fn uninstall_skill(dir: &Path) -> Result<SkillRemoval> {
 
 fn str_field(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
-}
-
-/// Collapses whitespace and cuts to `max` characters.
-fn one_line(text: &str, max: usize) -> String {
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= max { flat } else { flat.chars().take(max).collect::<String>() + "…" }
 }
 
 #[cfg(test)]

@@ -21,6 +21,12 @@ use claude::Claude;
 use codex::Codex;
 use registry::AgentSpec;
 
+/// A title for lists: whitespace collapsed to single spaces, cut to `max` characters with "…".
+fn one_line(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max { flat } else { flat.chars().take(max).collect::<String>() + "…" }
+}
+
 /// The agents sessionsnap knows (the registry), with the session histories it can read and the
 /// folders it looks for their programs in.
 pub struct Agents {

@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use serde_json::Value;
 
+use super::one_line;
 use crate::adapters::home_dir;
 use crate::domain::model::is_session_id;
 use crate::ports::{SessionHistory, SessionInfo};
@@ -208,12 +209,6 @@ fn user_text(payload: &Value) -> Option<String> {
         .join("\n");
     let text = text.trim();
     (!text.is_empty() && !text.starts_with('<')).then(|| text.to_string())
-}
-
-/// Collapses whitespace and cuts to `max` characters.
-fn one_line(text: &str, max: usize) -> String {
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= max { flat } else { flat.chars().take(max).collect::<String>() + "…" }
 }
 
 #[cfg(test)]
