@@ -6,6 +6,23 @@ All notable changes to sessionsnap are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Web UI: restoring when what is open changed after the preview no longer fails on every click
+  of **Open N tabs**. The page makes the plan again, says why, and opens nothing until you click
+  again. The same goes for the Recent view.
+- Web UI: saving edits after another version of the snapshot was saved (from the CLI, another
+  page or an automatic snapshot) no longer fails on every click of **Save version**. The page
+  shows your edits on the newer version, says so, and saves when you click again.
+
+### Changed
+
+- The skill that `install-skill` writes lists `install-skill` itself, says how to recover from
+  exit 6 (make the plan again, or preview the edits again), and lists the results
+  `schedule list --json` reports in `lastRun`.
+- Exit 6 is described everywhere as "what you previewed changed since", which covers both a stale
+  restore plan and edits saved with `--base`. Its code is still `plan-stale`.
+
 ## [0.2.0] - 2026-11-08
 
 ### Added
